@@ -68,21 +68,29 @@ struct NotchLayoutMetrics: Equatable {
         compactSize(isPlaying: true)
     }
 
-    func compactSize(isPlaying: Bool) -> CGSize {
+    func compactSize(
+        isPlaying: Bool,
+        compactHeight: CGFloat = NotchLayout.defaultCompactHeight
+    ) -> CGSize {
+        let interactionHeight = max(NotchLayout.compactInteractionHeight, compactHeight)
+
         guard physicalNotchSize.width > 0, physicalNotchSize.height > 0 else {
-            return NotchLayout.compactContentSize
+            return CGSize(
+                width: NotchLayout.compactContentWidth,
+                height: interactionHeight
+            )
         }
 
         guard isPlaying else {
             return CGSize(
                 width: physicalNotchSize.width + NotchLayout.compactIdleWingWidth * 2,
-                height: max(NotchLayout.compactContentSize.height, physicalNotchSize.height)
+                height: max(interactionHeight, physicalNotchSize.height)
             )
         }
 
         return CGSize(
             width: physicalNotchSize.width + NotchLayout.compactWingWidth * 2,
-            height: max(NotchLayout.compactContentSize.height, physicalNotchSize.height)
+            height: max(interactionHeight, physicalNotchSize.height)
         )
     }
 
@@ -120,7 +128,10 @@ struct NotchLayoutMetrics: Equatable {
 }
 
 enum NotchLayout {
-    static let compactContentSize = CGSize(width: 226, height: 44)
+    static let compactContentWidth: CGFloat = 226
+    static let compactHeightRange: ClosedRange<CGFloat> = 39...42
+    static let defaultCompactHeight: CGFloat = 40
+    static let compactInteractionHeight: CGFloat = 40
     static let compactIdleWingWidth: CGFloat = 18
     static let compactWingWidth: CGFloat = 60
     static let compactBottomRadius: CGFloat = 12
@@ -130,8 +141,14 @@ enum NotchLayout {
 
     static var physicalNotchSize: CGSize { currentMetrics.physicalNotchSize }
     static var compactSize: CGSize { currentMetrics.compactSize }
-    static func compactSize(isPlaying: Bool) -> CGSize {
-        currentMetrics.compactSize(isPlaying: isPlaying)
+    static func compactSize(
+        isPlaying: Bool,
+        compactHeight: CGFloat = defaultCompactHeight
+    ) -> CGSize {
+        currentMetrics.compactSize(
+            isPlaying: isPlaying,
+            compactHeight: compactHeight
+        )
     }
     static var expandedSize: CGSize { currentMetrics.expandedSize }
     static var expandedMusicSize: CGSize { currentMetrics.expandedMusicSize }
@@ -186,9 +203,15 @@ enum NotchWindowSizingPolicy {
         selectedPanel: PanelID,
         calendarViewMode: CalendarViewMode,
         isShowingSettings: Bool,
+        compactHeight: CGFloat = NotchLayout.defaultCompactHeight,
         isPlaying: Bool = true
     ) -> CGSize {
-        guard isExpanded else { return metrics.compactSize(isPlaying: isPlaying) }
+        guard isExpanded else {
+            return metrics.compactSize(
+                isPlaying: isPlaying,
+                compactHeight: compactHeight
+            )
+        }
         guard isShowingSettings == false else { return metrics.expandedSize }
 
         if selectedPanel == .music || selectedPanel == .jira {

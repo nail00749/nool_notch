@@ -6,6 +6,22 @@ import XCTest
 
 final class NotchInteractionTests: XCTestCase {
     @MainActor
+    func testCompactHeightDefaultsToFortyAndPersists() {
+        let suiteName = "NotchInteractionTests.compactHeight.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let settings = NotchVisualSettings(defaults: defaults)
+        XCTAssertEqual(settings.compactHeight, 40)
+
+        settings.compactHeight = 42
+
+        let restoredSettings = NotchVisualSettings(defaults: defaults)
+        XCTAssertEqual(restoredSettings.compactHeight, 42)
+    }
+
+    @MainActor
     func testCompactQuotaGradientUsesOversizedCompositorRotation() throws {
         let view = CompactQuotaGradientView(
             frame: CGRect(x: 0, y: 0, width: 340, height: 44)
@@ -62,10 +78,32 @@ final class NotchInteractionTests: XCTestCase {
         )
 
         XCTAssertEqual(metrics.physicalNotchSize, CGSize(width: 220, height: 38))
-        XCTAssertEqual(metrics.compactSize, CGSize(width: 340, height: 44))
+        XCTAssertEqual(metrics.compactSize, CGSize(width: 340, height: 40))
         XCTAssertEqual(metrics.expandedSize, CGSize(width: 500, height: 338))
         XCTAssertEqual(metrics.expandedMusicSize, CGSize(width: 500, height: 380))
         XCTAssertEqual(metrics.expandedCalendarSize, CGSize(width: 500, height: 498))
+    }
+
+    func testCompactHeightRangeKeepsMinimumInteractionFrame() {
+        let metrics = NotchLayout.metrics(
+            safeAreaTop: 0,
+            leftAuxiliaryArea: nil,
+            rightAuxiliaryArea: nil
+        )
+
+        XCTAssertEqual(NotchLayout.compactHeightRange, 39...42)
+        XCTAssertEqual(
+            metrics.compactSize(isPlaying: true, compactHeight: 39),
+            CGSize(width: 226, height: 40)
+        )
+        XCTAssertEqual(
+            metrics.compactSize(isPlaying: true, compactHeight: 40),
+            CGSize(width: 226, height: 40)
+        )
+        XCTAssertEqual(
+            metrics.compactSize(isPlaying: true, compactHeight: 42),
+            CGSize(width: 226, height: 42)
+        )
     }
 
     func testExpandedHeaderUsesEqualSideWingsAroundPhysicalNotch() {
@@ -96,7 +134,7 @@ final class NotchInteractionTests: XCTestCase {
         )
 
         XCTAssertEqual(metrics.physicalNotchSize, .zero)
-        XCTAssertEqual(metrics.compactSize, CGSize(width: 226, height: 44))
+        XCTAssertEqual(metrics.compactSize, CGSize(width: 226, height: 40))
         XCTAssertEqual(metrics.expandedSize, CGSize(width: 500, height: 300))
         XCTAssertEqual(metrics.expandedMusicSize, CGSize(width: 500, height: 404))
         XCTAssertEqual(metrics.expandedCalendarSize, CGSize(width: 500, height: 460))
@@ -272,7 +310,18 @@ final class NotchInteractionTests: XCTestCase {
                 calendarViewMode: .list,
                 isShowingSettings: false
             ),
-            CGSize(width: 340, height: 44)
+            CGSize(width: 340, height: 40)
+        )
+        XCTAssertEqual(
+            NotchWindowSizingPolicy.size(
+                metrics: metrics,
+                isExpanded: false,
+                selectedPanel: .music,
+                calendarViewMode: .list,
+                isShowingSettings: false,
+                compactHeight: 42
+            ),
+            CGSize(width: 340, height: 42)
         )
     }
 

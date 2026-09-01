@@ -285,6 +285,39 @@ struct NotchSettingsView: View {
 
             SettingsCard(title: "Оформление челки", icon: "paintbrush") {
                 VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Высота компактной челки")
+                            Spacer()
+                            Text("\(Int(settings.compactHeight.rounded())) px")
+                                .foregroundStyle(Color.signalMint)
+                                .monospacedDigit()
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("39")
+                                .foregroundStyle(.white.opacity(0.42))
+                                .monospacedDigit()
+
+                            Slider(
+                                value: $settings.compactHeight,
+                                in: NotchLayout.compactHeightRange,
+                                step: 1
+                            )
+                            .frame(minHeight: 40)
+                            .accessibilityLabel("Высота компактной челки")
+                            .accessibilityValue("\(Int(settings.compactHeight.rounded())) пикселей")
+
+                            Text("42")
+                                .foregroundStyle(.white.opacity(0.42))
+                                .monospacedDigit()
+                        }
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    }
+
+                    Divider()
+                        .overlay(Color.white.opacity(0.08))
+
                     Toggle("Показывать линию", isOn: $settings.showsLine)
                     Toggle("Анимация линии", isOn: $settings.pulsesLine)
 

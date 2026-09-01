@@ -20,7 +20,10 @@ struct CompactNotch: View {
     }
 
     private var compactSize: CGSize {
-        NotchLayout.compactSize(isPlaying: isPlaying)
+        NotchLayout.compactSize(
+            isPlaying: isPlaying,
+            compactHeight: visualSettings.compactHeight
+        )
     }
 
     var body: some View {
@@ -28,7 +31,7 @@ struct CompactNotch: View {
             compactContent
                 .frame(
                     width: compactSize.width,
-                    height: compactSize.height
+                    height: visualSettings.compactHeight
                 )
                 .background(Color.black)
                 .clipShape(
@@ -60,8 +63,18 @@ struct CompactNotch: View {
                     reduceMotion ? .linear(duration: 0.01) : .easeInOut(duration: 0.30),
                     value: isPlaying
                 )
+                .animation(
+                    reduceMotion ? .linear(duration: 0.01) : .easeInOut(duration: 0.24),
+                    value: visualSettings.compactHeight
+                )
         }
         .buttonStyle(NotchButtonStyle())
+        .frame(
+            width: compactSize.width,
+            height: compactSize.height,
+            alignment: .top
+        )
+        .contentShape(Rectangle())
         .accessibilityLabel("Открыть Notch")
     }
 

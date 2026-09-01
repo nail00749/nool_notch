@@ -13,7 +13,10 @@ final class NotchWindowCoordinator: NSObject {
         model = NotchViewModel()
         visualSettings = NotchVisualSettings()
         launchAtLogin = LaunchAtLoginManager()
-        let size = NotchLayout.compactSize(isPlaying: false)
+        let size = NotchLayout.compactSize(
+            isPlaying: false,
+            compactHeight: visualSettings.compactHeight
+        )
         let origin = Self.origin(for: NSScreen.preferredNotchScreen, size: size)
         window = NotchPanel(
             contentRect: NSRect(origin: origin, size: size),
@@ -120,6 +123,7 @@ final class NotchWindowCoordinator: NSObject {
             selectedPanel: model.selectedPanel,
             calendarViewMode: model.calendarViewMode,
             isShowingSettings: model.isShowingSettings,
+            compactHeight: visualSettings.compactHeight,
             isPlaying: model.nowPlayingSnapshot?.playbackState.isPlaying == true
         )
         let frame = NSRect(

@@ -30,6 +30,7 @@ struct NotchRootView: View {
             selectedPanel: model.selectedPanel,
             calendarViewMode: model.calendarViewMode,
             isShowingSettings: false,
+            compactHeight: visualSettings.compactHeight,
             isPlaying: isCompactPlaybackActive
         )
     }
@@ -61,6 +62,7 @@ struct NotchRootView: View {
         .offset(y: playbackBounce ? -4 : 0)
         .animation(stateAnimation, value: model.isExpanded)
         .animation(stateAnimation, value: isCompactPlaybackActive)
+        .animation(stateAnimation, value: visualSettings.compactHeight)
         .contentShape(Rectangle())
         .onHover(perform: handleHover)
         .task {
@@ -79,6 +81,9 @@ struct NotchRootView: View {
             onLayoutChange(model.isExpanded, reduceMotion)
         }
         .onChange(of: model.calendarViewMode) { _, _ in
+            onLayoutChange(model.isExpanded, reduceMotion)
+        }
+        .onChange(of: visualSettings.compactHeight) { _, _ in
             onLayoutChange(model.isExpanded, reduceMotion)
         }
         .onChange(of: playbackSignal) { _, _ in
@@ -159,7 +164,8 @@ struct NotchRootView: View {
                     pointerLocation: NSEvent.mouseLocation,
                     screenFrame: screen.frame,
                     windowSize: NotchLayout.compactSize(
-                        isPlaying: isCompactPlaybackActive
+                        isPlaying: isCompactPlaybackActive,
+                        compactHeight: visualSettings.compactHeight
                     )
                 )
                 guard pointerIsOutside == false else { return }
