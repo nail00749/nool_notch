@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+Build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+.DS_Store
+.gitnexus/

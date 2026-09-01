@@ -1,0 +1,25 @@
+#!/bin/sh
+
+project_root="${GITNEXUS_PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null)}"
+[ -n "$project_root" ] || exit 0
+
+if [ "${GITNEXUS_HOOK_WORKER:-0}" = "1" ]; then
+    cd "$project_root" || exit 0
+
+    if [ -f .gitnexus/run.cjs ]; then
+        exec /usr/bin/env node .gitnexus/run.cjs analyze --index-only --name NotchApp
+    fi
+
+    if command -v gitnexus >/dev/null 2>&1; then
+        exec gitnexus analyze --index-only --name NotchApp
+    fi
+
+    echo "GitNexus runner is unavailable; run 'gitnexus analyze --index-only --name NotchApp' once."
+    exit 0
+fi
+
+mkdir -p "$project_root/.gitnexus"
+GITNEXUS_PROJECT_ROOT="$project_root" GITNEXUS_HOOK_WORKER=1 \
+    nohup "$0" >>"$project_root/.gitnexus/hook.log" 2>&1 </dev/null &
+
+exit 0
