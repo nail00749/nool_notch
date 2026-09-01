@@ -11,10 +11,15 @@ permissions:
 jobs:
   release:
     runs-on: macos-14
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Verify Swift toolchain
+        run: xcrun swift --version
 
       - name: Resolve version
         id: release
