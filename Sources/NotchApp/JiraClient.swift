@@ -133,7 +133,7 @@ final class JiraClient: JiraClientProtocol {
         )
         let response: SearchResponse = try await decodedResponse(for: request)
         return JiraSearchPage(
-            issues: try response.issues.map(Self.makeIssue),
+            issues: try response.issues.map { try Self.makeIssue($0) },
             total: response.total
         )
     }
@@ -282,8 +282,8 @@ final class JiraClient: JiraClientProtocol {
             projectName: response.fields.project.name,
             status: makeStatus(response.fields.status),
             priorityName: response.fields.priority?.name,
-            dueDate: response.fields.dueDate.map(parseDueDate),
-            updatedAt: response.fields.updated.map(parseUpdatedDate)
+            dueDate: response.fields.dueDate.map { try parseDueDate($0) },
+            updatedAt: response.fields.updated.map { try parseUpdatedDate($0) }
         )
     }
 
