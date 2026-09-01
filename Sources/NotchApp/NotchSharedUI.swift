@@ -73,7 +73,12 @@ struct NotchLayoutMetrics: Equatable {
             return NotchLayout.compactContentSize
         }
 
-        guard isPlaying else { return physicalNotchSize }
+        guard isPlaying else {
+            return CGSize(
+                width: physicalNotchSize.width + NotchLayout.compactIdleWingWidth * 2,
+                height: max(NotchLayout.compactContentSize.height, physicalNotchSize.height)
+            )
+        }
 
         return CGSize(
             width: physicalNotchSize.width + NotchLayout.compactWingWidth * 2,
@@ -116,6 +121,7 @@ struct NotchLayoutMetrics: Equatable {
 
 enum NotchLayout {
     static let compactContentSize = CGSize(width: 226, height: 44)
+    static let compactIdleWingWidth: CGFloat = 18
     static let compactWingWidth: CGFloat = 60
     static let compactBottomRadius: CGFloat = 12
     static let expandedContentSize = CGSize(width: 500, height: 300)
