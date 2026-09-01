@@ -11,6 +11,20 @@
 Приложение рассчитано на macOS 14+. На MacBook используется физическая
 челка; на внешнем дисплее или Mac без выреза отображается программный вариант.
 
+## Установка через Homebrew
+
+Первый релиз собран для Mac с Apple Silicon и подписан ad-hoc. Пока у проекта
+нет Developer ID и нотаризации, при установке нужно явно отключить quarantine:
+
+```sh
+brew tap nail00749/tap
+brew install --cask --no-quarantine nool-notch
+```
+
+После установки запусти `NotchApp` из `/Applications` и выдай запрошенные
+разрешения в System Settings. Обновление будет доступно обычной командой
+`brew upgrade --cask nool-notch`.
+
 ## Сборка из исходников
 
 Понадобятся Xcode или Xcode Command Line Tools со Swift 6:
@@ -48,3 +62,9 @@ Ad-hoc подпись подходит для локальной сборки, �
 - `Tests` — Swift- и shell-проверки.
 - `scripts` — сборка, упаковка, подпись и запуск.
 - `docs` — спецификации и планы развития.
+
+## Релизы
+
+Тег вида `vX.Y.Z` запускает GitHub Actions: workflow собирает arm64 executable,
+создаёт ad-hoc signed `NotchApp.app`, упаковывает ZIP и публикует GitHub Release
+вместе с SHA-256 checksum.
