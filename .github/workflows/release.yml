@@ -10,9 +10,9 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-15
+    runs-on: macos-26
     env:
-      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
 
     steps:
       - name: Check out repository
@@ -40,6 +40,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; leaving its assets unchanged."
+            exit 0
+          fi
+
           gh release create "$GITHUB_REF_NAME" \
             "dist/NoolNotch-v${VERSION}-arm64.zip" \
             "dist/NoolNotch-v${VERSION}-arm64.zip.sha256" \
