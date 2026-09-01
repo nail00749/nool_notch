@@ -31,9 +31,10 @@ BIN_PATH="$("$XCRUN" swift build -c release --arch "$ARCH" --show-bin-path)"
 
 /bin/rm -rf "$APP_PATH"
 /bin/rm -f "$ARCHIVE_PATH" "$CHECKSUM_PATH"
-/bin/mkdir -p "$APP_PATH/Contents/MacOS"
+/bin/mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
 /usr/bin/install -m 755 "$BIN_PATH/NotchApp" "$APP_PATH/Contents/MacOS/NotchApp"
 /bin/cp "$PROJECT_ROOT/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
+/bin/cp "$PROJECT_ROOT/Resources/AppIcon.icns" "$APP_PATH/Contents/Resources/AppIcon.icns"
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${NOTCHAPP_BUILD_NUMBER:-1}" "$APP_PATH/Contents/Info.plist"

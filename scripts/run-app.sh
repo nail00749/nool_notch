@@ -13,9 +13,10 @@ XCRUN="/usr/bin/xcrun"
 BIN_PATH="$("$XCRUN" swift build --show-bin-path)"
 APP_PATH="$PROJECT_ROOT/Build/NotchApp.app"
 
-mkdir -p "$APP_PATH/Contents/MacOS"
+mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
 cp "$BIN_PATH/NotchApp" "$APP_PATH/Contents/MacOS/NotchApp"
 cp "$PROJECT_ROOT/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
+cp "$PROJECT_ROOT/Resources/AppIcon.icns" "$APP_PATH/Contents/Resources/AppIcon.icns"
 "$PROJECT_ROOT/scripts/sign-app.sh" "$APP_PATH"
 
 # Replace the running instance so the app cannot keep an older binary in memory.
