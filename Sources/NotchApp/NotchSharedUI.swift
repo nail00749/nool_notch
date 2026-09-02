@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 enum PanelID: String, CaseIterable, Identifiable {
-    case limits
+    case ai
     case calendar
     case music
     case jira
@@ -11,8 +11,8 @@ enum PanelID: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .limits:
-            "Лимиты"
+        case .ai:
+            "AI"
         case .calendar:
             "Календарь"
         case .music:
@@ -24,14 +24,28 @@ enum PanelID: String, CaseIterable, Identifiable {
 
     var iconName: String {
         switch self {
-        case .limits:
-            "gauge.with.dots.needle.67percent"
+        case .ai:
+            "sparkles"
         case .calendar:
             "calendar"
         case .music:
             "waveform"
         case .jira:
             "checkmark.square"
+        }
+    }
+}
+
+enum AISection: String, CaseIterable, Identifiable {
+    case limits
+    case sessions
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .limits: "Лимиты"
+        case .sessions: "Сессии"
         }
     }
 }

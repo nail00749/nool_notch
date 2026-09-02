@@ -6,7 +6,8 @@
 
 ## Возможности
 
-- лимиты ChatGPT, Claude Code и Ollama Cloud;
+- AI-панель с лимитами ChatGPT, Claude Code и Ollama Cloud, а также live-статусами
+  текущих сессий Codex Desktop;
 - универсальный Now Playing с обложкой и управлением воспроизведением;
 - ближайшие события календаря;
 - Jira с личными задачами, переходами между статусами и worklog;

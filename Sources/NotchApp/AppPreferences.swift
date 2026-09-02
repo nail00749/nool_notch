@@ -7,6 +7,7 @@ protocol AppPreferencesStoring: AnyObject {
     var panelOrder: [PanelID] { get set }
     var hiddenPanelIDs: Set<PanelID> { get set }
     var startupPanel: PanelID? { get set }
+    var selectedAISection: AISection { get set }
     var hasCompletedPanelSwipe: Bool { get set }
     var quotaProviderOrder: [String] { get set }
     var hiddenQuotaProviderIDs: Set<String> { get set }
@@ -30,6 +31,7 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
     static let panelOrderKey = "navigation.panelOrder"
     static let hiddenPanelIDsKey = "navigation.hiddenPanelIDs"
     static let startupPanelKey = "navigation.startupPanel"
+    static let selectedAISectionKey = "ai.selectedSection"
     static let hasCompletedPanelSwipeKey = "interaction.hasCompletedPanelSwipe"
     static let quotaProviderOrderKey = "limits.providerOrder"
     static let hiddenQuotaProviderIDsKey = "limits.hiddenProviderIDs"
@@ -60,8 +62,8 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
     var lastSelectedPanel: PanelID {
         get {
             guard let rawValue = defaults.string(forKey: Self.lastSelectedPanelKey),
-                  let panel = PanelID(rawValue: rawValue) else {
-                return .limits
+                  let panel = Self.panelID(from: rawValue) else {
+                return .ai
             }
             return panel
         }
@@ -73,7 +75,7 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
     var panelOrder: [PanelID] {
         get {
             let stored = defaults.stringArray(forKey: Self.panelOrderKey) ?? []
-            return Self.normalizedPanelOrder(stored.compactMap(PanelID.init(rawValue:)))
+            return Self.normalizedPanelOrder(stored.compactMap(Self.panelID(from:)))
         }
         set {
             defaults.set(
@@ -87,7 +89,7 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
         get {
             var hidden = Set(
                 (defaults.stringArray(forKey: Self.hiddenPanelIDsKey) ?? [])
-                    .compactMap(PanelID.init(rawValue:))
+                    .compactMap(Self.panelID(from:))
             )
             if hidden.count >= PanelID.allCases.count,
                let fallback = panelOrder.first ?? PanelID.allCases.first {
@@ -108,7 +110,7 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
     var startupPanel: PanelID? {
         get {
             guard let rawValue = defaults.string(forKey: Self.startupPanelKey) else { return nil }
-            return PanelID(rawValue: rawValue)
+            return Self.panelID(from: rawValue)
         }
         set {
             if let newValue {
@@ -116,6 +118,19 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
             } else {
                 defaults.removeObject(forKey: Self.startupPanelKey)
             }
+        }
+    }
+
+    var selectedAISection: AISection {
+        get {
+            guard let rawValue = defaults.string(forKey: Self.selectedAISectionKey),
+                  let section = AISection(rawValue: rawValue) else {
+                return .limits
+            }
+            return section
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: Self.selectedAISectionKey)
         }
     }
 
@@ -196,6 +211,11 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
         var seen: Set<PanelID> = []
         let known = panels.filter { seen.insert($0).inserted }
         return known + PanelID.allCases.filter { seen.insert($0).inserted }
+    }
+
+    private static func panelID(from rawValue: String) -> PanelID? {
+        if rawValue == "limits" { return .ai }
+        return PanelID(rawValue: rawValue)
     }
 
     private static func normalizedQuotaProviderOrder(_ providerIDs: [String]) -> [String] {

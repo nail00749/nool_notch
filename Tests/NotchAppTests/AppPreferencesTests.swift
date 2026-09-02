@@ -25,11 +25,40 @@ final class AppPreferencesTests: XCTestCase {
 
         var preferences = UserDefaultsAppPreferences(defaults: defaults)
         XCTAssertEqual(preferences.hoverExpansionDelay, 0.5)
-        XCTAssertEqual(preferences.lastSelectedPanel, .limits)
+        XCTAssertEqual(preferences.lastSelectedPanel, .ai)
 
         defaults.set("unknown-panel", forKey: UserDefaultsAppPreferences.lastSelectedPanelKey)
         preferences = UserDefaultsAppPreferences(defaults: defaults)
-        XCTAssertEqual(preferences.lastSelectedPanel, .limits)
+        XCTAssertEqual(preferences.lastSelectedPanel, .ai)
+    }
+
+    func testLegacyLimitsPanelValuesMigrateToAI() {
+        let suiteName = "NotchAppTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("limits", forKey: UserDefaultsAppPreferences.lastSelectedPanelKey)
+        defaults.set(["music", "limits", "jira"], forKey: UserDefaultsAppPreferences.panelOrderKey)
+        defaults.set(["limits"], forKey: UserDefaultsAppPreferences.hiddenPanelIDsKey)
+        defaults.set("limits", forKey: UserDefaultsAppPreferences.startupPanelKey)
+
+        let preferences = UserDefaultsAppPreferences(defaults: defaults)
+        XCTAssertEqual(preferences.lastSelectedPanel, .ai)
+        XCTAssertEqual(Array(preferences.panelOrder.prefix(3)), [.music, .ai, .jira])
+        XCTAssertEqual(preferences.hiddenPanelIDs, [.ai])
+        XCTAssertEqual(preferences.startupPanel, .ai)
+    }
+
+    func testAISectionDefaultsAndRoundTrips() {
+        let suiteName = "NotchAppTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let preferences = UserDefaultsAppPreferences(defaults: defaults)
+
+        XCTAssertEqual(preferences.selectedAISection, .limits)
+        preferences.selectedAISection = .sessions
+
+        XCTAssertEqual(UserDefaultsAppPreferences(defaults: defaults).selectedAISection, .sessions)
     }
 
     func testNonFiniteHoverDelayFallsBackSafely() {

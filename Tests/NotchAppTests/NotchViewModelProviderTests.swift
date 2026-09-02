@@ -77,8 +77,8 @@ final class NotchViewModelProviderTests: XCTestCase {
         let jira = FakeJiraProvider()
         let model = makeModel(calendarProvider: calendar, jiraProvider: jira)
 
-        XCTAssertEqual(model.selectedPanel, .limits)
-        XCTAssertEqual(model.numericBadgeCount(for: .limits), 0)
+        XCTAssertEqual(model.selectedPanel, .ai)
+        XCTAssertEqual(model.numericBadgeCount(for: .ai), 0)
         XCTAssertEqual(model.numericBadgeCount(for: .calendar), 0)
         XCTAssertEqual(model.numericBadgeCount(for: .jira), 0)
         XCTAssertNil(model.numericBadgeCount(for: .music))
@@ -87,7 +87,7 @@ final class NotchViewModelProviderTests: XCTestCase {
         model.isExpanded = true
         await settleMainActorTasks()
 
-        XCTAssertEqual(model.selectedPanel, .limits)
+        XCTAssertEqual(model.selectedPanel, .ai)
         XCTAssertEqual(calendar.loadUpcomingEventsCallCount, 1)
         XCTAssertEqual(model.calendarState, calendar.upcomingState)
         XCTAssertEqual(jira.visibilities.last, true)
@@ -251,10 +251,46 @@ final class NotchViewModelProviderTests: XCTestCase {
         XCTAssertEqual(model.calendarEvents(for: Date()), [event])
     }
 
+    func testAISessionAttentionBadgeOverridesQuotaWarnings() async {
+        let source = MemoryAISessionSource()
+        let store = AISessionStore(sources: [source])
+        let model = makeModel(aiSessionStore: store)
+        source.publish([
+            aiSession(source: source, status: .waitingForApproval),
+            aiSession(source: source, id: "input", status: .waitingForInput)
+        ])
+        await settleMainActorTasks()
+
+        XCTAssertEqual(model.aiAttentionCount, 2)
+        XCTAssertEqual(model.numericBadgeCount(for: .ai), 2)
+    }
+
+    func testAISessionCollapsesOnlyAfterSuccessfulOpen() async {
+        let source = MemoryAISessionSource()
+        let store = AISessionStore(sources: [source])
+        let model = makeModel(aiSessionStore: store)
+        let session = aiSession(source: source, status: .running)
+        source.publish([session])
+        await settleMainActorTasks()
+
+        model.isExpanded = true
+        source.openResult = false
+        model.openAISession(session)
+        await settleMainActorTasks()
+        XCTAssertTrue(model.isExpanded)
+
+        source.openResult = true
+        model.openAISession(session)
+        await settleMainActorTasks()
+        XCTAssertFalse(model.isExpanded)
+        XCTAssertEqual(source.openedSessionIDs, ["session", "session"])
+    }
+
     private func makeModel(
         calendarProvider: FakeCalendarProvider = FakeCalendarProvider(),
         nowPlayingProvider: FakeNowPlayingProvider = FakeNowPlayingProvider(),
         jiraProvider: FakeJiraProvider = FakeJiraProvider(),
+        aiSessionStore: AISessionStore = AISessionStore(sources: []),
         preferences: MemoryAppPreferences = MemoryAppPreferences()
     ) -> NotchViewModel {
         NotchViewModel(
@@ -262,7 +298,25 @@ final class NotchViewModelProviderTests: XCTestCase {
             calendarProvider: calendarProvider,
             nowPlayingProvider: nowPlayingProvider,
             jiraProvider: jiraProvider,
+            aiSessionStore: aiSessionStore,
             preferences: preferences
+        )
+    }
+
+    private func aiSession(
+        source: MemoryAISessionSource,
+        id: String = "session",
+        status: AISessionStatus
+    ) -> AISession {
+        AISession(
+            id: AISessionID(sourceID: source.id, sessionID: id),
+            agentName: "Agent",
+            title: "Task",
+            workspacePath: "/tmp/NotchApp",
+            modelName: nil,
+            status: status,
+            lastActivity: .now,
+            isStale: false
         )
     }
 

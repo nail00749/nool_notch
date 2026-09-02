@@ -18,7 +18,10 @@ let package = Package(
         .executableTarget(
             name: "NotchApp",
             dependencies: ["NotchCore"],
-            path: "Sources/NotchApp"
+            path: "Sources/NotchApp",
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
+            ]
         ),
         .testTarget(
             name: "NotchAppTests",

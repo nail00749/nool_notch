@@ -350,7 +350,7 @@ final class NotchInteractionTests: XCTestCase {
             NotchWindowSizingPolicy.size(
                 metrics: metrics,
                 isExpanded: true,
-                selectedPanel: .limits,
+                selectedPanel: .ai,
                 calendarViewMode: .list,
                 isShowingSettings: false
             ),

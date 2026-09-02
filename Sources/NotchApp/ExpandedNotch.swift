@@ -114,8 +114,8 @@ struct ExpandedNotch: View {
     @ViewBuilder
     private func panelPage(_ panel: PanelID) -> some View {
         switch panel {
-        case .limits:
-            LimitsPanel(model: model)
+        case .ai:
+            AIPanel(model: model)
         case .calendar:
             CalendarPanel(model: model)
         case .music:
@@ -218,11 +218,13 @@ struct ExpandedNotch: View {
 
     private func panelBadge(_ panel: PanelID) -> PanelTabBadge? {
         switch panel {
-        case .limits:
-            let warningCount = model.numericBadgeCount(for: .limits) ?? 0
+        case .ai:
+            let warningCount = model.numericBadgeCount(for: .ai) ?? 0
             return PanelTabBadge(
                 text: String(warningCount),
-                color: warningCount > 0 ? Color.signalCoral : Color.white.opacity(0.42)
+                color: warningCount > 0
+                    ? (model.aiAttentionCount > 0 ? Color.signalAmber : Color.signalCoral)
+                    : Color.white.opacity(0.42)
             )
         case .calendar:
             let todayCount = model.numericBadgeCount(for: .calendar) ?? 0

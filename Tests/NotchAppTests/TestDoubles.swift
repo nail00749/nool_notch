@@ -9,6 +9,7 @@ final class MemoryAppPreferences: AppPreferencesStoring {
     var panelOrder: [PanelID]
     var hiddenPanelIDs: Set<PanelID>
     var startupPanel: PanelID?
+    var selectedAISection: AISection
     var hasCompletedPanelSwipe: Bool
     var quotaProviderOrder: [String]
     var hiddenQuotaProviderIDs: Set<String>
@@ -20,10 +21,11 @@ final class MemoryAppPreferences: AppPreferencesStoring {
 
     init(
         hoverExpansionDelay: TimeInterval = 0.5,
-        lastSelectedPanel: PanelID = .limits,
+        lastSelectedPanel: PanelID = .ai,
         panelOrder: [PanelID] = PanelID.allCases,
         hiddenPanelIDs: Set<PanelID> = [],
         startupPanel: PanelID? = nil,
+        selectedAISection: AISection = .limits,
         hasCompletedPanelSwipe: Bool = false,
         quotaProviderOrder: [String] = UserDefaultsAppPreferences.defaultQuotaProviderOrder,
         hiddenQuotaProviderIDs: Set<String> = [],
@@ -38,6 +40,7 @@ final class MemoryAppPreferences: AppPreferencesStoring {
         self.panelOrder = panelOrder
         self.hiddenPanelIDs = hiddenPanelIDs
         self.startupPanel = startupPanel
+        self.selectedAISection = selectedAISection
         self.hasCompletedPanelSwipe = hasCompletedPanelSwipe
         self.quotaProviderOrder = quotaProviderOrder
         self.hiddenQuotaProviderIDs = hiddenQuotaProviderIDs
@@ -46,6 +49,40 @@ final class MemoryAppPreferences: AppPreferencesStoring {
         self.jiraSelectedProjectKeys = jiraSelectedProjectKeys
         self.jiraPinnedContainers = jiraPinnedContainers
         self.jiraPinnedIssues = jiraPinnedIssues
+    }
+}
+
+@MainActor
+final class MemoryAISessionSource: AISessionSource {
+    let id: String
+    let displayName: String
+    var openResult = true
+    private(set) var openedSessionIDs: [String] = []
+    private var continuation: AsyncStream<AISessionSourceSnapshot>.Continuation?
+
+    init(id: String = "memory-ai") {
+        self.id = id
+        self.displayName = id
+    }
+
+    func snapshots() -> AsyncStream<AISessionSourceSnapshot> {
+        AsyncStream { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func open(sessionID: String) async -> Bool {
+        openedSessionIDs.append(sessionID)
+        return openResult
+    }
+
+    func publish(_ sessions: [AISession], health: AISessionSourceHealth = .live) {
+        continuation?.yield(AISessionSourceSnapshot(
+            sourceID: id,
+            sessions: sessions,
+            health: health,
+            updatedAt: .now
+        ))
     }
 }
 

@@ -28,6 +28,10 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var panelOrder: [PanelID]
     @Published private(set) var hiddenPanelIDs: Set<PanelID>
     @Published private(set) var startupPanel: PanelID?
+    @Published private(set) var selectedAISection: AISection
+    @Published private(set) var aiSessions: [AISession] = []
+    @Published private(set) var aiSourceHealth: [String: AISessionSourceHealth] = [:]
+    @Published private(set) var aiSessionsUpdatedAt: Date?
     @Published private(set) var hasCompletedPanelSwipe: Bool
     @Published private(set) var hoverExpansionDelay: TimeInterval
     @Published var calendarViewMode: CalendarViewMode = .list
@@ -51,10 +55,12 @@ final class NotchViewModel: ObservableObject {
     private let calendarProvider: any CalendarProviding
     private let nowPlayingProvider: any NowPlayingProviding
     private let jiraProvider: any JiraProviding
+    private let aiSessionStore: AISessionStore
     private var collapseTask: Task<Void, Never>?
     private var calendarTask: Task<Void, Never>?
     private var calendarMonthTask: Task<Void, Never>?
     private var hasLoadedCalendar = false
+    private var cancellables = Set<AnyCancellable>()
 
     init(
         providers: [any QuotaProvider] = [
@@ -65,12 +71,14 @@ final class NotchViewModel: ObservableObject {
         calendarProvider: any CalendarProviding = CalendarEventProvider(),
         nowPlayingProvider: any NowPlayingProviding = NowPlayingProvider(),
         jiraProvider: (any JiraProviding)? = nil,
+        aiSessionStore: AISessionStore = AISessionStore(sources: []),
         preferences: any AppPreferencesStoring = UserDefaultsAppPreferences()
     ) {
         self.providers = providers
         self.calendarProvider = calendarProvider
         self.nowPlayingProvider = nowPlayingProvider
         self.preferences = preferences
+        self.aiSessionStore = aiSessionStore
         self.jiraProvider = jiraProvider ?? JiraProvider(
             client: JiraClient(),
             credentialStore: KeychainJiraCredentialStore(),
@@ -83,10 +91,11 @@ final class NotchViewModel: ObservableObject {
         self.panelOrder = panelOrder
         self.hiddenPanelIDs = hiddenPanelIDs
         self.startupPanel = preferences.startupPanel
+        self.selectedAISection = preferences.selectedAISection
         self.hasCompletedPanelSwipe = preferences.hasCompletedPanelSwipe
         self.selectedPanel = visiblePanels.contains(preferredPanel)
             ? preferredPanel
-            : visiblePanels.first ?? .limits
+            : visiblePanels.first ?? .ai
         self.hoverExpansionDelay = preferences.hoverExpansionDelay
         let providerIDs = providers.map(\.id)
         let quotaProviderOrder = Self.normalizedQuotaProviderOrder(
@@ -148,7 +157,17 @@ final class NotchViewModel: ObservableObject {
                 self.jiraRefreshedAt = .now
             }
         }
+        aiSessionStore.$sessions
+            .sink { [weak self] sessions in self?.aiSessions = sessions }
+            .store(in: &cancellables)
+        aiSessionStore.$sourceHealth
+            .sink { [weak self] health in self?.aiSourceHealth = health }
+            .store(in: &cancellables)
+        aiSessionStore.$lastUpdatedAt
+            .sink { [weak self] date in self?.aiSessionsUpdatedAt = date }
+            .store(in: &cancellables)
         updateProviderActivity()
+        aiSessionStore.start()
         self.jiraProvider.start()
         nowPlayingProvider.start()
         refresh()
@@ -227,6 +246,22 @@ final class NotchViewModel: ObservableObject {
         updateProviderActivity()
     }
 
+    func selectAISection(_ section: AISection) {
+        selectedAISection = section
+        preferences.selectedAISection = section
+    }
+
+    var aiAttentionCount: Int {
+        aiSessions.filter { $0.status.needsAttention }.count
+    }
+
+    func openAISession(_ session: AISession) {
+        Task { @MainActor [weak self] in
+            guard let self, await self.aiSessionStore.open(session) else { return }
+            self.isExpanded = false
+        }
+    }
+
     var visiblePanels: [PanelID] {
         panelOrder.filter { hiddenPanelIDs.contains($0) == false }
     }
@@ -276,17 +311,20 @@ final class NotchViewModel: ObservableObject {
 
     func lastUpdatedAt(for panel: PanelID) -> Date? {
         switch panel {
-        case .limits:
-            visibleQuotaProviders.compactMap { snapshots[$0.id] }
+        case .ai:
+            if selectedAISection == .sessions {
+                return aiSessionsUpdatedAt
+            }
+            return visibleQuotaProviders.compactMap { snapshots[$0.id] }
                 .filter { $0.connection != .unavailable }
                 .map(\.updatedAt)
                 .max()
         case .calendar:
-            calendarRefreshedAt
+            return calendarRefreshedAt
         case .music:
-            nowPlayingDiagnostics.lastSuccessfulUpdate ?? nowPlayingSnapshot?.updatedAt
+            return nowPlayingDiagnostics.lastSuccessfulUpdate ?? nowPlayingSnapshot?.updatedAt
         case .jira:
-            jiraRefreshedAt
+            return jiraRefreshedAt
         }
     }
 
@@ -296,7 +334,8 @@ final class NotchViewModel: ObservableObject {
         calendar: Calendar = .current
     ) -> Int? {
         switch panel {
-        case .limits:
+        case .ai:
+            if aiAttentionCount > 0 { return aiAttentionCount }
             return visibleQuotaProviders.compactMap { snapshots[$0.id] }
                 .flatMap(\.windows)
                 .filter { ($0.remainingRatio ?? 1) < 0.2 }
