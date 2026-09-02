@@ -3,6 +3,13 @@ import Combine
 import Foundation
 import NotchCore
 
+enum NotchTransientSurface: Hashable {
+    case jiraFilters
+    case jiraSearch
+    case jiraWorklog(String)
+    case jiraTransitions(String)
+}
+
 @MainActor
 final class NotchViewModel: ObservableObject {
     @Published var isExpanded = false {
@@ -14,6 +21,8 @@ final class NotchViewModel: ObservableObject {
         }
     }
     @Published private(set) var isContextMenuVisible = false
+    @Published private(set) var activeTransientSurfaces: Set<NotchTransientSurface> = []
+    @Published private(set) var transientSurfaceDismissalRequest = 0
     @Published var expandedContentVisible = false
     @Published private(set) var selectedPanel: PanelID
     @Published private(set) var panelOrder: [PanelID]
@@ -347,6 +356,19 @@ final class NotchViewModel: ObservableObject {
         collapseTask = nil
     }
 
+    var isTransientSurfaceVisible: Bool {
+        isContextMenuVisible || activeTransientSurfaces.isEmpty == false
+    }
+
+    func transientSurfaceDidPresent(_ surface: NotchTransientSurface) {
+        activeTransientSurfaces.insert(surface)
+        cancelScheduledCollapse()
+    }
+
+    func transientSurfaceDidDisappear(_ surface: NotchTransientSurface) {
+        activeTransientSurfaces.remove(surface)
+    }
+
     func scheduleCollapse(
         after delay: TimeInterval = NotchHoverPolicy.collapseGracePeriod,
         onlyIf shouldCollapse: @escaping @MainActor () -> Bool = { true }
@@ -357,6 +379,11 @@ final class NotchViewModel: ObservableObject {
             try? await Task.sleep(nanoseconds: nanoseconds)
             guard !Task.isCancelled else { return }
             guard shouldCollapse() else {
+                self?.collapseTask = nil
+                return
+            }
+            guard self?.isTransientSurfaceVisible == false else {
+                self?.transientSurfaceDismissalRequest += 1
                 self?.collapseTask = nil
                 return
             }
@@ -460,12 +487,51 @@ final class NotchViewModel: ObservableObject {
         jiraProvider.setSelectedProjectKeys(keys)
     }
 
+    func refreshJiraPinnedCatalog() {
+        jiraProvider.refreshPinnedCatalog()
+    }
+
+    func toggleJiraPinnedContainer(_ container: JiraPinnedContainer) {
+        jiraProvider.togglePinnedContainer(container)
+    }
+
+    func moveJiraPinnedContainer(_ container: JiraPinnedContainer, by offset: Int) {
+        jiraProvider.movePinnedContainer(container, by: offset)
+    }
+
+    func pinJiraIssue(key: String) async {
+        await jiraProvider.pinIssue(key: key)
+    }
+
+    func removeJiraPinnedIssue(_ issue: JiraPinnedIssue) {
+        jiraProvider.removePinnedIssue(issue)
+    }
+
+    func moveJiraPinnedIssue(_ issue: JiraPinnedIssue, by offset: Int) {
+        jiraProvider.movePinnedIssue(issue, by: offset)
+    }
+
+    func selectJiraPinnedSource(_ source: JiraPinnedSourceID) {
+        jiraProvider.selectPinnedSource(source)
+    }
+
+    func refreshJiraPinnedSource() {
+        jiraProvider.refreshPinnedSource()
+    }
+
     func loadJiraTransitions(for issueKey: String) async {
         await jiraProvider.loadTransitions(for: issueKey)
     }
 
     func submitJiraTransition(issueKey: String, transition: JiraTransition) async {
         await jiraProvider.performTransition(issueKey: issueKey, transition: transition)
+    }
+
+    func submitJiraWorklog(
+        issueKey: String,
+        draft: JiraWorklogDraft
+    ) async -> Result<Void, JiraAPIError> {
+        await jiraProvider.addWorklog(issueKey: issueKey, draft: draft)
     }
 
     func calendarEvents(for month: Date) -> [CalendarEvent] {

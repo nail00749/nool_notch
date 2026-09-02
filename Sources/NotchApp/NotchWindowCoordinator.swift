@@ -1,6 +1,10 @@
 import AppKit
 import SwiftUI
 
+enum NotchWindowHostingPolicy {
+    static let sizingOptions: NSHostingSizingOptions = []
+}
+
 @MainActor
 final class NotchWindowCoordinator: NSObject {
     private let window: NotchPanel
@@ -66,6 +70,7 @@ final class NotchWindowCoordinator: NSObject {
         )
         .preferredColorScheme(.dark)
         let hostingView = NSHostingView(rootView: contentView)
+        hostingView.sizingOptions = NotchWindowHostingPolicy.sizingOptions
         hostingView.wantsLayer = true
         hostingView.layer?.isOpaque = false
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor

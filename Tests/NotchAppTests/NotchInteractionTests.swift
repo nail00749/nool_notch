@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import QuartzCore
+import SwiftUI
 import XCTest
 @testable import NotchApp
 
@@ -189,6 +190,59 @@ final class NotchInteractionTests: XCTestCase {
             NotchHoverPolicy.collapseDelay(elapsedSinceExpansion: 1.0),
             0.18,
             accuracy: 0.001
+        )
+    }
+
+    @MainActor
+    func testHostingViewCannotResizeNotchWindowBeforeCoordinator() {
+        let initialFrame = NSRect(x: 650, y: 1_378, width: 500, height: 380)
+        let window = NSPanel(
+            contentRect: initialFrame,
+            styleMask: [.borderless, .nonactivatingPanel, .utilityWindow, .hudWindow],
+            backing: .buffered,
+            defer: false
+        )
+        let hostingView = NSHostingView(
+            rootView: AnyView(Color.clear.frame(width: 500, height: 380))
+        )
+        hostingView.sizingOptions = NotchWindowHostingPolicy.sizingOptions
+        window.contentView = hostingView
+
+        hostingView.rootView = AnyView(Color.clear.frame(width: 340, height: 40))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        XCTAssertEqual(window.frame, initialFrame)
+    }
+
+    @MainActor
+    func testTransitionStackPinsCompactChildToTopDuringCoexistence() throws {
+        let recorder = LayoutFrameRecorder()
+        let initialFrame = NSRect(x: 100, y: 100, width: 500, height: 380)
+        let window = NSPanel(
+            contentRect: initialFrame,
+            styleMask: [.borderless, .nonactivatingPanel, .utilityWindow, .hudWindow],
+            backing: .buffered,
+            defer: false
+        )
+        let hostingView = NSHostingView(
+            rootView: NotchTransitionStack {
+                Color.red.frame(width: 500, height: 380)
+                Color.green
+                    .frame(width: 340, height: 40)
+                    .overlay(LayoutFrameProbe(recorder: recorder))
+            }
+        )
+        hostingView.sizingOptions = NotchWindowHostingPolicy.sizingOptions
+        window.contentView = hostingView
+        hostingView.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        hostingView.layoutSubtreeIfNeeded()
+
+        let compactFrame = try XCTUnwrap(recorder.frame)
+        XCTAssertEqual(
+            compactFrame.maxY,
+            hostingView.bounds.maxY,
+            accuracy: 1
         )
     }
 
@@ -491,6 +545,36 @@ final class NotchInteractionTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testWorklogIconUsesSystemSymbolsAvailableOnMacOS() {
+        for symbolName in JiraWorklogIcon.symbolNames {
+            XCTAssertNotNil(
+                NSImage(systemSymbolName: symbolName, accessibilityDescription: nil),
+                "Expected SF Symbol \(symbolName) to be available on macOS"
+            )
+        }
+    }
+
+    @MainActor
+    func testWorklogWheelHapticEmitsOnePulsePerSelection() {
+        var pulseCount = 0
+
+        NotchHaptics.wheelSelectionChanged(performPulse: {
+            pulseCount += 1
+        })
+
+        XCTAssertEqual(pulseCount, 1)
+    }
+
+    func testWorklogPopoverDisablesAnimationOnlyWhenDismissing() {
+        XCTAssertFalse(
+            JiraWorklogPopoverAnimationPolicy.disablesAnimations(isPresented: true)
+        )
+        XCTAssertTrue(
+            JiraWorklogPopoverAnimationPolicy.disablesAnimations(isPresented: false)
+        )
+    }
+
     private func jiraTestCalendar() -> Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -518,5 +602,44 @@ final class NotchInteractionTests: XCTestCase {
             dueDate: dueDate,
             updatedAt: nil
         )
+    }
+
+}
+
+@MainActor
+private final class LayoutFrameRecorder {
+    var frame: NSRect?
+}
+
+private struct LayoutFrameProbe: NSViewRepresentable {
+    let recorder: LayoutFrameRecorder
+
+    func makeNSView(context: Context) -> LayoutFrameProbeView {
+        LayoutFrameProbeView(recorder: recorder)
+    }
+
+    func updateNSView(_ nsView: LayoutFrameProbeView, context: Context) {
+        nsView.recorder = recorder
+        nsView.needsLayout = true
+    }
+}
+
+@MainActor
+private final class LayoutFrameProbeView: NSView {
+    var recorder: LayoutFrameRecorder
+
+    init(recorder: LayoutFrameRecorder) {
+        self.recorder = recorder
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        recorder.frame = convert(bounds, to: nil)
     }
 }

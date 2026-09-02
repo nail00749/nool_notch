@@ -1,6 +1,21 @@
 import AppKit
 import SwiftUI
 
+struct NotchTransitionStack<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            content
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
 struct NotchRootView: View {
     @ObservedObject var model: NotchViewModel
     @ObservedObject var visualSettings: NotchVisualSettings
@@ -36,7 +51,7 @@ struct NotchRootView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        NotchTransitionStack {
             if model.isExpanded {
                 ExpandedNotch(
                     model: model,
@@ -54,11 +69,6 @@ struct NotchRootView: View {
                 )
             }
         }
-        .frame(
-            width: currentSize.width,
-            height: currentSize.height,
-            alignment: .top
-        )
         .offset(y: playbackBounce ? -4 : 0)
         .animation(stateAnimation, value: model.isExpanded)
         .animation(stateAnimation, value: isCompactPlaybackActive)
@@ -85,6 +95,10 @@ struct NotchRootView: View {
         }
         .onChange(of: visualSettings.compactHeight) { _, _ in
             onLayoutChange(model.isExpanded, reduceMotion)
+        }
+        .onChange(of: model.isTransientSurfaceVisible) { wasVisible, isVisible in
+            guard wasVisible, isVisible == false, model.isExpanded else { return }
+            setExpanded(false)
         }
         .onChange(of: playbackSignal) { _, _ in
             onLayoutChange(model.isExpanded, reduceMotion)
@@ -135,7 +149,7 @@ struct NotchRootView: View {
             isHovering: isHovering,
             isExpanded: model.isExpanded,
             hoverExpansionEnabled: hoverExpansionEnabled,
-            isContextMenuVisible: model.isContextMenuVisible
+            isContextMenuVisible: model.isTransientSurfaceVisible
         ) {
         case .expand:
             scheduleExpansion()

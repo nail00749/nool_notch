@@ -23,8 +23,20 @@ protocol JiraProviding: AnyObject {
     ) async -> Result<JiraUser, JiraAPIError>
     func disconnect()
     func setSelectedProjectKeys(_ keys: Set<String>)
+    func refreshPinnedCatalog()
+    func togglePinnedContainer(_ container: JiraPinnedContainer)
+    func movePinnedContainer(_ container: JiraPinnedContainer, by offset: Int)
+    func pinIssue(key: String) async
+    func removePinnedIssue(_ issue: JiraPinnedIssue)
+    func movePinnedIssue(_ issue: JiraPinnedIssue, by offset: Int)
+    func selectPinnedSource(_ source: JiraPinnedSourceID)
+    func refreshPinnedSource()
     func loadTransitions(for issueKey: String) async
     func performTransition(issueKey: String, transition: JiraTransition) async
+    func addWorklog(
+        issueKey: String,
+        draft: JiraWorklogDraft
+    ) async -> Result<Void, JiraAPIError>
 }
 
 enum NowPlayingSource: String, Equatable, Sendable {

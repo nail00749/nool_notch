@@ -247,8 +247,11 @@ struct NotchSettingsView: View {
         case .music:
             musicPage
         case .jira:
-            SettingsCard(title: "Подключение", icon: "key.horizontal") {
-                JiraConnectionSettingsView(model: model)
+            VStack(spacing: 12) {
+                SettingsCard(title: "Подключение", icon: "key.horizontal") {
+                    JiraConnectionSettingsView(model: model)
+                }
+                JiraPinnedSettingsView(model: model)
             }
         }
     }
@@ -770,7 +773,7 @@ struct NotchSettingsView: View {
     }
 }
 
-private struct SettingsCard<Content: View>: View {
+struct SettingsCard<Content: View>: View {
     let title: String
     let icon: String
     let content: Content

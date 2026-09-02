@@ -51,8 +51,38 @@ struct JiraSearchPage: Equatable, Sendable {
     let total: Int
 }
 
+struct JiraWorklogDraft: Equatable, Sendable {
+    static let hourRange = 0...24
+    static let minuteRange = 0...59
+
+    let hours: Int
+    let minutes: Int
+    let description: String
+
+    var timeSpentSeconds: Int? {
+        guard Self.hourRange.contains(hours),
+              Self.minuteRange.contains(minutes) else { return nil }
+        let seconds = (hours * 60 + minutes) * 60
+        return seconds > 0 ? seconds : nil
+    }
+
+    var normalizedDescription: String {
+        description.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var isValid: Bool {
+        timeSpentSeconds != nil && !normalizedDescription.isEmpty
+    }
+}
+
+enum JiraWorklogDurationOptions {
+    static let hourValues = Array(JiraWorklogDraft.hourRange)
+    static let minuteValues = Array(stride(from: 0, through: 55, by: 5))
+}
+
 enum JiraAPIError: Error, Equatable, Sendable {
     case invalidBaseURL
+    case invalidWorklog
     case notConfigured
     case unauthorized
     case forbidden
@@ -94,18 +124,21 @@ struct JiraProviderState: Equatable, Sendable {
     var selectedProjectKeys: Set<String>
     var list: JiraListState
     var transitionsByIssueKey: [String: JiraTransitionState]
+    var pinned: JiraPinnedState
 
     init(
         connection: JiraConnectionState = .notConfigured,
         projects: [JiraProject] = [],
         selectedProjectKeys: Set<String> = [],
         list: JiraListState = .idle,
-        transitionsByIssueKey: [String: JiraTransitionState] = [:]
+        transitionsByIssueKey: [String: JiraTransitionState] = [:],
+        pinned: JiraPinnedState = JiraPinnedState()
     ) {
         self.connection = connection
         self.projects = projects
         self.selectedProjectKeys = selectedProjectKeys
         self.list = list
         self.transitionsByIssueKey = transitionsByIssueKey
+        self.pinned = pinned
     }
 }

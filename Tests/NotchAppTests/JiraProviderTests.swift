@@ -623,6 +623,129 @@ final class JiraProviderTests: XCTestCase {
     }
 
     @MainActor
+    func testAddWorklogUsesStoredConfigurationOnce() async {
+        let (provider, client, _, _, _) = makeConfiguredProvider()
+        let draft = JiraWorklogDraft(
+            hours: 1,
+            minutes: 30,
+            description: "  Implemented cache invalidation. "
+        )
+
+        let result = await provider.addWorklog(issueKey: "APP-184", draft: draft)
+
+        guard case .success = result else {
+            return XCTFail("Expected successful worklog submission, got \(result)")
+        }
+        XCTAssertEqual(client.addWorklogCallCount, 1)
+        XCTAssertEqual(client.addedWorklogs.count, 1)
+        XCTAssertEqual(client.addedWorklogs.first?.issueKey, "APP-184")
+        XCTAssertEqual(client.addedWorklogs.first?.timeSpentSeconds, 5_400)
+        XCTAssertEqual(client.addedWorklogs.first?.comment, "Implemented cache invalidation.")
+    }
+
+    @MainActor
+    func testAddWorklogReturnsUnauthorizedWithoutRetrying() async {
+        let (provider, client, _, _, recorder) = makeConfiguredProvider()
+        client.addWorklogResult = .failure(JiraAPIError.unauthorized)
+        let draft = JiraWorklogDraft(hours: 1, minutes: 0, description: "Done")
+
+        let result = await provider.addWorklog(issueKey: "APP-184", draft: draft)
+
+        guard case .failure(.unauthorized) = result else {
+            return XCTFail("Expected unauthorized worklog failure, got \(result)")
+        }
+        XCTAssertEqual(client.addWorklogCallCount, 1)
+        XCTAssertEqual(recorder.latest?.connection, .failed(.unauthorized))
+    }
+
+    @MainActor
+    func testAddWorklogRejectsInvalidDraftBeforeNetwork() async {
+        let (provider, client, _, _, _) = makeConfiguredProvider()
+
+        let result = await provider.addWorklog(
+            issueKey: "APP-184",
+            draft: JiraWorklogDraft(hours: 0, minutes: 0, description: "Done")
+        )
+
+        guard case .failure(.invalidWorklog) = result else {
+            return XCTFail("Expected invalid worklog failure, got \(result)")
+        }
+        XCTAssertEqual(client.addWorklogCallCount, 0)
+    }
+
+    @MainActor
+    func testConcurrentWorklogSubmissionsForSameIssueShareSingleRequest() async {
+        let (provider, client, _, _, _) = makeConfiguredProvider()
+        client.controlledAddWorklogCalls = [1]
+        let draft = JiraWorklogDraft(hours: 1, minutes: 0, description: "Done")
+
+        let first = Task {
+            await provider.addWorklog(issueKey: "APP-184", draft: draft)
+        }
+        await waitUntil { client.addWorklogCallCount == 1 }
+
+        let second = Task {
+            await provider.addWorklog(issueKey: "APP-184", draft: draft)
+        }
+        for _ in 0..<5 { await Task.yield() }
+
+        client.resumeAddWorklogCall(1, with: .success(()))
+        let firstResult = await first.value
+        let secondResult = await second.value
+
+        guard case .success = firstResult,
+              case .success = secondResult else {
+            return XCTFail("Expected both callers to share a successful submission")
+        }
+        XCTAssertEqual(client.addWorklogCallCount, 1)
+    }
+
+    @MainActor
+    func testReconnectDuringPendingWorklogUsesNewConnectionAndKeepsNewRequestOwned() async {
+        let (provider, client, _, _, recorder) = makeConfiguredProvider()
+        provider.start()
+        client.controlledAddWorklogCalls = [1, 2]
+        let draft = JiraWorklogDraft(hours: 1, minutes: 0, description: "Done")
+
+        let oldConnectionRequest = Task {
+            await provider.addWorklog(issueKey: "APP-184", draft: draft)
+        }
+        await waitUntil { client.addWorklogCallCount == 1 }
+
+        let reconnect = await provider.connect(
+            baseURLText: "https://jira-new.example.com",
+            token: "new-secret"
+        )
+        guard case .success = reconnect else {
+            return XCTFail("Expected reconnect to succeed")
+        }
+
+        let newConnectionRequest = Task {
+            await provider.addWorklog(issueKey: "APP-184", draft: draft)
+        }
+        await waitUntil { client.addWorklogCallCount == 2 }
+
+        client.resumeAddWorklogCall(1, with: .failure(JiraAPIError.unauthorized))
+        guard case .failure(.unauthorized) = await oldConnectionRequest.value else {
+            return XCTFail("Expected the old connection request to fail unauthorized")
+        }
+        XCTAssertEqual(recorder.latest?.connection, .connected(.fixture()))
+
+        let sharedNewConnectionRequest = Task {
+            await provider.addWorklog(issueKey: "APP-184", draft: draft)
+        }
+        for _ in 0..<5 { await Task.yield() }
+        XCTAssertEqual(client.addWorklogCallCount, 2)
+
+        client.resumeAddWorklogCall(2, with: .success(()))
+        guard case .success = await newConnectionRequest.value,
+              case .success = await sharedNewConnectionRequest.value else {
+            return XCTFail("Expected callers on the new connection to share its request")
+        }
+        XCTAssertEqual(client.addWorklogCallCount, 2)
+    }
+
+    @MainActor
     func testTransitionStateIsScopedByIssueKey() async {
         let (provider, client, _, _, recorder) = makeConfiguredProvider()
         let webTransition = JiraTransition(

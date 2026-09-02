@@ -10,8 +10,13 @@ final class MemoryAppPreferences: AppPreferencesStoring {
     var hiddenPanelIDs: Set<PanelID>
     var startupPanel: PanelID?
     var hasCompletedPanelSwipe: Bool
+    var quotaProviderOrder: [String]
+    var hiddenQuotaProviderIDs: Set<String>
+    var compactQuotaProviderID: String
     var jiraBaseURLString: String?
     var jiraSelectedProjectKeys: Set<String>
+    var jiraPinnedContainers: [JiraPinnedContainer]
+    var jiraPinnedIssues: [JiraPinnedIssue]
 
     init(
         hoverExpansionDelay: TimeInterval = 0.5,
@@ -20,8 +25,13 @@ final class MemoryAppPreferences: AppPreferencesStoring {
         hiddenPanelIDs: Set<PanelID> = [],
         startupPanel: PanelID? = nil,
         hasCompletedPanelSwipe: Bool = false,
+        quotaProviderOrder: [String] = UserDefaultsAppPreferences.defaultQuotaProviderOrder,
+        hiddenQuotaProviderIDs: Set<String> = [],
+        compactQuotaProviderID: String = UserDefaultsAppPreferences.defaultQuotaProviderOrder[0],
         jiraBaseURLString: String? = nil,
-        jiraSelectedProjectKeys: Set<String> = []
+        jiraSelectedProjectKeys: Set<String> = [],
+        jiraPinnedContainers: [JiraPinnedContainer] = [],
+        jiraPinnedIssues: [JiraPinnedIssue] = []
     ) {
         self.hoverExpansionDelay = hoverExpansionDelay
         self.lastSelectedPanel = lastSelectedPanel
@@ -29,8 +39,13 @@ final class MemoryAppPreferences: AppPreferencesStoring {
         self.hiddenPanelIDs = hiddenPanelIDs
         self.startupPanel = startupPanel
         self.hasCompletedPanelSwipe = hasCompletedPanelSwipe
+        self.quotaProviderOrder = quotaProviderOrder
+        self.hiddenQuotaProviderIDs = hiddenQuotaProviderIDs
+        self.compactQuotaProviderID = compactQuotaProviderID
         self.jiraBaseURLString = jiraBaseURLString
         self.jiraSelectedProjectKeys = jiraSelectedProjectKeys
+        self.jiraPinnedContainers = jiraPinnedContainers
+        self.jiraPinnedIssues = jiraPinnedIssues
     }
 }
 
@@ -73,22 +88,34 @@ final class MemoryJiraCredentialStore: JiraCredentialStoring {
 final class FakeJiraClient: JiraClientProtocol {
     var currentUserResult: Result<JiraUser, Error> = .success(.fixture())
     var projectsResult: Result<[JiraProject], Error> = .success([.appFixture])
+    var boardsResult: Result<[JiraBoard], Error> = .success([])
     var defaultIssuesResult: Result<JiraSearchPage, Error> = .success(.appFixture)
+    var boardIssuesResult: Result<JiraSearchPage, Error> = .success(.appFixture)
+    var projectIssuesResult: Result<JiraSearchPage, Error> = .success(.appFixture)
+    var directIssueResult: Result<JiraIssue, Error> = .success(.fixture())
     var issueResultsByCall: [Int: Result<JiraSearchPage, Error>] = [:]
     var controlledIssueCalls: Set<Int> = []
     var controlledTransitionIssueKeys: Set<String> = []
     var controlledPerformTransitionIssueKeys: Set<String> = []
+    var controlledAddWorklogCalls: Set<Int> = []
     var transitionResultsByIssueKey: [String: Result<[JiraTransition], Error>] = [:]
     var performTransitionResult: Result<Void, Error> = .success(())
+    var addWorklogResult: Result<Void, Error> = .success(())
 
     private(set) var currentUserCallCount = 0
     private(set) var projectCallCount = 0
     private(set) var issueCallCount = 0
     private(set) var transitionCallCount = 0
     private(set) var performTransitionCallCount = 0
+    private(set) var addWorklogCallCount = 0
     private(set) var issueRequests: [Set<String>] = []
     private(set) var transitionIssueKeys: [String] = []
     private(set) var performedTransitions: [(issueKey: String, transitionID: String)] = []
+    private(set) var addedWorklogs: [(
+        issueKey: String,
+        timeSpentSeconds: Int,
+        comment: String
+    )] = []
     private(set) var transitionCancellationCount = 0
     private(set) var performTransitionCancellationCount = 0
 
@@ -98,6 +125,9 @@ final class FakeJiraClient: JiraClientProtocol {
     ] = [:]
     private var controlledPerformTransitionContinuations: [
         String: CheckedContinuation<Void, Error>
+    ] = [:]
+    private var controlledAddWorklogContinuations: [
+        Int: CheckedContinuation<Void, Error>
     ] = [:]
 
     func currentUser(baseURL: URL, token: String) async throws -> JiraUser {
@@ -126,6 +156,30 @@ final class FakeJiraClient: JiraClientProtocol {
         }
 
         return try (issueResultsByCall[call] ?? defaultIssuesResult).get()
+    }
+
+    func boards(baseURL: URL, token: String) async throws -> [JiraBoard] {
+        try boardsResult.get()
+    }
+
+    func boardIssues(
+        baseURL: URL,
+        token: String,
+        boardID: String
+    ) async throws -> JiraSearchPage {
+        try boardIssuesResult.get()
+    }
+
+    func projectIssues(
+        baseURL: URL,
+        token: String,
+        projectKey: String
+    ) async throws -> JiraSearchPage {
+        try projectIssuesResult.get()
+    }
+
+    func issue(baseURL: URL, token: String, issueKey: String) async throws -> JiraIssue {
+        try directIssueResult.get()
     }
 
     func transitions(
@@ -172,6 +226,25 @@ final class FakeJiraClient: JiraClientProtocol {
         try performTransitionResult.get()
     }
 
+    func addWorklog(
+        baseURL: URL,
+        token: String,
+        issueKey: String,
+        timeSpentSeconds: Int,
+        comment: String
+    ) async throws {
+        addWorklogCallCount += 1
+        let call = addWorklogCallCount
+        addedWorklogs.append((issueKey, timeSpentSeconds, comment))
+        if controlledAddWorklogCalls.contains(call) {
+            try await withCheckedThrowingContinuation { continuation in
+                controlledAddWorklogContinuations[call] = continuation
+            }
+            return
+        }
+        try addWorklogResult.get()
+    }
+
     func resumeIssueCall(_ call: Int, with result: Result<JiraSearchPage, Error>) {
         guard let continuation = controlledIssueContinuations.removeValue(forKey: call) else {
             XCTFail("No controlled Jira issue request for call \(call)")
@@ -197,6 +270,17 @@ final class FakeJiraClient: JiraClientProtocol {
     ) {
         guard let continuation = controlledPerformTransitionContinuations.removeValue(forKey: issueKey) else {
             XCTFail("No controlled Jira transition POST for \(issueKey)")
+            return
+        }
+        continuation.resume(with: result)
+    }
+
+    func resumeAddWorklogCall(
+        _ call: Int,
+        with result: Result<Void, Error>
+    ) {
+        guard let continuation = controlledAddWorklogContinuations.removeValue(forKey: call) else {
+            XCTFail("No controlled Jira worklog POST for call \(call)")
             return
         }
         continuation.resume(with: result)
@@ -311,6 +395,7 @@ final class FakeJiraProvider: JiraProviding {
     var connectResult: Result<JiraUser, JiraAPIError> = .success(
         .fixture(displayName: "Connected User")
     )
+    var addWorklogResult: Result<Void, JiraAPIError> = .success(())
 
     private(set) var didStart = false
     private(set) var didStop = false
@@ -322,6 +407,7 @@ final class FakeJiraProvider: JiraProviding {
     private(set) var selectedProjectKeySets: [Set<String>] = []
     private(set) var loadedTransitionIssueKeys: [String] = []
     private(set) var submittedTransitions: [(issueKey: String, transition: JiraTransition)] = []
+    private(set) var submittedWorklogs: [(issueKey: String, draft: JiraWorklogDraft)] = []
 
     func start() { didStart = true }
     func stop() { didStop = true }
@@ -359,12 +445,36 @@ final class FakeJiraProvider: JiraProviding {
         selectedProjectKeySets.append(keys)
     }
 
+    func refreshPinnedCatalog() {}
+
+    func togglePinnedContainer(_ container: JiraPinnedContainer) {}
+
+    func movePinnedContainer(_ container: JiraPinnedContainer, by offset: Int) {}
+
+    func pinIssue(key: String) async {}
+
+    func removePinnedIssue(_ issue: JiraPinnedIssue) {}
+
+    func movePinnedIssue(_ issue: JiraPinnedIssue, by offset: Int) {}
+
+    func selectPinnedSource(_ source: JiraPinnedSourceID) {}
+
+    func refreshPinnedSource() {}
+
     func loadTransitions(for issueKey: String) async {
         loadedTransitionIssueKeys.append(issueKey)
     }
 
     func performTransition(issueKey: String, transition: JiraTransition) async {
         submittedTransitions.append((issueKey, transition))
+    }
+
+    func addWorklog(
+        issueKey: String,
+        draft: JiraWorklogDraft
+    ) async -> Result<Void, JiraAPIError> {
+        submittedWorklogs.append((issueKey, draft))
+        return addWorklogResult
     }
 
     func send(state: JiraProviderState) {

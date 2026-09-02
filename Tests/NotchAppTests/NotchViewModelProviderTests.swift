@@ -149,6 +149,21 @@ final class NotchViewModelProviderTests: XCTestCase {
         XCTAssertEqual(jira.submittedTransitions.first?.transition, transition)
     }
 
+    func testViewModelDelegatesJiraWorklog() async {
+        let jira = FakeJiraProvider()
+        let model = makeModel(jiraProvider: jira)
+        let draft = JiraWorklogDraft(hours: 2, minutes: 15, description: "Reviewed pull request")
+
+        let result = await model.submitJiraWorklog(issueKey: "APP-184", draft: draft)
+
+        guard case .success = result else {
+            return XCTFail("Expected successful worklog submission, got \(result)")
+        }
+        XCTAssertEqual(jira.submittedWorklogs.count, 1)
+        XCTAssertEqual(jira.submittedWorklogs.first?.issueKey, "APP-184")
+        XCTAssertEqual(jira.submittedWorklogs.first?.draft, draft)
+    }
+
     func testViewModelExposesConfiguredJiraBaseURLWithoutCredentials() {
         let preferences = MemoryAppPreferences(
             jiraBaseURLString: "https://jira.example.test/company"

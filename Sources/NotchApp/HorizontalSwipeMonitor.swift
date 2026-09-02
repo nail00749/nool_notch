@@ -207,6 +207,18 @@ struct SwipeCarousel<Item: Hashable, Page: View>: View {
 
 @MainActor
 enum NotchHaptics {
+    static func wheelSelectionChanged(performPulse: (() -> Void)? = nil) {
+        if let performPulse {
+            performPulse()
+            return
+        }
+
+        NSHapticFeedbackManager.defaultPerformer.perform(
+            .alignment,
+            performanceTime: .now
+        )
+    }
+
     static func selectionChanged() {
         performSelectionPulse()
 

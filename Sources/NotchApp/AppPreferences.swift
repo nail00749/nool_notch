@@ -13,6 +13,8 @@ protocol AppPreferencesStoring: AnyObject {
     var compactQuotaProviderID: String { get set }
     var jiraBaseURLString: String? { get set }
     var jiraSelectedProjectKeys: Set<String> { get set }
+    var jiraPinnedContainers: [JiraPinnedContainer] { get set }
+    var jiraPinnedIssues: [JiraPinnedIssue] { get set }
 }
 
 @MainActor
@@ -34,6 +36,8 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
     static let compactQuotaProviderIDKey = "limits.compactProviderID"
     static let jiraBaseURLKey = "jira.baseURL"
     static let jiraSelectedProjectKeysKey = "jira.selectedProjectKeys"
+    static let jiraPinnedContainersKey = "jira.pinnedContainers"
+    static let jiraPinnedIssuesKey = "jira.pinnedIssues"
 
     private let defaults: UserDefaults
 
@@ -163,6 +167,26 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
         set { defaults.set(newValue.sorted(), forKey: Self.jiraSelectedProjectKeysKey) }
     }
 
+    var jiraPinnedContainers: [JiraPinnedContainer] {
+        get { decodedPins(forKey: Self.jiraPinnedContainersKey) }
+        set { encodePins(Self.unique(newValue), forKey: Self.jiraPinnedContainersKey) }
+    }
+
+    var jiraPinnedIssues: [JiraPinnedIssue] {
+        get { decodedPins(forKey: Self.jiraPinnedIssuesKey) }
+        set { encodePins(Self.unique(newValue), forKey: Self.jiraPinnedIssuesKey) }
+    }
+
+    private func decodedPins<Value: Decodable>(forKey key: String) -> [Value] {
+        guard let data = defaults.data(forKey: key) else { return [] }
+        return (try? JSONDecoder().decode([Value].self, from: data)) ?? []
+    }
+
+    private func encodePins<Value: Encodable>(_ values: [Value], forKey key: String) {
+        guard let data = try? JSONEncoder().encode(values) else { return }
+        defaults.set(data, forKey: key)
+    }
+
     private static func clampedDelay(_ value: TimeInterval) -> TimeInterval {
         guard value.isFinite else { return defaultHoverExpansionDelay }
         return min(1, max(0, value))
@@ -178,5 +202,11 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
         var seen: Set<String> = []
         let stored = providerIDs.filter { $0.isEmpty == false && seen.insert($0).inserted }
         return stored + defaultQuotaProviderOrder.filter { seen.insert($0).inserted }
+    }
+
+    private static func unique<Value: Identifiable>(_ values: [Value]) -> [Value]
+    where Value.ID: Hashable {
+        var seen: Set<Value.ID> = []
+        return values.filter { seen.insert($0.id).inserted }
     }
 }

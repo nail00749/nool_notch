@@ -142,6 +142,36 @@ final class JiraClientTests: XCTestCase {
         assertTokenOnlyInAuthorization(request)
     }
 
+    func testAddWorklogPostsSecondsCommentAndLeavesEstimate() async throws {
+        let transport = RecordingJiraTransport(data: Data(), statusCode: 201)
+        let client = JiraClient(transport: transport)
+
+        try await client.addWorklog(
+            baseURL: baseURL,
+            token: token,
+            issueKey: "APP-184/child",
+            timeSpentSeconds: 5_400,
+            comment: "Implemented cache invalidation."
+        )
+
+        XCTAssertEqual(transport.requests.count, 1)
+        let request = try XCTUnwrap(transport.requests.first)
+        XCTAssertEqual(request.httpMethod, "POST")
+        let components = try XCTUnwrap(
+            request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        )
+        XCTAssertTrue(components.percentEncodedPath.hasSuffix("/issue/APP-184%2Fchild/worklog"))
+        XCTAssertEqual(components.queryItems, [URLQueryItem(name: "adjustEstimate", value: "leave")])
+        XCTAssertEqual(
+            try jsonObject(from: request) as NSDictionary,
+            [
+                "timeSpentSeconds": 5_400,
+                "comment": "Implemented cache invalidation."
+            ] as NSDictionary
+        )
+        assertTokenOnlyInAuthorization(request)
+    }
+
     func testIssueDecodingAllowsMissingPriorityAndDueDate() async throws {
         let transport = RecordingJiraTransport(data: Fixtures.searchPageWithoutOptionals)
         let client = JiraClient(transport: transport)

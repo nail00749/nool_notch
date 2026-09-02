@@ -5,8 +5,19 @@ protocol JiraClientProtocol: AnyObject {
     func currentUser(baseURL: URL, token: String) async throws -> JiraUser
     func projects(baseURL: URL, token: String) async throws -> [JiraProject]
     func issues(baseURL: URL, token: String, projectKeys: Set<String>) async throws -> JiraSearchPage
+    func boards(baseURL: URL, token: String) async throws -> [JiraBoard]
+    func boardIssues(baseURL: URL, token: String, boardID: String) async throws -> JiraSearchPage
+    func projectIssues(baseURL: URL, token: String, projectKey: String) async throws -> JiraSearchPage
+    func issue(baseURL: URL, token: String, issueKey: String) async throws -> JiraIssue
     func transitions(baseURL: URL, token: String, issueKey: String) async throws -> [JiraTransition]
     func performTransition(baseURL: URL, token: String, issueKey: String, transitionID: String) async throws
+    func addWorklog(
+        baseURL: URL,
+        token: String,
+        issueKey: String,
+        timeSpentSeconds: Int,
+        comment: String
+    ) async throws
 }
 
 @MainActor
@@ -119,23 +130,127 @@ final class JiraClient: JiraClientProtocol {
         token: String,
         projectKeys: Set<String>
     ) async throws -> JiraSearchPage {
-        let body = SearchRequest(
-            jql: Self.searchJQL(projectKeys: projectKeys),
-            maxResults: 50,
-            fields: ["key", "summary", "project", "status", "priority", "duedate", "updated"]
-        )
-        let request = try makeRequest(
+        let response = try await searchPage(
             baseURL: baseURL,
             token: token,
-            method: "POST",
-            pathComponents: ["rest", "api", "2", "search"],
-            body: try JSONEncoder().encode(body)
+            jql: Self.searchJQL(projectKeys: projectKeys),
+            startAt: 0,
+            maxResults: 50
         )
-        let response: SearchResponse = try await decodedResponse(for: request)
         return JiraSearchPage(
             issues: try response.issues.map { try Self.makeIssue($0) },
             total: response.total
         )
+    }
+
+    func boards(baseURL: URL, token: String) async throws -> [JiraBoard] {
+        var startAt = 0
+        let maxResults = 50
+        var boards: [JiraBoard] = []
+
+        while true {
+            let request = try makeRequest(
+                baseURL: baseURL,
+                token: token,
+                method: "GET",
+                pathComponents: ["rest", "agile", "1.0", "board"],
+                queryItems: [
+                    URLQueryItem(name: "startAt", value: String(startAt)),
+                    URLQueryItem(name: "maxResults", value: String(maxResults))
+                ]
+            )
+            let response: BoardsResponse = try await decodedResponse(for: request)
+            boards.append(contentsOf: response.values.map {
+                JiraBoard(id: String($0.id), name: $0.name, type: $0.type)
+            })
+
+            let nextStart = startAt + response.values.count
+            let reachedTotal = response.total.map { nextStart >= $0 } ?? false
+            if response.values.isEmpty || response.isLast == true || reachedTotal {
+                break
+            }
+            startAt = nextStart
+        }
+
+        var seen: Set<String> = []
+        return boards.filter { seen.insert($0.id).inserted }
+    }
+
+    func boardIssues(
+        baseURL: URL,
+        token: String,
+        boardID: String
+    ) async throws -> JiraSearchPage {
+        var startAt = 0
+        let maxResults = 100
+        var issues: [JiraIssue] = []
+        var total = 0
+
+        while true {
+            let request = try makeRequest(
+                baseURL: baseURL,
+                token: token,
+                method: "GET",
+                pathComponents: ["rest", "agile", "1.0", "board", boardID, "issue"],
+                queryItems: [
+                    URLQueryItem(name: "startAt", value: String(startAt)),
+                    URLQueryItem(name: "maxResults", value: String(maxResults)),
+                    URLQueryItem(name: "fields", value: Self.issueFields.joined(separator: ","))
+                ]
+            )
+            let response: SearchResponse = try await decodedResponse(for: request)
+            let page = try response.issues.map(Self.makeIssue)
+            issues.append(contentsOf: page)
+            total = response.total
+            startAt += page.count
+            if page.isEmpty || startAt >= response.total { break }
+        }
+
+        return JiraSearchPage(issues: Self.uniqueIssues(issues), total: total)
+    }
+
+    func projectIssues(
+        baseURL: URL,
+        token: String,
+        projectKey: String
+    ) async throws -> JiraSearchPage {
+        let escaped = Self.escapedJQLString(projectKey)
+        let jql = "project = \"\(escaped)\" ORDER BY priority DESC, updated DESC"
+        var startAt = 0
+        let maxResults = 100
+        var issues: [JiraIssue] = []
+        var total = 0
+
+        while true {
+            let response = try await searchPage(
+                baseURL: baseURL,
+                token: token,
+                jql: jql,
+                startAt: startAt,
+                maxResults: maxResults
+            )
+            let page = try response.issues.map(Self.makeIssue)
+            issues.append(contentsOf: page)
+            total = response.total
+            startAt += page.count
+            if page.isEmpty || startAt >= response.total { break }
+        }
+
+        return JiraSearchPage(issues: Self.uniqueIssues(issues), total: total)
+    }
+
+    func issue(baseURL: URL, token: String, issueKey: String) async throws -> JiraIssue {
+        let request = try makeRequest(
+            baseURL: baseURL,
+            token: token,
+            method: "GET",
+            pathComponents: ["rest", "api", "2", "issue", issueKey],
+            queryItems: [
+                URLQueryItem(name: "fields", value: Self.issueFields.joined(separator: ","))
+            ]
+        )
+        let response: IssueResponse = try await decodedResponse(for: request)
+        return try Self.makeIssue(response)
     }
 
     func transitions(
@@ -176,14 +291,43 @@ final class JiraClient: JiraClientProtocol {
         _ = try await successfulData(for: request)
     }
 
+    func addWorklog(
+        baseURL: URL,
+        token: String,
+        issueKey: String,
+        timeSpentSeconds: Int,
+        comment: String
+    ) async throws {
+        let body = WorklogRequest(
+            timeSpentSeconds: timeSpentSeconds,
+            comment: comment
+        )
+        let request = try makeRequest(
+            baseURL: baseURL,
+            token: token,
+            method: "POST",
+            pathComponents: ["rest", "api", "2", "issue", issueKey, "worklog"],
+            queryItems: [URLQueryItem(name: "adjustEstimate", value: "leave")],
+            body: try JSONEncoder().encode(body)
+        )
+        _ = try await successfulData(for: request)
+    }
+
     private func makeRequest(
         baseURL: URL,
         token: String,
         method: String,
         pathComponents: [String],
+        queryItems: [URLQueryItem]? = nil,
         body: Data? = nil
     ) throws -> URLRequest {
-        var request = URLRequest(url: try endpointURL(baseURL: baseURL, pathComponents: pathComponents))
+        var request = URLRequest(
+            url: try endpointURL(
+                baseURL: baseURL,
+                pathComponents: pathComponents,
+                queryItems: queryItems
+            )
+        )
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -194,7 +338,11 @@ final class JiraClient: JiraClientProtocol {
         return request
     }
 
-    private func endpointURL(baseURL: URL, pathComponents: [String]) throws -> URL {
+    private func endpointURL(
+        baseURL: URL,
+        pathComponents: [String],
+        queryItems: [URLQueryItem]? = nil
+    ) throws -> URL {
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false),
               components.scheme != nil,
               components.host != nil else {
@@ -215,7 +363,7 @@ final class JiraClient: JiraClientProtocol {
             encodedPath += encodedComponent
         }
         components.percentEncodedPath = encodedPath
-        components.query = nil
+        components.queryItems = queryItems
         components.fragment = nil
 
         guard let url = components.url else { throw JiraAPIError.invalidBaseURL }
@@ -229,6 +377,29 @@ final class JiraClient: JiraClientProtocol {
         } catch {
             throw JiraAPIError.decoding
         }
+    }
+
+    private func searchPage(
+        baseURL: URL,
+        token: String,
+        jql: String,
+        startAt: Int,
+        maxResults: Int
+    ) async throws -> SearchResponse {
+        let body = SearchRequest(
+            jql: jql,
+            startAt: startAt,
+            maxResults: maxResults,
+            fields: Self.issueFields
+        )
+        let request = try makeRequest(
+            baseURL: baseURL,
+            token: token,
+            method: "POST",
+            pathComponents: ["rest", "api", "2", "search"],
+            body: try JSONEncoder().encode(body)
+        )
+        return try await decodedResponse(for: request)
     }
 
     private func successfulData(for request: URLRequest) async throws -> Data {
@@ -262,16 +433,26 @@ final class JiraClient: JiraClientProtocol {
             "statusCategory != Done"
         ]
         if !projectKeys.isEmpty {
-            let keys = projectKeys.sorted().map { key in
-                let escaped = key
-                    .replacingOccurrences(of: "\\", with: "\\\\")
-                    .replacingOccurrences(of: "\"", with: "\\\"")
-                return "\"\(escaped)\""
-            }
+            let keys = projectKeys.sorted().map { "\"\(escapedJQLString($0))\"" }
             clauses.append("project IN (\(keys.joined(separator: ", ")))")
         }
         return clauses.joined(separator: " AND ") + " ORDER BY priority DESC, updated DESC"
     }
+
+    private static func escapedJQLString(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    private static func uniqueIssues(_ issues: [JiraIssue]) -> [JiraIssue] {
+        var seen: Set<String> = []
+        return issues.filter { seen.insert($0.key).inserted }
+    }
+
+    private static let issueFields = [
+        "key", "summary", "project", "status", "priority", "duedate", "updated"
+    ]
 
     private static func makeIssue(_ response: IssueResponse) throws -> JiraIssue {
         try JiraIssue(
@@ -346,8 +527,21 @@ private struct ProjectResponse: Decodable {
 
 private struct SearchRequest: Encodable {
     let jql: String
+    let startAt: Int
     let maxResults: Int
     let fields: [String]
+}
+
+private struct BoardsResponse: Decodable {
+    let values: [BoardResponse]
+    let total: Int?
+    let isLast: Bool?
+}
+
+private struct BoardResponse: Decodable {
+    let id: Int
+    let name: String
+    let type: String
 }
 
 private struct SearchResponse: Decodable {
@@ -409,4 +603,9 @@ private struct TransitionRequest: Encodable {
     }
 
     let transition: Selection
+}
+
+private struct WorklogRequest: Encodable {
+    let timeSpentSeconds: Int
+    let comment: String
 }
