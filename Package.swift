@@ -19,8 +19,12 @@ let package = Package(
             name: "NotchApp",
             dependencies: ["NotchCore"],
             path: "Sources/NotchApp",
+            resources: [
+                .process("Resources")
+            ],
             linkerSettings: [
-                .linkedLibrary("sqlite3")
+                .linkedLibrary("sqlite3"),
+                .linkedFramework("SceneKit")
             ]
         ),
         .testTarget(

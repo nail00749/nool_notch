@@ -46,7 +46,8 @@ struct NotchRootView: View {
             calendarViewMode: model.calendarViewMode,
             isShowingSettings: false,
             compactHeight: visualSettings.compactHeight,
-            isPlaying: isCompactPlaybackActive
+            isPlaying: isCompactPlaybackActive,
+            showsAgentMascot: model.visibleCompactAgentSignal != nil
         )
     }
 
@@ -55,6 +56,7 @@ struct NotchRootView: View {
             if model.isExpanded {
                 ExpandedNotch(
                     model: model,
+                    showsSettingsMascot: visualSettings.showsExpandedMascot,
                     onOpenSettings: onOpenSettings
                 )
                     .transition(.asymmetric(
@@ -73,9 +75,15 @@ struct NotchRootView: View {
         .animation(stateAnimation, value: model.isExpanded)
         .animation(stateAnimation, value: isCompactPlaybackActive)
         .animation(stateAnimation, value: visualSettings.compactHeight)
-        .contentShape(Rectangle())
+        .contentShape(
+            NotchRootInteractionShape(
+                excludesLeadingMascotLane: model.isExpanded == false
+                    && model.visibleCompactAgentSignal != nil
+            )
+        )
         .onHover(perform: handleHover)
         .task {
+            onLayoutChange(model.isExpanded, reduceMotion)
             try? await Task.sleep(nanoseconds: 500_000_000)
             hoverExpansionEnabled = true
         }
@@ -94,6 +102,9 @@ struct NotchRootView: View {
             onLayoutChange(model.isExpanded, reduceMotion)
         }
         .onChange(of: visualSettings.compactHeight) { _, _ in
+            onLayoutChange(model.isExpanded, reduceMotion)
+        }
+        .onChange(of: model.visibleCompactAgentSignal?.id) { _, _ in
             onLayoutChange(model.isExpanded, reduceMotion)
         }
         .onChange(of: model.isTransientSurfaceVisible) { wasVisible, isVisible in
@@ -179,7 +190,8 @@ struct NotchRootView: View {
                     screenFrame: screen.frame,
                     windowSize: NotchLayout.compactSize(
                         isPlaying: isCompactPlaybackActive,
-                        compactHeight: visualSettings.compactHeight
+                        compactHeight: visualSettings.compactHeight,
+                        showsAgentMascot: model.visibleCompactAgentSignal != nil
                     )
                 )
                 guard pointerIsOutside == false else { return }
@@ -206,5 +218,22 @@ struct NotchRootView: View {
                 playbackBounce = false
             }
         }
+    }
+}
+
+private struct NotchRootInteractionShape: Shape {
+    let excludesLeadingMascotLane: Bool
+
+    func path(in rect: CGRect) -> Path {
+        guard excludesLeadingMascotLane else {
+            return Path(rect)
+        }
+
+        return Path(CGRect(
+            x: rect.minX + NotchLayout.compactAgentMascotLaneWidth,
+            y: rect.minY,
+            width: max(0, rect.width - NotchLayout.compactAgentMascotLaneWidth),
+            height: rect.height
+        ))
     }
 }

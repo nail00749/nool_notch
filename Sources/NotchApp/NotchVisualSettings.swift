@@ -30,6 +30,7 @@ final class NotchVisualSettings: ObservableObject {
         static let pulseIntensity = "notch.visual.pulseIntensity"
         static let pulseSpeed = "notch.visual.pulseSpeed"
         static let compactHeight = "notch.visual.compactHeight"
+        static let showsExpandedMascot = "notch.visual.showsExpandedMascot"
     }
 
     private let defaults: UserDefaults
@@ -66,6 +67,10 @@ final class NotchVisualSettings: ObservableObject {
         didSet { defaults.set(Double(compactHeight), forKey: Key.compactHeight) }
     }
 
+    @Published var showsExpandedMascot: Bool {
+        didSet { defaults.set(showsExpandedMascot, forKey: Key.showsExpandedMascot) }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         lineColor = Color(rgbaHex: defaults.string(forKey: Key.lineColor) ?? "57D1FFFF")
@@ -75,6 +80,7 @@ final class NotchVisualSettings: ObservableObject {
         pulsesLine = defaults.object(forKey: Key.pulsesLine) as? Bool ?? true
         pulseIntensity = defaults.object(forKey: Key.pulseIntensity) as? Double ?? 1
         pulseSpeed = defaults.object(forKey: Key.pulseSpeed) as? Double ?? 0.55
+        showsExpandedMascot = defaults.object(forKey: Key.showsExpandedMascot) as? Bool ?? true
         let storedCompactHeight = defaults.object(forKey: Key.compactHeight) as? Double
         compactHeight = min(
             NotchLayout.compactHeightRange.upperBound,

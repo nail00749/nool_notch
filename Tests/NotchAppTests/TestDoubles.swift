@@ -137,6 +137,8 @@ final class FakeJiraClient: JiraClientProtocol {
     var controlledAddWorklogCalls: Set<Int> = []
     var transitionResultsByIssueKey: [String: Result<[JiraTransition], Error>] = [:]
     var performTransitionResult: Result<Void, Error> = .success(())
+    var assignableUsersResult: Result<[JiraAssignee], Error> = .success([])
+    var assignResult: Result<Void, Error> = .success(())
     var addWorklogResult: Result<Void, Error> = .success(())
 
     private(set) var currentUserCallCount = 0
@@ -144,10 +146,14 @@ final class FakeJiraClient: JiraClientProtocol {
     private(set) var issueCallCount = 0
     private(set) var transitionCallCount = 0
     private(set) var performTransitionCallCount = 0
+    private(set) var assignableUsersCallCount = 0
+    private(set) var assignCallCount = 0
     private(set) var addWorklogCallCount = 0
     private(set) var issueRequests: [Set<String>] = []
     private(set) var transitionIssueKeys: [String] = []
     private(set) var performedTransitions: [(issueKey: String, transitionID: String)] = []
+    private(set) var assigneeSearches: [(projectKey: String, query: String)] = []
+    private(set) var assignments: [(issueKey: String, username: String?)] = []
     private(set) var addedWorklogs: [(
         issueKey: String,
         timeSpentSeconds: Int,
@@ -261,6 +267,28 @@ final class FakeJiraClient: JiraClientProtocol {
             return
         }
         try performTransitionResult.get()
+    }
+
+    func assignableUsers(
+        baseURL: URL,
+        token: String,
+        projectKey: String,
+        query: String
+    ) async throws -> [JiraAssignee] {
+        assignableUsersCallCount += 1
+        assigneeSearches.append((projectKey, query))
+        return try assignableUsersResult.get()
+    }
+
+    func assign(
+        baseURL: URL,
+        token: String,
+        issueKey: String,
+        username: String?
+    ) async throws {
+        assignCallCount += 1
+        assignments.append((issueKey, username))
+        try assignResult.get()
     }
 
     func addWorklog(
@@ -433,6 +461,7 @@ final class FakeJiraProvider: JiraProviding {
         .fixture(displayName: "Connected User")
     )
     var addWorklogResult: Result<Void, JiraAPIError> = .success(())
+    var assignResult: Result<Void, JiraAPIError> = .success(())
 
     private(set) var didStart = false
     private(set) var didStop = false
@@ -444,6 +473,8 @@ final class FakeJiraProvider: JiraProviding {
     private(set) var selectedProjectKeySets: [Set<String>] = []
     private(set) var loadedTransitionIssueKeys: [String] = []
     private(set) var submittedTransitions: [(issueKey: String, transition: JiraTransition)] = []
+    private(set) var assigneeSearches: [(issueKey: String, projectKey: String, query: String)] = []
+    private(set) var assignments: [(issueKey: String, selection: JiraAssigneeSelection)] = []
     private(set) var submittedWorklogs: [(issueKey: String, draft: JiraWorklogDraft)] = []
 
     func start() { didStart = true }
@@ -504,6 +535,22 @@ final class FakeJiraProvider: JiraProviding {
 
     func performTransition(issueKey: String, transition: JiraTransition) async {
         submittedTransitions.append((issueKey, transition))
+    }
+
+    func searchAssignableUsers(
+        issueKey: String,
+        projectKey: String,
+        query: String
+    ) async {
+        assigneeSearches.append((issueKey, projectKey, query))
+    }
+
+    func assign(
+        issueKey: String,
+        selection: JiraAssigneeSelection
+    ) async -> Result<Void, JiraAPIError> {
+        assignments.append((issueKey, selection))
+        return assignResult
     }
 
     func addWorklog(

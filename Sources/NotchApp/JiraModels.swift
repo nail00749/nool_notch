@@ -22,6 +22,31 @@ struct JiraIssue: Identifiable, Equatable, Sendable {
     let priorityName: String?
     let dueDate: Date?
     let updatedAt: Date?
+    let assignee: JiraAssignee?
+
+    init(
+        id: String,
+        key: String,
+        summary: String,
+        projectKey: String,
+        projectName: String,
+        status: JiraStatus,
+        priorityName: String?,
+        dueDate: Date?,
+        updatedAt: Date?,
+        assignee: JiraAssignee? = nil
+    ) {
+        self.id = id
+        self.key = key
+        self.summary = summary
+        self.projectKey = projectKey
+        self.projectName = projectName
+        self.status = status
+        self.priorityName = priorityName
+        self.dueDate = dueDate
+        self.updatedAt = updatedAt
+        self.assignee = assignee
+    }
 
     func browserURL(baseURL: String) -> URL? {
         guard var components = URLComponents(string: baseURL),
@@ -42,8 +67,37 @@ struct JiraTransition: Identifiable, Equatable, Sendable {
     let toStatus: JiraStatus
 }
 
+struct JiraStatusSelectionPresentation: Equatable, Sendable {
+    let currentStatus: JiraStatus
+    let availableTransitions: [JiraTransition]
+
+    init(currentStatus: JiraStatus, transitions: [JiraTransition]) {
+        self.currentStatus = currentStatus
+        availableTransitions = transitions.filter { $0.toStatus.id != currentStatus.id }
+    }
+}
+
 struct JiraUser: Equatable, Sendable {
+    let username: String?
     let displayName: String
+
+    init(username: String? = nil, displayName: String) {
+        self.username = username
+        self.displayName = displayName
+    }
+}
+
+struct JiraAssignee: Identifiable, Equatable, Sendable {
+    let username: String
+    let displayName: String
+
+    var id: String { username }
+}
+
+enum JiraAssigneeSelection: Equatable, Sendable {
+    case currentUser
+    case user(JiraAssignee)
+    case unassigned
 }
 
 struct JiraSearchPage: Equatable, Sendable {
@@ -118,12 +172,21 @@ enum JiraTransitionState: Equatable, Sendable {
     case failed(error: JiraAPIError, previous: [JiraTransition]?)
 }
 
+enum JiraAssigneeState: Equatable, Sendable {
+    case idle
+    case loading(previous: [JiraAssignee]?)
+    case loaded([JiraAssignee])
+    case submitting([JiraAssignee])
+    case failed(error: JiraAPIError, previous: [JiraAssignee]?)
+}
+
 struct JiraProviderState: Equatable, Sendable {
     var connection: JiraConnectionState
     var projects: [JiraProject]
     var selectedProjectKeys: Set<String>
     var list: JiraListState
     var transitionsByIssueKey: [String: JiraTransitionState]
+    var assigneesByIssueKey: [String: JiraAssigneeState]
     var pinned: JiraPinnedState
 
     init(
@@ -132,6 +195,7 @@ struct JiraProviderState: Equatable, Sendable {
         selectedProjectKeys: Set<String> = [],
         list: JiraListState = .idle,
         transitionsByIssueKey: [String: JiraTransitionState] = [:],
+        assigneesByIssueKey: [String: JiraAssigneeState] = [:],
         pinned: JiraPinnedState = JiraPinnedState()
     ) {
         self.connection = connection
@@ -139,6 +203,7 @@ struct JiraProviderState: Equatable, Sendable {
         self.selectedProjectKeys = selectedProjectKeys
         self.list = list
         self.transitionsByIssueKey = transitionsByIssueKey
+        self.assigneesByIssueKey = assigneesByIssueKey
         self.pinned = pinned
     }
 }

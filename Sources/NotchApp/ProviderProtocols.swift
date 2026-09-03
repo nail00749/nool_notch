@@ -33,6 +33,15 @@ protocol JiraProviding: AnyObject {
     func refreshPinnedSource()
     func loadTransitions(for issueKey: String) async
     func performTransition(issueKey: String, transition: JiraTransition) async
+    func searchAssignableUsers(
+        issueKey: String,
+        projectKey: String,
+        query: String
+    ) async
+    func assign(
+        issueKey: String,
+        selection: JiraAssigneeSelection
+    ) async -> Result<Void, JiraAPIError>
     func addWorklog(
         issueKey: String,
         draft: JiraWorklogDraft

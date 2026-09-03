@@ -14,65 +14,189 @@ struct CompactNotch: View {
     let onExpand: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var presentedAgentSignal: CompactAgentSignal?
+    @State private var mascotPresentationTask: Task<Void, Never>?
 
     private var isPlaying: Bool {
         model.nowPlayingSnapshot?.playbackState.isPlaying == true
     }
 
-    private var compactSize: CGSize {
+    private var compactAgentSignal: CompactAgentSignal? {
+        model.visibleCompactAgentSignal
+    }
+
+    private var baseCompactSize: CGSize {
         NotchLayout.compactSize(
             isPlaying: isPlaying,
             compactHeight: visualSettings.compactHeight
         )
     }
 
+    private var compactSize: CGSize {
+        NotchLayout.compactSize(
+            isPlaying: isPlaying,
+            compactHeight: visualSettings.compactHeight,
+            showsAgentMascot: compactAgentSignal != nil
+        )
+    }
+
+    private var leadingMascotExtension: CGFloat {
+        compactAgentSignal == nil ? 0 : NotchLayout.compactAgentMascotLaneWidth
+    }
+
+    private var mascotLayoutAnimation: Animation {
+        NotchMotion.compactResizeAnimation(reduceMotion: reduceMotion)
+    }
+
+    private var mascotContentAnimation: Animation {
+        reduceMotion ? .linear(duration: 0.01) : .easeOut(duration: 0.18)
+    }
+
     var body: some View {
-        Button(action: onExpand) {
-            compactContent
-                .frame(
-                    width: compactSize.width,
-                    height: visualSettings.compactHeight
-                )
-                .background(Color.black)
-                .clipShape(
-                    UnevenRoundedRectangle(
-                        cornerRadii: RectangleCornerRadii(
-                            topLeading: 0,
-                            bottomLeading: NotchLayout.compactBottomRadius,
-                            bottomTrailing: NotchLayout.compactBottomRadius,
-                            topTrailing: 0
-                        ),
-                        style: .continuous
+        ZStack(alignment: .top) {
+            compactSurface
+
+            HStack(spacing: 0) {
+                notchButton
+                    .frame(
+                        width: baseCompactSize.width + leadingMascotExtension,
+                        height: baseCompactSize.height,
+                        alignment: .topTrailing
                     )
-                )
-                .overlay {
-                    CompactQuotaBorder(
-                        remainingRatio: model.compactWeeklyRemainingRatio,
-                        lineColor: visualSettings.lineColor,
-                        lineGradientColor: visualSettings.lineGradientColor,
-                        lineMode: visualSettings.lineMode,
-                        showsLine: visualSettings.showsLine,
-                        pulsesLine: visualSettings.pulsesLine,
-                        pulseIntensity: visualSettings.pulseIntensity,
-                        pulseSpeed: visualSettings.pulseSpeed,
-                        reduceMotion: reduceMotion
+
+                if let presentedAgentSignal {
+                    Button(action: model.openCompactAgentSessions) {
+                        CompactAgentMascot(signal: presentedAgentSignal)
+                            .frame(width: 46, height: 52)
+                    }
+                    .buttonStyle(NotchButtonStyle())
+                    .frame(
+                        width: NotchLayout.compactAgentMascotLaneWidth,
+                        height: compactSize.height,
+                        alignment: .top
                     )
+                    .accessibilityLabel(
+                        "\(presentedAgentSignal.kind.compactMascotAccessibilityLabel). Открыть AI-сессии"
+                    )
+                    .accessibilityHint("Открывает раздел «Сессии» в панели AI")
+                    .transition(
+                        .scale(scale: 0.25, anchor: .topLeading)
+                            .combined(with: .opacity)
+                    )
+                } else if compactAgentSignal != nil {
+                    Color.clear
+                        .frame(
+                            width: NotchLayout.compactAgentMascotLaneWidth,
+                            height: compactSize.height
+                        )
+                        .allowsHitTesting(false)
                 }
-                .compositingGroup()
-                .animation(
-                    reduceMotion ? .linear(duration: 0.01) : .easeInOut(duration: 0.30),
-                    value: isPlaying
-                )
-                .animation(
-                    reduceMotion ? .linear(duration: 0.01) : .easeInOut(duration: 0.24),
-                    value: visualSettings.compactHeight
-                )
+            }
         }
-        .buttonStyle(NotchButtonStyle())
         .frame(
             width: compactSize.width,
             height: compactSize.height,
             alignment: .top
+        )
+        .animation(mascotLayoutAnimation, value: compactAgentSignal?.id)
+        .onAppear {
+            scheduleMascotPresentation(for: compactAgentSignal)
+        }
+        .onChange(of: compactAgentSignal?.id) { _, _ in
+            scheduleMascotPresentation(for: compactAgentSignal)
+        }
+        .onDisappear {
+            mascotPresentationTask?.cancel()
+            mascotPresentationTask = nil
+        }
+    }
+
+    private func scheduleMascotPresentation(for signal: CompactAgentSignal?) {
+        mascotPresentationTask?.cancel()
+        mascotPresentationTask = nil
+
+        guard let signal else {
+            withAnimation(mascotContentAnimation) {
+                presentedAgentSignal = nil
+            }
+            return
+        }
+
+        presentedAgentSignal = nil
+        mascotPresentationTask = Task { @MainActor in
+            let delay = reduceMotion ? 0.02 : NotchMotion.compactResizeDuration + 0.04
+            try? await Task.sleep(for: .seconds(delay))
+            guard Task.isCancelled == false,
+                  model.visibleCompactAgentSignal?.id == signal.id else { return }
+
+            withAnimation(mascotContentAnimation) {
+                presentedAgentSignal = signal
+            }
+            mascotPresentationTask = nil
+        }
+    }
+
+    private var compactSurface: some View {
+        Color.black
+            .frame(
+                width: compactSize.width,
+                height: compactAgentSignal == nil
+                    ? visualSettings.compactHeight
+                    : compactSize.height
+            )
+            .clipShape(
+                UnevenRoundedRectangle(
+                    cornerRadii: RectangleCornerRadii(
+                        topLeading: 0,
+                        bottomLeading: NotchLayout.compactBottomRadius,
+                        bottomTrailing: NotchLayout.compactBottomRadius,
+                        topTrailing: 0
+                    ),
+                    style: .continuous
+                )
+            )
+            .overlay {
+                CompactQuotaBorder(
+                    remainingRatio: model.compactWeeklyRemainingRatio,
+                    lineColor: visualSettings.lineColor,
+                    lineGradientColor: visualSettings.lineGradientColor,
+                    lineMode: visualSettings.lineMode,
+                    showsLine: visualSettings.showsLine,
+                    pulsesLine: visualSettings.pulsesLine,
+                    pulseIntensity: visualSettings.pulseIntensity,
+                    pulseSpeed: visualSettings.pulseSpeed,
+                    reduceMotion: reduceMotion
+                )
+            }
+            .compositingGroup()
+            .animation(
+                reduceMotion ? .linear(duration: 0.01) : .easeInOut(duration: 0.30),
+                value: isPlaying
+            )
+            .animation(
+                reduceMotion ? .linear(duration: 0.01) : .easeInOut(duration: 0.24),
+                value: visualSettings.compactHeight
+            )
+            .allowsHitTesting(false)
+    }
+
+    private var notchButton: some View {
+        Button(action: onExpand) {
+            compactContent
+                .frame(
+                    width: baseCompactSize.width,
+                    height: visualSettings.compactHeight
+                )
+                .frame(
+                    width: baseCompactSize.width + leadingMascotExtension,
+                    alignment: .trailing
+                )
+        }
+        .buttonStyle(NotchButtonStyle())
+        .frame(
+            width: baseCompactSize.width + leadingMascotExtension,
+            height: baseCompactSize.height,
+            alignment: .topTrailing
         )
         .contentShape(Rectangle())
         .accessibilityLabel("Открыть Notch")

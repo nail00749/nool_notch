@@ -4,15 +4,15 @@ Date: 2026-09-03
 
 ## Summary
 
-Add an original pixel-art mascot named Nool to the right of the collapsed
+Add an original native 3D mascot named Nool to the right of the collapsed
 notch when an AI session finishes, fails, waits for approval, or waits for
 user input. The mascot gives a visible but compact signal while the user is
 working outside Codex. Clicking it opens the notch directly on
 `AI -> Сессии`.
 
-The first version uses code-rendered pixel art with two or three animation
-frames. It does not copy the ChatGPT mascot, load remote assets, add a graphics
-dependency, or expose session contents.
+The mascot is modeled in Blender, converted to a local SceneKit asset, and
+rendered by a transparent `SCNView`. The app does not copy the ChatGPT mascot,
+load remote assets, add a third-party 3D dependency, or expose session contents.
 
 ## Goals
 
@@ -33,13 +33,15 @@ dependency, or expose session contents.
 - Displaying historical completed or failed sessions when Nool Notch starts.
 - Persisting notifications between app launches.
 - User-selectable characters, skins, sounds, or notification settings.
-- SVG, Lottie, SceneKit, Metal, or third-party animation dependencies.
+- SVG, Lottie, or third-party runtime animation dependencies.
 - A separate AppKit window for the mascot.
 
 ## User experience
 
-Nool appears immediately to the right of the collapsed notch with a small gap.
-Its pixel pose and indicator communicate the highest-priority current signal:
+When a signal arrives, the compact black surface widens first. Nool then appears
+in the new 50-point right lane after the 300 ms window resize has completed. The
+surface also grows 12 points downward to give the 3D character more vertical
+space. Its pose and indicator communicate the highest-priority current signal:
 
 1. `waitingForApproval`: yellow `!`, periodic wave;
 2. `waitingForInput`: cyan `?`, periodic wave;
@@ -60,6 +62,11 @@ Clicking the mascot selects the top-level `AI` panel, selects its `Сессии`
 subsection, and expands the notch. Clicking the central compact notch keeps its
 existing behavior. The transparent balancing area introduced for geometry is
 not interactive.
+
+If the user has hidden the top-level `AI` panel in Settings, the mascot is
+suppressed. The notification feature must not silently change saved panel
+visibility; restoring the AI panel makes current waiting signals eligible
+again.
 
 ## Signal state and lifecycle
 
@@ -102,13 +109,23 @@ ordering, Spaces, hover, and animation synchronization risks and is not needed.
 When a mascot is visible, the compact content uses three horizontal lanes:
 
 ```text
-[transparent mascot lane] [centered notch] [gap + mascot lane]
+[black 50 pt extension] [centered notch] [black 50 pt mascot lane]
 ```
 
-The left transparent lane has the same width as the right mascot lane. The
-outer panel grows symmetrically, so its center and the physical notch center
-remain identical throughout the frame animation. When the mascot disappears,
-both lanes disappear together.
+The left black extension has the same width as the right mascot lane. The outer
+panel and compact black surface grow symmetrically, so their center and the
+physical notch center remain identical throughout the animation. When the
+mascot disappears, both extensions disappear together.
+
+The compact height grows by 12 points only while a mascot signal is present.
+Because the panel origin is recomputed from the screen's top edge, the extra
+height extends downward without moving the top anchor.
+
+Compact-to-compact mascot resizing uses the same interruptible 360 ms timing
+curve in AppKit and SwiftUI. The panel frame, black surface, and content lanes
+therefore expand and contract as one continuous top-anchored transition. The
+mascot enters only after the expansion finishes and fades out while the panel
+contracts.
 
 `NotchWindowCoordinator` remains the only owner of `NSPanel.frame`.
 `NSHostingView.sizingOptions` remains empty. The layout policy receives only a
@@ -121,20 +138,19 @@ The central notch and mascot are separate SwiftUI buttons inside the compact
 layout; one button is never nested inside another. Only their visible regions
 participate in hit testing. The mascot has at least a 40 by 40 point hit area.
 
-## Pixel-art rendering
+## Native 3D animation
 
-`CompactAgentMascot` renders an original character from a small grid of colored
-rectangles or a SwiftUI `Canvas`. Frame data is stored locally in source code.
-Nearest-neighbor pixel edges are preserved by using integer grid coordinates
-and integral display scaling.
+`CompactAgentMascot` embeds a transparent, non-interactive `SCNView` that loads
+the local `.usdc` asset exported from the project's Blender mascot. SceneKit
+animates the named `NoolPhotoYork_Wave_Pivot` node while SwiftUI owns the semantic status
+bubble and click target.
 
-The palette follows the existing signal colors while retaining a neutral base
-body so the character remains recognizable across states. A tiny adjacent
-status glyph carries the semantic color; color is not the only differentiator.
+The 3D character retains a neutral cyan and mint body so it remains recognizable
+across states. A tiny adjacent status glyph carries the semantic color; color
+is not the only differentiator.
 
-Animation advances only while the mascot is visible. A lightweight periodic
-SwiftUI timeline selects the current frame. It must not run while no signal is
-present, and Reduce Motion always selects the static frame.
+Animation runs only while the mascot is visible. The SceneKit action pauses in
+a neutral pose when Reduce Motion is enabled.
 
 ## Integration
 
@@ -169,6 +185,7 @@ New files:
 
 - `Sources/NotchApp/CompactAgentSignal.swift`
 - `Sources/NotchApp/CompactAgentMascot.swift`
+- `Sources/NotchApp/Resources/CompactAgentMascot/NoolMascot.usdc`
 
 Existing files expected to change:
 

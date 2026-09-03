@@ -33,7 +33,7 @@ final class JiraClientTests: XCTestCase {
         XCTAssertEqual(body["maxResults"] as? Int, 50)
         XCTAssertEqual(
             body["fields"] as? [String],
-            ["key", "summary", "project", "status", "priority", "duedate", "updated"]
+            ["key", "summary", "project", "status", "priority", "duedate", "updated", "assignee"]
         )
         assertTokenOnlyInAuthorization(request)
     }

@@ -1,6 +1,20 @@
 import AppKit
 import SwiftUI
 
+enum NotchMotion {
+    static let compactResizeDuration: TimeInterval = 0.36
+
+    static func compactResizeAnimation(reduceMotion: Bool) -> Animation {
+        reduceMotion
+            ? .linear(duration: 0.01)
+            : .timingCurve(0.2, 0, 0, 1, duration: compactResizeDuration)
+    }
+
+    static func compactResizeTimingFunction() -> CAMediaTimingFunction {
+        CAMediaTimingFunction(controlPoints: 0.2, 0, 0, 1)
+    }
+}
+
 enum PanelID: String, CaseIterable, Identifiable {
     case ai
     case calendar
@@ -84,7 +98,24 @@ struct NotchLayoutMetrics: Equatable {
 
     func compactSize(
         isPlaying: Bool,
-        compactHeight: CGFloat = NotchLayout.defaultCompactHeight
+        compactHeight: CGFloat = NotchLayout.defaultCompactHeight,
+        showsAgentMascot: Bool = false
+    ) -> CGSize {
+        let baseSize = baseCompactSize(
+            isPlaying: isPlaying,
+            compactHeight: compactHeight
+        )
+
+        guard showsAgentMascot else { return baseSize }
+        return CGSize(
+            width: baseSize.width + NotchLayout.compactAgentMascotLaneWidth * 2,
+            height: baseSize.height + NotchLayout.compactAgentMascotHeightIncrease
+        )
+    }
+
+    private func baseCompactSize(
+        isPlaying: Bool,
+        compactHeight: CGFloat
     ) -> CGSize {
         let interactionHeight = max(NotchLayout.compactInteractionHeight, compactHeight)
 
@@ -148,6 +179,8 @@ enum NotchLayout {
     static let compactInteractionHeight: CGFloat = 40
     static let compactIdleWingWidth: CGFloat = 18
     static let compactWingWidth: CGFloat = 60
+    static let compactAgentMascotLaneWidth: CGFloat = 50
+    static let compactAgentMascotHeightIncrease: CGFloat = 12
     static let compactBottomRadius: CGFloat = 12
     static let expandedContentSize = CGSize(width: 500, height: 300)
     static let expandedCalendarContentSize = CGSize(width: 500, height: 460)
@@ -157,11 +190,13 @@ enum NotchLayout {
     static var compactSize: CGSize { currentMetrics.compactSize }
     static func compactSize(
         isPlaying: Bool,
-        compactHeight: CGFloat = defaultCompactHeight
+        compactHeight: CGFloat = defaultCompactHeight,
+        showsAgentMascot: Bool = false
     ) -> CGSize {
         currentMetrics.compactSize(
             isPlaying: isPlaying,
-            compactHeight: compactHeight
+            compactHeight: compactHeight,
+            showsAgentMascot: showsAgentMascot
         )
     }
     static var expandedSize: CGSize { currentMetrics.expandedSize }
@@ -218,12 +253,14 @@ enum NotchWindowSizingPolicy {
         calendarViewMode: CalendarViewMode,
         isShowingSettings: Bool,
         compactHeight: CGFloat = NotchLayout.defaultCompactHeight,
-        isPlaying: Bool = true
+        isPlaying: Bool = true,
+        showsAgentMascot: Bool = false
     ) -> CGSize {
         guard isExpanded else {
             return metrics.compactSize(
                 isPlaying: isPlaying,
-                compactHeight: compactHeight
+                compactHeight: compactHeight,
+                showsAgentMascot: showsAgentMascot
             )
         }
         guard isShowingSettings == false else { return metrics.expandedSize }

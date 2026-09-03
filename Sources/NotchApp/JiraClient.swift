@@ -11,6 +11,18 @@ protocol JiraClientProtocol: AnyObject {
     func issue(baseURL: URL, token: String, issueKey: String) async throws -> JiraIssue
     func transitions(baseURL: URL, token: String, issueKey: String) async throws -> [JiraTransition]
     func performTransition(baseURL: URL, token: String, issueKey: String, transitionID: String) async throws
+    func assignableUsers(
+        baseURL: URL,
+        token: String,
+        projectKey: String,
+        query: String
+    ) async throws -> [JiraAssignee]
+    func assign(
+        baseURL: URL,
+        token: String,
+        issueKey: String,
+        username: String?
+    ) async throws
     func addWorklog(
         baseURL: URL,
         token: String,
@@ -111,7 +123,7 @@ final class JiraClient: JiraClientProtocol {
             pathComponents: ["rest", "api", "2", "myself"]
         )
         let response: UserResponse = try await decodedResponse(for: request)
-        return JiraUser(displayName: response.displayName)
+        return JiraUser(username: response.username, displayName: response.displayName)
     }
 
     func projects(baseURL: URL, token: String) async throws -> [JiraProject] {
@@ -291,6 +303,61 @@ final class JiraClient: JiraClientProtocol {
         _ = try await successfulData(for: request)
     }
 
+    func assignableUsers(
+        baseURL: URL,
+        token: String,
+        projectKey: String,
+        query: String
+    ) async throws -> [JiraAssignee] {
+        let pageSize = 50
+        var startAt = 0
+        var users: [JiraAssignee] = []
+
+        while true {
+            let request = try makeRequest(
+                baseURL: baseURL,
+                token: token,
+                method: "GET",
+                pathComponents: ["rest", "api", "2", "user", "assignable", "search"],
+                queryItems: [
+                    URLQueryItem(name: "project", value: projectKey),
+                    URLQueryItem(name: "username", value: query),
+                    URLQueryItem(name: "startAt", value: String(startAt)),
+                    URLQueryItem(name: "maxResults", value: String(pageSize))
+                ]
+            )
+            let response: [AssignableUserResponse] = try await decodedResponse(for: request)
+            users.append(contentsOf: response.compactMap { candidate in
+                guard candidate.active != false,
+                      let username = candidate.username,
+                      username.isEmpty == false else { return nil }
+                return JiraAssignee(username: username, displayName: candidate.displayName)
+            })
+
+            guard response.count == pageSize else { break }
+            startAt += response.count
+        }
+
+        var seen: Set<String> = []
+        return users.filter { seen.insert($0.username).inserted }
+    }
+
+    func assign(
+        baseURL: URL,
+        token: String,
+        issueKey: String,
+        username: String?
+    ) async throws {
+        let request = try makeRequest(
+            baseURL: baseURL,
+            token: token,
+            method: "PUT",
+            pathComponents: ["rest", "api", "2", "issue", issueKey, "assignee"],
+            body: try JSONEncoder().encode(AssigneeRequest(username: username))
+        )
+        _ = try await successfulData(for: request)
+    }
+
     func addWorklog(
         baseURL: URL,
         token: String,
@@ -451,7 +518,7 @@ final class JiraClient: JiraClientProtocol {
     }
 
     private static let issueFields = [
-        "key", "summary", "project", "status", "priority", "duedate", "updated"
+        "key", "summary", "project", "status", "priority", "duedate", "updated", "assignee"
     ]
 
     private static func makeIssue(_ response: IssueResponse) throws -> JiraIssue {
@@ -464,8 +531,14 @@ final class JiraClient: JiraClientProtocol {
             status: makeStatus(response.fields.status),
             priorityName: response.fields.priority?.name,
             dueDate: response.fields.dueDate.map { try parseDueDate($0) },
-            updatedAt: response.fields.updated.map { try parseUpdatedDate($0) }
+            updatedAt: response.fields.updated.map { try parseUpdatedDate($0) },
+            assignee: response.fields.assignee.flatMap(Self.makeAssignee)
         )
+    }
+
+    private static func makeAssignee(_ response: AssignableUserResponse) -> JiraAssignee? {
+        guard let username = response.username, username.isEmpty == false else { return nil }
+        return JiraAssignee(username: username, displayName: response.displayName)
     }
 
     private static func makeStatus(_ response: StatusResponse) -> JiraStatus {
@@ -516,7 +589,20 @@ final class JiraClient: JiraClientProtocol {
 }
 
 private struct UserResponse: Decodable {
+    let name: String?
+    let key: String?
     let displayName: String
+
+    var username: String? { name ?? key }
+}
+
+private struct AssignableUserResponse: Decodable {
+    let name: String?
+    let key: String?
+    let displayName: String
+    let active: Bool?
+
+    var username: String? { name ?? key }
 }
 
 private struct ProjectResponse: Decodable {
@@ -562,6 +648,7 @@ private struct IssueFieldsResponse: Decodable {
     let priority: PriorityResponse?
     let dueDate: String?
     let updated: String?
+    let assignee: AssignableUserResponse?
 
     private enum CodingKeys: String, CodingKey {
         case summary
@@ -570,6 +657,7 @@ private struct IssueFieldsResponse: Decodable {
         case priority
         case dueDate = "duedate"
         case updated
+        case assignee
     }
 }
 
@@ -603,6 +691,23 @@ private struct TransitionRequest: Encodable {
     }
 
     let transition: Selection
+}
+
+private struct AssigneeRequest: Encodable {
+    let username: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case username = "name"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let username {
+            try container.encode(username, forKey: .username)
+        } else {
+            try container.encodeNil(forKey: .username)
+        }
+    }
 }
 
 private struct WorklogRequest: Encodable {

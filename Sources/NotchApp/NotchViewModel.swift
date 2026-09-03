@@ -8,6 +8,7 @@ enum NotchTransientSurface: Hashable {
     case jiraSearch
     case jiraWorklog(String)
     case jiraTransitions(String)
+    case jiraAssignee(String)
 }
 
 @MainActor
@@ -30,6 +31,7 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var startupPanel: PanelID?
     @Published private(set) var selectedAISection: AISection
     @Published private(set) var aiSessions: [AISession] = []
+    @Published private(set) var compactAgentSignal: CompactAgentSignal?
     @Published private(set) var aiSourceHealth: [String: AISessionSourceHealth] = [:]
     @Published private(set) var aiSessionsUpdatedAt: Date?
     @Published private(set) var hasCompletedPanelSwipe: Bool
@@ -61,6 +63,7 @@ final class NotchViewModel: ObservableObject {
     private var calendarMonthTask: Task<Void, Never>?
     private var hasLoadedCalendar = false
     private var cancellables = Set<AnyCancellable>()
+    private let compactAgentSignalController: CompactAgentSignalController
 
     init(
         providers: [any QuotaProvider] = [
@@ -84,6 +87,7 @@ final class NotchViewModel: ObservableObject {
             credentialStore: KeychainJiraCredentialStore(),
             preferences: preferences
         )
+        self.compactAgentSignalController = CompactAgentSignalController()
         let panelOrder = preferences.panelOrder
         let hiddenPanelIDs = preferences.hiddenPanelIDs
         let visiblePanels = panelOrder.filter { hiddenPanelIDs.contains($0) == false }
@@ -131,6 +135,9 @@ final class NotchViewModel: ObservableObject {
         preferences.quotaProviderOrder = quotaProviderOrder
         preferences.hiddenQuotaProviderIDs = hiddenQuotaProviderIDs
         preferences.compactQuotaProviderID = compactQuotaProviderID
+        compactAgentSignalController.onChange = { [weak self] signal in
+            self?.compactAgentSignal = signal
+        }
 
         for provider in providers {
             guard let ollamaProvider = provider as? OllamaQuotaProvider else { continue }
@@ -158,7 +165,14 @@ final class NotchViewModel: ObservableObject {
             }
         }
         aiSessionStore.$sessions
-            .sink { [weak self] sessions in self?.aiSessions = sessions }
+            .sink { [weak self] sessions in
+                guard let self else { return }
+                self.aiSessions = sessions
+                self.compactAgentSignalController.consume(
+                    sessions,
+                    hasReceivedSnapshot: self.aiSessionStore.lastUpdatedAt != nil
+                )
+            }
             .store(in: &cancellables)
         aiSessionStore.$sourceHealth
             .sink { [weak self] health in self?.aiSourceHealth = health }
@@ -264,6 +278,19 @@ final class NotchViewModel: ObservableObject {
 
     var visiblePanels: [PanelID] {
         panelOrder.filter { hiddenPanelIDs.contains($0) == false }
+    }
+
+    var visibleCompactAgentSignal: CompactAgentSignal? {
+        visiblePanels.contains(.ai) ? compactAgentSignal : nil
+    }
+
+    func openCompactAgentSessions() {
+        guard let signal = visibleCompactAgentSignal else { return }
+        compactAgentSignalController.acknowledge(signal)
+        cancelScheduledCollapse()
+        selectPanel(.ai)
+        selectAISection(.sessions)
+        isExpanded = true
     }
 
     func canHidePanel(_ panel: PanelID) -> Bool {
@@ -564,6 +591,25 @@ final class NotchViewModel: ObservableObject {
 
     func submitJiraTransition(issueKey: String, transition: JiraTransition) async {
         await jiraProvider.performTransition(issueKey: issueKey, transition: transition)
+    }
+
+    func searchJiraAssignees(
+        issueKey: String,
+        projectKey: String,
+        query: String
+    ) async {
+        await jiraProvider.searchAssignableUsers(
+            issueKey: issueKey,
+            projectKey: projectKey,
+            query: query
+        )
+    }
+
+    func assignJiraIssue(
+        issueKey: String,
+        selection: JiraAssigneeSelection
+    ) async -> Result<Void, JiraAPIError> {
+        await jiraProvider.assign(issueKey: issueKey, selection: selection)
     }
 
     func submitJiraWorklog(

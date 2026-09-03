@@ -22,6 +22,7 @@ final class JiraProvider: JiraProviding {
     private var pollingGeneration: UInt = 0
     private var lifecycleGeneration: UInt = 0
     private var transitionGenerations: [String: UInt] = [:]
+    private var assigneeGenerations: [String: UInt] = [:]
     private var refreshTask: Task<Void, Never>?
     private var pollingTask: Task<Void, Never>?
     private var transitionTasks: [String: Task<Void, Never>] = [:]
@@ -81,6 +82,7 @@ final class JiraProvider: JiraProviding {
         isStarted = false
         cancelRefreshAndPolling()
         cancelTransitionTasks()
+        state.assigneesByIssueKey = [:]
         cancelPinnedTasks()
     }
 
@@ -195,6 +197,7 @@ final class JiraProvider: JiraProviding {
 
         cancelRefreshAndPolling()
         cancelTransitionTasks()
+        state.assigneesByIssueKey = [:]
         cancelPinnedTasks()
 
         preferences.jiraBaseURLString = baseURLText
@@ -521,6 +524,124 @@ final class JiraProvider: JiraProviding {
         await task.value
     }
 
+    func searchAssignableUsers(
+        issueKey: String,
+        projectKey: String,
+        query: String
+    ) async {
+        let previous = previousAssignees(for: issueKey)
+        let configuration: (baseURL: URL, token: String)
+        do {
+            guard let resolved = try configuredCredentials() else {
+                publishAssigneeFailure(.notConfigured, previous: previous, issueKey: issueKey)
+                return
+            }
+            configuration = resolved
+        } catch {
+            publishAssigneeFailure(
+                Self.normalizedError(error),
+                previous: previous,
+                issueKey: issueKey
+            )
+            return
+        }
+
+        let generation = nextAssigneeGeneration(for: issueKey)
+        let lifecycle = lifecycleGeneration
+        state.assigneesByIssueKey[issueKey] = .loading(previous: previous)
+        publish()
+
+        do {
+            let users = try await client.assignableUsers(
+                baseURL: configuration.baseURL,
+                token: configuration.token,
+                projectKey: projectKey,
+                query: query.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            guard lifecycleGeneration == lifecycle,
+                  assigneeGenerations[issueKey] == generation else { return }
+            state.assigneesByIssueKey[issueKey] = .loaded(
+                users.sorted {
+                    $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+                }
+            )
+            publish()
+        } catch {
+            guard lifecycleGeneration == lifecycle,
+                  assigneeGenerations[issueKey] == generation else { return }
+            publishAssigneeFailure(
+                Self.normalizedError(error),
+                previous: previous,
+                issueKey: issueKey
+            )
+        }
+    }
+
+    func assign(
+        issueKey: String,
+        selection: JiraAssigneeSelection
+    ) async -> Result<Void, JiraAPIError> {
+        let previous = previousAssignees(for: issueKey) ?? []
+        let configuration: (baseURL: URL, token: String)
+        do {
+            guard let resolved = try configuredCredentials() else {
+                return .failure(.notConfigured)
+            }
+            configuration = resolved
+        } catch {
+            return .failure(Self.normalizedError(error))
+        }
+
+        let generation = nextAssigneeGeneration(for: issueKey)
+        let lifecycle = lifecycleGeneration
+        state.assigneesByIssueKey[issueKey] = .submitting(previous)
+        publish()
+
+        do {
+            let assignee: JiraAssignee?
+            switch selection {
+            case .currentUser:
+                let user = try await client.currentUser(
+                    baseURL: configuration.baseURL,
+                    token: configuration.token
+                )
+                guard let username = user.username, username.isEmpty == false else {
+                    throw JiraAPIError.decoding
+                }
+                assignee = JiraAssignee(username: username, displayName: user.displayName)
+            case .user(let user):
+                assignee = user
+            case .unassigned:
+                assignee = nil
+            }
+
+            try await client.assign(
+                baseURL: configuration.baseURL,
+                token: configuration.token,
+                issueKey: issueKey,
+                username: assignee?.username
+            )
+            guard lifecycleGeneration == lifecycle,
+                  assigneeGenerations[issueKey] == generation else {
+                return .failure(.network)
+            }
+
+            replaceIssueAssignee(issueKey: issueKey, assignee: assignee)
+            state.assigneesByIssueKey[issueKey] = .idle
+            publish()
+            refresh()
+            return .success(())
+        } catch {
+            let normalized = Self.normalizedError(error)
+            guard lifecycleGeneration == lifecycle,
+                  assigneeGenerations[issueKey] == generation else {
+                return .failure(normalized)
+            }
+            publishAssigneeFailure(normalized, previous: previous, issueKey: issueKey)
+            return .failure(normalized)
+        }
+    }
+
     func addWorklog(
         issueKey: String,
         draft: JiraWorklogDraft
@@ -774,6 +895,7 @@ final class JiraProvider: JiraProviding {
         }
         transitionTasks.removeAll()
         transitionGenerations.removeAll()
+        assigneeGenerations.removeAll()
     }
 
     private func publishListFailure(_ error: JiraAPIError) {
@@ -818,6 +940,33 @@ final class JiraProvider: JiraProviding {
         publish()
     }
 
+    private func previousAssignees(for issueKey: String) -> [JiraAssignee]? {
+        switch state.assigneesByIssueKey[issueKey] {
+        case let .loaded(users), let .submitting(users):
+            users
+        case let .loading(previous), let .failed(_, previous):
+            previous
+        case .idle, .none:
+            nil
+        }
+    }
+
+    private func nextAssigneeGeneration(for issueKey: String) -> UInt {
+        let generation = (assigneeGenerations[issueKey] ?? 0) &+ 1
+        assigneeGenerations[issueKey] = generation
+        return generation
+    }
+
+    private func publishAssigneeFailure(
+        _ error: JiraAPIError,
+        previous: [JiraAssignee]?,
+        issueKey: String
+    ) {
+        state.assigneesByIssueKey[issueKey] = .failed(error: error, previous: previous)
+        invalidateAuthorizationIfNeeded(error)
+        publish()
+    }
+
     private func invalidateAuthorizationIfNeeded(_ error: JiraAPIError) {
         guard error == .unauthorized else { return }
         state.connection = .failed(.unauthorized)
@@ -838,7 +987,8 @@ final class JiraProvider: JiraProviding {
                     status: status,
                     priorityName: issue.priorityName,
                     dueDate: issue.dueDate,
-                    updatedAt: issue.updatedAt
+                    updatedAt: issue.updatedAt,
+                    assignee: issue.assignee
                 )
             }
         }
@@ -865,6 +1015,56 @@ final class JiraProvider: JiraProviding {
                 state.pinned.sourceStates[source] = .loading(
                     previous: replacing(in: previous)
                 )
+            case let .failed(error, previous):
+                state.pinned.sourceStates[source] = .failed(
+                    error: error,
+                    previous: replacing(in: previous)
+                )
+            case .idle:
+                break
+            }
+        }
+    }
+
+    private func replaceIssueAssignee(issueKey: String, assignee: JiraAssignee?) {
+        func replacing(in issues: [JiraIssue]?) -> [JiraIssue]? {
+            issues?.map { issue in
+                guard issue.key == issueKey else { return issue }
+                return JiraIssue(
+                    id: issue.id,
+                    key: issue.key,
+                    summary: issue.summary,
+                    projectKey: issue.projectKey,
+                    projectName: issue.projectName,
+                    status: issue.status,
+                    priorityName: issue.priorityName,
+                    dueDate: issue.dueDate,
+                    updatedAt: issue.updatedAt,
+                    assignee: assignee
+                )
+            }
+        }
+
+        switch state.list {
+        case let .loaded(issues, total):
+            state.list = .loaded(issues: replacing(in: issues) ?? issues, total: total)
+        case let .loading(previous):
+            state.list = .loading(previous: replacing(in: previous))
+        case let .failed(error, previous):
+            state.list = .failed(error: error, previous: replacing(in: previous))
+        case .idle:
+            break
+        }
+
+        for (source, loadState) in state.pinned.sourceStates {
+            switch loadState {
+            case let .loaded(issues, total):
+                state.pinned.sourceStates[source] = .loaded(
+                    issues: replacing(in: issues) ?? issues,
+                    total: total
+                )
+            case let .loading(previous):
+                state.pinned.sourceStates[source] = .loading(previous: replacing(in: previous))
             case let .failed(error, previous):
                 state.pinned.sourceStates[source] = .failed(
                     error: error,

@@ -12,6 +12,8 @@ final class NotchWindowCoordinator: NSObject {
     private let model: NotchViewModel
     private let visualSettings: NotchVisualSettings
     private let launchAtLogin: LaunchAtLoginManager
+    private var lastLayoutWasExpanded = false
+    private var targetWindowFrame: NSRect?
 
     override init() {
         model = NotchViewModel(
@@ -106,7 +108,12 @@ final class NotchWindowCoordinator: NSObject {
     }
 
     func reposition() {
-        window.setFrameOrigin(Self.origin(for: NSScreen.preferredNotchScreen, size: window.frame.size))
+        let frame = NSRect(
+            origin: Self.origin(for: NSScreen.preferredNotchScreen, size: window.frame.size),
+            size: window.frame.size
+        )
+        targetWindowFrame = frame
+        window.setFrame(frame, display: true)
     }
 
     private func showSettingsWindow(section: NotchSettingsSection) {
@@ -133,12 +140,18 @@ final class NotchWindowCoordinator: NSObject {
             calendarViewMode: model.calendarViewMode,
             isShowingSettings: model.isShowingSettings,
             compactHeight: visualSettings.compactHeight,
-            isPlaying: model.nowPlayingSnapshot?.playbackState.isPlaying == true
+            isPlaying: model.nowPlayingSnapshot?.playbackState.isPlaying == true,
+            showsAgentMascot: model.visibleCompactAgentSignal != nil
         )
         let frame = NSRect(
             origin: Self.origin(for: NSScreen.preferredNotchScreen, size: size),
             size: size
         )
+        let wasExpanded = lastLayoutWasExpanded
+        lastLayoutWasExpanded = isExpanded
+
+        guard targetWindowFrame != frame else { return }
+        targetWindowFrame = frame
 
         guard reduceMotion == false else {
             window.setFrame(frame, display: true)
@@ -146,8 +159,13 @@ final class NotchWindowCoordinator: NSObject {
         }
 
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = isExpanded ? 0.54 : 0.30
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            if isExpanded == false, wasExpanded == false {
+                context.duration = NotchMotion.compactResizeDuration
+                context.timingFunction = NotchMotion.compactResizeTimingFunction()
+            } else {
+                context.duration = isExpanded ? 0.54 : 0.30
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            }
             window.animator().setFrame(frame, display: true)
         }
     }

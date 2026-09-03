@@ -321,6 +321,11 @@ struct NotchSettingsView: View {
                     Divider()
                         .overlay(Color.white.opacity(0.08))
 
+                    Toggle(
+                        "Показывать маскота в открытой челке",
+                        isOn: $settings.showsExpandedMascot
+                    )
+
                     Toggle("Показывать линию", isOn: $settings.showsLine)
                     Toggle("Анимация линии", isOn: $settings.pulsesLine)
 

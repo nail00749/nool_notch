@@ -56,4 +56,22 @@ final class JiraModelsTests: XCTestCase {
             Array(stride(from: 0, through: 55, by: 5))
         )
     }
+
+    func testStatusSelectionKeepsCurrentStatusSeparateFromAvailableTransitions() {
+        let current = JiraStatus(id: "3", name: "In Progress", categoryKey: "indeterminate")
+        let sameStatus = JiraTransition(id: "11", name: "In Progress", toStatus: current)
+        let done = JiraTransition(
+            id: "31",
+            name: "Done",
+            toStatus: JiraStatus(id: "5", name: "Done", categoryKey: "done")
+        )
+
+        let presentation = JiraStatusSelectionPresentation(
+            currentStatus: current,
+            transitions: [sameStatus, done]
+        )
+
+        XCTAssertEqual(presentation.currentStatus, current)
+        XCTAssertEqual(presentation.availableTransitions, [done])
+    }
 }

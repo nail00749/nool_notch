@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ExpandedNotch: View {
     @ObservedObject var model: NotchViewModel
+    let showsSettingsMascot: Bool
     let onOpenSettings: (NotchSettingsSection) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -40,6 +41,7 @@ struct ExpandedNotch: View {
                 title: model.selectedPanel.title,
                 physicalNotchSize: NotchLayout.physicalNotchSize,
                 sideWingWidth: NotchLayout.expandedHeaderWingWidth,
+                showsMascot: showsSettingsMascot,
                 onShowSettings: { onOpenSettings(.general) }
             )
             .opacity(contentVisible ? 1 : 0)
@@ -261,6 +263,7 @@ private struct ExpandedNotchHeader: View {
     let title: String
     let physicalNotchSize: CGSize
     let sideWingWidth: CGFloat?
+    let showsMascot: Bool
     let onShowSettings: () -> Void
 
     private var sideHeaderHeight: CGFloat {
@@ -317,11 +320,18 @@ private struct ExpandedNotchHeader: View {
     }
 
     private var trailingContent: some View {
-        HeaderButton(
-            icon: "gearshape",
-            label: "Открыть настройки",
-            action: onShowSettings
-        )
+        HStack(spacing: 4) {
+            if showsMascot {
+                NoolWavingMascot()
+                    .frame(width: 40, height: 40)
+            }
+
+            HeaderButton(
+                icon: "gearshape",
+                label: "Открыть настройки",
+                action: onShowSettings
+            )
+        }
     }
 }
 

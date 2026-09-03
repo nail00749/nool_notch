@@ -1,0 +1,20 @@
+[mcp_servers.blender]
+command = "/opt/homebrew/bin/uvx"
+args = [
+  "--python",
+  "3.11",
+  "--from",
+  "blender-mcp==1.9.1",
+  "blender-mcp",
+]
+enabled = true
+startup_timeout_sec = 30
+tool_timeout_sec = 300
+default_tools_approval_mode = "prompt"
+
+[mcp_servers.blender.env]
+BLENDER_HOST = "localhost"
+BLENDER_PORT = "9876"
+BLENDER_MCP_SAFE_MODE = "1"
+DISABLE_TELEMETRY = "true"
+UV_PYTHON_PREFERENCE = "only-managed"

@@ -35,6 +35,11 @@ BIN_PATH="$("$XCRUN" swift build -c release --arch "$ARCH" --show-bin-path)"
 /usr/bin/install -m 755 "$BIN_PATH/NotchApp" "$APP_PATH/Contents/MacOS/NotchApp"
 /bin/cp "$PROJECT_ROOT/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
 /bin/cp "$PROJECT_ROOT/Resources/AppIcon.icns" "$APP_PATH/Contents/Resources/AppIcon.icns"
+RESOURCE_BUNDLES=("$BIN_PATH"/*.bundle(N))
+for RESOURCE_BUNDLE in "${RESOURCE_BUNDLES[@]}"; do
+  BUNDLE_NAME="${RESOURCE_BUNDLE:t}"
+  /bin/cp -R "$RESOURCE_BUNDLE" "$APP_PATH/Contents/Resources/$BUNDLE_NAME"
+done
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${NOTCHAPP_BUILD_NUMBER:-1}" "$APP_PATH/Contents/Info.plist"

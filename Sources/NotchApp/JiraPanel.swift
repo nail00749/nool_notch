@@ -930,12 +930,64 @@ enum JiraWorklogPopoverAnimationPolicy {
     }
 }
 
+private enum JiraStatusVisuals {
+    static func color(for status: JiraStatus) -> Color {
+        switch status.categoryKey.lowercased() {
+        case "new": Color.signalCyan
+        case "indeterminate": Color.signalAmber
+        case "done": Color.signalMint
+        default: Color.white.opacity(0.55)
+        }
+    }
+
+    static func iconName(for status: JiraStatus) -> String {
+        switch status.categoryKey.lowercased() {
+        case "new": "circle"
+        case "indeterminate": "clock.arrow.circlepath"
+        case "done": "checkmark.circle.fill"
+        default: "arrow.triangle.2.circlepath"
+        }
+    }
+}
+
+private struct JiraStatusBadge: View {
+    let status: JiraStatus
+    var showsCurrentMark = false
+
+    private var color: Color {
+        JiraStatusVisuals.color(for: status)
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(
+                systemName: showsCurrentMark
+                    ? "checkmark"
+                    : JiraStatusVisuals.iconName(for: status)
+            )
+            .font(.system(size: 8, weight: .bold))
+
+            Text(status.name)
+                .lineLimit(1)
+        }
+        .font(.system(size: 9, weight: .semibold, design: .rounded))
+        .foregroundStyle(color)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(color.opacity(0.13), in: Capsule())
+        .help("Текущий статус: \(status.name)")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Текущий статус: \(status.name)")
+    }
+}
+
 private struct JiraIssueRow: View {
     @ObservedObject var model: NotchViewModel
     let issue: JiraIssue
 
     @State private var isShowingTransitions = false
     @State private var isShowingWorklog = false
+    @State private var isShowingAssignee = false
     @State private var didCopyKey = false
     @State private var didAddWorklog = false
     @State private var isSubmittingWorklog = false
@@ -951,6 +1003,15 @@ private struct JiraIssueRow: View {
         default:
             false
         }
+    }
+
+    private var assigneeState: JiraAssigneeState {
+        model.jiraState.assigneesByIssueKey[issue.key] ?? .idle
+    }
+
+    private var isAssigneeBusy: Bool {
+        if case .submitting = assigneeState { return true }
+        return false
     }
 
     private var worklogPresentation: Binding<Bool> {
@@ -977,9 +1038,13 @@ private struct JiraIssueRow: View {
 
             Button(action: openIssue) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(issue.key)
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundStyle(Color.signalCyan)
+                    HStack(spacing: 7) {
+                        Text(issue.key)
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(Color.signalCyan)
+
+                        JiraStatusBadge(status: issue.status)
+                    }
 
                     Text(issue.summary)
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
@@ -987,39 +1052,73 @@ private struct JiraIssueRow: View {
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
 
-                    if issue.priorityName != nil || issue.dueDate != nil {
-                        HStack(spacing: 8) {
-                            if let priority = issue.priorityName {
-                                Label(priority, systemImage: "flag.fill")
-                                    .foregroundStyle(priorityColor(for: priority))
-                            }
-                            if let dueDate = issue.dueDate {
-                                Label(
-                                    JiraIssuePresentation.dueDateText(dueDate),
-                                    systemImage: "calendar"
-                                )
-                                .foregroundStyle(
-                                    JiraIssuePresentation.isOverdue(dueDate)
-                                        ? Color.signalCoral
-                                        : Color.white.opacity(0.4)
-                                )
-                            }
+                    HStack(spacing: 8) {
+                        Label(
+                            issue.assignee?.displayName ?? "Без исполнителя",
+                            systemImage: issue.assignee == nil ? "person.slash" : "person.fill"
+                        )
+                        .foregroundStyle(Color.white.opacity(0.48))
+
+                        if let priority = issue.priorityName {
+                            Label(priority, systemImage: "flag.fill")
+                                .foregroundStyle(priorityColor(for: priority))
                         }
-                        .font(.system(size: 9, weight: .medium, design: .rounded))
-                        .lineLimit(1)
+                        if let dueDate = issue.dueDate {
+                            Label(
+                                JiraIssuePresentation.dueDateText(dueDate),
+                                systemImage: "calendar"
+                            )
+                            .foregroundStyle(
+                                JiraIssuePresentation.isOverdue(dueDate)
+                                    ? Color.signalCoral
+                                    : Color.white.opacity(0.4)
+                            )
+                        }
                     }
+                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(NotchButtonStyle())
-            .accessibilityLabel("Открыть \(issue.key): \(issue.summary)")
+            .accessibilityLabel(
+                "Открыть \(issue.key): \(issue.summary). Статус: \(issue.status.name)"
+            )
 
-            HStack(spacing: 4) {
-                Button(action: copyIssueKey) {
-                    Image(systemName: didCopyKey ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(didCopyKey ? Color.signalMint : .white.opacity(0.58))
+            Grid(horizontalSpacing: 2, verticalSpacing: 2) {
+                GridRow {
+                    Button(action: copyIssueKey) {
+                        Image(systemName: didCopyKey ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(didCopyKey ? Color.signalMint : .white.opacity(0.58))
+                            .frame(width: 30, height: 30)
+                            .background(
+                                Color.white.opacity(0.07),
+                                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            )
+                            .padding(5)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(NotchButtonStyle())
+                    .help(didCopyKey ? "Ключ скопирован" : "Скопировать \(issue.key)")
+                    .accessibilityLabel("Скопировать ключ \(issue.key)")
+
+                    Button {
+                        guard !isAssigneeBusy else { return }
+                        model.transientSurfaceDidPresent(.jiraAssignee(issue.key))
+                        isShowingAssignee = true
+                    } label: {
+                        Group {
+                            if isAssigneeBusy {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: issue.assignee == nil ? "person.badge.plus" : "person.crop.circle")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                        }
+                        .foregroundStyle(Color.signalCyan)
                         .frame(width: 30, height: 30)
                         .background(
                             Color.white.opacity(0.07),
@@ -1027,27 +1126,43 @@ private struct JiraIssueRow: View {
                         )
                         .padding(5)
                         .contentShape(Rectangle())
-                }
-                .buttonStyle(NotchButtonStyle())
-                .help(didCopyKey ? "Ключ скопирован" : "Скопировать \(issue.key)")
-                .accessibilityLabel("Скопировать ключ \(issue.key)")
-
-                Button {
-                    guard !isSubmittingWorklog else { return }
-                    model.transientSurfaceDidPresent(.jiraWorklog(issue.key))
-                    isShowingWorklog = true
-                } label: {
-                    Group {
-                        if isSubmittingWorklog {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else if didAddWorklog {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 10, weight: .semibold))
-                        } else {
-                            JiraWorklogIcon(size: 10)
+                    }
+                    .buttonStyle(NotchButtonStyle())
+                    .disabled(isAssigneeBusy)
+                    .help("Изменить исполнителя \(issue.key)")
+                    .popover(isPresented: $isShowingAssignee, arrowEdge: .bottom) {
+                        JiraAssigneePopover(
+                            model: model,
+                            issue: issue,
+                            state: assigneeState,
+                            dismiss: { isShowingAssignee = false }
+                        )
+                        .onDisappear {
+                            model.transientSurfaceDidDisappear(.jiraAssignee(issue.key))
                         }
                     }
+                    .accessibilityLabel(
+                        "Изменить исполнителя \(issue.key). Сейчас: \(issue.assignee?.displayName ?? "без исполнителя")"
+                    )
+                }
+
+                GridRow {
+                    Button {
+                        guard !isSubmittingWorklog else { return }
+                        model.transientSurfaceDidPresent(.jiraWorklog(issue.key))
+                        isShowingWorklog = true
+                    } label: {
+                        Group {
+                            if isSubmittingWorklog {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else if didAddWorklog {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 10, weight: .semibold))
+                            } else {
+                                JiraWorklogIcon(size: 10)
+                            }
+                        }
                         .foregroundStyle(
                             didAddWorklog ? Color.signalMint : .white.opacity(0.58)
                         )
@@ -1058,74 +1173,75 @@ private struct JiraIssueRow: View {
                         )
                         .padding(5)
                         .contentShape(Rectangle())
-                }
-                .buttonStyle(NotchButtonStyle())
-                .disabled(isSubmittingWorklog)
-                .help(
-                    isSubmittingWorklog
-                        ? "Списание времени в \(issue.key)…"
-                        : "Списать время в \(issue.key)"
-                )
-                .popover(isPresented: worklogPresentation, arrowEdge: .bottom) {
-                    JiraWorklogPopover(
-                        model: model,
-                        issue: issue,
-                        isSubmitting: $isSubmittingWorklog
-                    ) {
-                        isSubmittingWorklog = false
-                        worklogPresentation.wrappedValue = false
-                        didAddWorklog = true
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .seconds(1.2))
-                            didAddWorklog = false
+                    }
+                    .buttonStyle(NotchButtonStyle())
+                    .disabled(isSubmittingWorklog)
+                    .help(
+                        isSubmittingWorklog
+                            ? "Списание времени в \(issue.key)…"
+                            : "Списать время в \(issue.key)"
+                    )
+                    .popover(isPresented: worklogPresentation, arrowEdge: .bottom) {
+                        JiraWorklogPopover(
+                            model: model,
+                            issue: issue,
+                            isSubmitting: $isSubmittingWorklog
+                        ) {
+                            isSubmittingWorklog = false
+                            worklogPresentation.wrappedValue = false
+                            didAddWorklog = true
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .seconds(1.2))
+                                didAddWorklog = false
+                            }
+                        }
+                        .onDisappear {
+                            model.transientSurfaceDidDisappear(.jiraWorklog(issue.key))
                         }
                     }
-                    .onDisappear {
-                        model.transientSurfaceDidDisappear(.jiraWorklog(issue.key))
-                    }
-                }
-                .accessibilityLabel("Списать время в задачу \(issue.key)")
+                    .accessibilityLabel("Списать время в задачу \(issue.key)")
 
-                Button {
-                    model.transientSurfaceDidPresent(.jiraTransitions(issue.key))
-                    isShowingTransitions = true
-                    Task { await model.loadJiraTransitions(for: issue.key) }
-                } label: {
-                    Group {
-                        if isTransitionBusy {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Image(systemName: statusIconName)
-                                .font(.system(size: 10, weight: .semibold))
+                    Button {
+                        model.transientSurfaceDidPresent(.jiraTransitions(issue.key))
+                        isShowingTransitions = true
+                        Task { await model.loadJiraTransitions(for: issue.key) }
+                    } label: {
+                        Group {
+                            if isTransitionBusy {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                        }
+                        .foregroundStyle(statusCategoryColor)
+                        .frame(width: 30, height: 30)
+                        .background(
+                            Color.white.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        )
+                        .padding(5)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(NotchButtonStyle())
+                    .disabled(isTransitionBusy)
+                    .help("Текущий статус: \(issue.status.name)")
+                    .popover(isPresented: $isShowingTransitions, arrowEdge: .bottom) {
+                        JiraTransitionPopover(
+                            model: model,
+                            issue: issue,
+                            state: transitionState,
+                            dismiss: { isShowingTransitions = false }
+                        )
+                        .onDisappear {
+                            model.transientSurfaceDidDisappear(.jiraTransitions(issue.key))
                         }
                     }
-                    .foregroundStyle(statusCategoryColor)
-                    .frame(width: 30, height: 30)
-                    .background(
-                        Color.white.opacity(0.08),
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .accessibilityLabel(
+                        "Изменить статус \(issue.key). Текущий статус: \(issue.status.name)"
                     )
-                    .padding(5)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(NotchButtonStyle())
-                .disabled(isTransitionBusy)
-                .help("Текущий статус: \(issue.status.name)")
-                .popover(isPresented: $isShowingTransitions, arrowEdge: .bottom) {
-                    JiraTransitionPopover(
-                        model: model,
-                        issue: issue,
-                        state: transitionState,
-                        dismiss: { isShowingTransitions = false }
-                    )
-                    .onDisappear {
-                        model.transientSurfaceDidDisappear(.jiraTransitions(issue.key))
-                    }
-                }
-                .accessibilityLabel(
-                    "Изменить статус \(issue.key). Текущий статус: \(issue.status.name)"
-                )
             }
         }
         .padding(10)
@@ -1136,6 +1252,7 @@ private struct JiraIssueRow: View {
         .onChange(of: model.transientSurfaceDismissalRequest) { _, _ in
             worklogPresentation.wrappedValue = false
             isShowingTransitions = false
+            isShowingAssignee = false
         }
     }
 
@@ -1145,21 +1262,7 @@ private struct JiraIssueRow: View {
     }
 
     private var statusCategoryColor: Color {
-        return switch issue.status.categoryKey.lowercased() {
-        case "new": Color.signalCyan
-        case "indeterminate": Color.signalAmber
-        case "done": Color.signalMint
-        default: Color.white.opacity(0.45)
-        }
-    }
-
-    private var statusIconName: String {
-        switch issue.status.categoryKey.lowercased() {
-        case "new": "circle"
-        case "indeterminate": "clock.arrow.circlepath"
-        case "done": "checkmark.circle.fill"
-        default: "arrow.triangle.2.circlepath"
-        }
+        JiraStatusVisuals.color(for: issue.status)
     }
 
     private var isOverdue: Bool {
@@ -1460,6 +1563,221 @@ private struct JiraWorklogPopover: View {
     }
 }
 
+private struct JiraAssigneePopover: View {
+    @ObservedObject var model: NotchViewModel
+    let issue: JiraIssue
+    let state: JiraAssigneeState
+    let dismiss: () -> Void
+
+    @State private var query = ""
+    @State private var searchTask: Task<Void, Never>?
+    @FocusState private var isSearchFocused: Bool
+
+    private var visibleUsers: [JiraAssignee] {
+        switch state {
+        case .loaded(let users), .submitting(let users):
+            users
+        case .loading(let previous), .failed(_, let previous):
+            previous ?? []
+        case .idle:
+            []
+        }
+    }
+
+    private var isLoading: Bool {
+        if case .loading = state { return true }
+        return false
+    }
+
+    private var isSubmitting: Bool {
+        if case .submitting = state { return true }
+        return false
+    }
+
+    private var error: JiraAPIError? {
+        if case .failed(let error, _) = state { return error }
+        return nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(issue.key)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Текущий исполнитель")
+                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+
+                Label(
+                    issue.assignee?.displayName ?? "Без исполнителя",
+                    systemImage: issue.assignee == nil ? "person.slash" : "person.fill"
+                )
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color.signalCyan)
+                .lineLimit(1)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color.signalCyan.opacity(0.12), in: Capsule())
+            }
+
+            HStack(spacing: 6) {
+                quickAction(
+                    title: "На себя",
+                    icon: "person.crop.circle.badge.checkmark",
+                    selection: .currentUser,
+                    disabled: false
+                )
+                quickAction(
+                    title: "Снять",
+                    icon: "person.crop.circle.badge.minus",
+                    selection: .unassigned,
+                    disabled: issue.assignee == nil
+                )
+            }
+
+            TextField("Поиск по имени", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .focused($isSearchFocused)
+                .disabled(isSubmitting)
+
+            if let error {
+                Text(error.safeRussianMessage)
+                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .foregroundStyle(Color.signalCoral)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if isLoading, visibleUsers.isEmpty {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Ищу доступных пользователей…")
+                        .font(.system(size: 9, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
+            } else if visibleUsers.isEmpty {
+                Text(query.isEmpty ? "Доступных пользователей нет" : "Ничего не найдено")
+                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 5) {
+                        ForEach(visibleUsers) { user in
+                            userButton(user)
+                        }
+                    }
+                }
+                .frame(maxHeight: 400)
+                .overlay(alignment: .topTrailing) {
+                    if isLoading {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .padding(5)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 300)
+        .onAppear {
+            scheduleSearch(immediate: true)
+            isSearchFocused = true
+        }
+        .onChange(of: query) { _, _ in
+            scheduleSearch(immediate: false)
+        }
+        .onDisappear {
+            searchTask?.cancel()
+        }
+    }
+
+    private func quickAction(
+        title: String,
+        icon: String,
+        selection: JiraAssigneeSelection,
+        disabled: Bool
+    ) -> some View {
+        Button {
+            submit(selection)
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .frame(maxWidth: .infinity, minHeight: 40)
+                .background(
+                    Color.white.opacity(0.07),
+                    in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled || isSubmitting)
+        .opacity(disabled ? 0.4 : 1)
+    }
+
+    private func userButton(_ user: JiraAssignee) -> some View {
+        let isCurrent = issue.assignee?.username == user.username
+        return Button {
+            submit(.user(user))
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: isCurrent ? "checkmark.circle.fill" : "person.crop.circle")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isCurrent ? Color.signalMint : Color.signalCyan)
+
+                Text(user.displayName)
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+
+                Spacer(minLength: 4)
+            }
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+            .padding(.horizontal, 9)
+            .background(
+                Color.white.opacity(isCurrent ? 0.09 : 0.055),
+                in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isCurrent || isSubmitting)
+        .opacity(isSubmitting ? 0.55 : 1)
+    }
+
+    private func scheduleSearch(immediate: Bool) {
+        searchTask?.cancel()
+        let requestedQuery = query
+        searchTask = Task { @MainActor in
+            if immediate == false {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            guard Task.isCancelled == false else { return }
+            await model.searchJiraAssignees(
+                issueKey: issue.key,
+                projectKey: issue.projectKey,
+                query: requestedQuery
+            )
+        }
+    }
+
+    private func submit(_ selection: JiraAssigneeSelection) {
+        guard isSubmitting == false else { return }
+        searchTask?.cancel()
+        Task { @MainActor in
+            if case .success = await model.assignJiraIssue(
+                issueKey: issue.key,
+                selection: selection
+            ) {
+                dismiss()
+            }
+        }
+    }
+}
+
 private struct JiraTransitionPopover: View {
     @ObservedObject var model: NotchViewModel
     let issue: JiraIssue
@@ -1471,6 +1789,17 @@ private struct JiraTransitionPopover: View {
             Text(issue.key)
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Текущий статус")
+                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+
+                JiraStatusBadge(status: issue.status, showsCurrentMark: true)
+            }
+
+            Divider()
+                .overlay(Color.white.opacity(0.08))
 
             switch state {
             case .idle, .loading:
@@ -1507,13 +1836,22 @@ private struct JiraTransitionPopover: View {
         _ transitions: [JiraTransition],
         disabled: Bool = false
     ) -> some View {
-        if transitions.isEmpty {
-            Text("Доступных переходов нет")
+        let presentation = JiraStatusSelectionPresentation(
+            currentStatus: issue.status,
+            transitions: transitions
+        )
+
+        if presentation.availableTransitions.isEmpty {
+            Text("Других доступных статусов нет")
                 .font(.system(size: 10, weight: .medium, design: .rounded))
                 .foregroundStyle(.secondary)
         } else {
-            ForEach(transitions) { transition in
-                Button(transition.name) {
+            Text("Перевести в")
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+
+            ForEach(presentation.availableTransitions) { transition in
+                Button {
                     dismiss()
                     Task {
                         await model.submitJiraTransition(
@@ -1521,10 +1859,41 @@ private struct JiraTransitionPopover: View {
                             transition: transition
                         )
                     }
+                } label: {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(JiraStatusVisuals.color(for: transition.toStatus))
+                            .frame(width: 6, height: 6)
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(transition.toStatus.name)
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+
+                            if transition.name != transition.toStatus.name {
+                                Text(transition.name)
+                                    .font(.system(size: 8, weight: .medium, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        Spacer(minLength: 4)
+
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+                    .padding(.horizontal, 9)
+                    .background(
+                        Color.white.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    )
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
                 .disabled(disabled)
+                .opacity(disabled ? 0.55 : 1)
             }
         }
     }
