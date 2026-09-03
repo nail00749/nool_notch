@@ -930,7 +930,7 @@ enum JiraWorklogPopoverAnimationPolicy {
     }
 }
 
-private enum JiraStatusVisuals {
+enum JiraStatusVisuals {
     static func color(for status: JiraStatus) -> Color {
         switch status.categoryKey.lowercased() {
         case "new": Color.signalCyan
@@ -950,7 +950,7 @@ private enum JiraStatusVisuals {
     }
 }
 
-private struct JiraStatusBadge: View {
+struct JiraStatusBadge: View {
     let status: JiraStatus
     var showsCurrentMark = false
 
@@ -1431,7 +1431,7 @@ private struct JiraDurationWheel: View {
     }
 }
 
-private struct JiraWorklogPopover: View {
+struct JiraWorklogPopover: View {
     @ObservedObject var model: NotchViewModel
     let issue: JiraIssue
     @Binding var isSubmitting: Bool
@@ -1442,6 +1442,26 @@ private struct JiraWorklogPopover: View {
     @State private var description = ""
     @State private var errorMessage: String?
     @FocusState private var isDescriptionFocused: Bool
+
+    init(
+        model: NotchViewModel,
+        issue: JiraIssue,
+        isSubmitting: Binding<Bool>,
+        initialDraft: JiraWorklogDraft = JiraWorklogDraft(
+            hours: 1,
+            minutes: 0,
+            description: ""
+        ),
+        onSuccess: @escaping () -> Void
+    ) {
+        self.model = model
+        self.issue = issue
+        _isSubmitting = isSubmitting
+        _hours = State(initialValue: initialDraft.hours)
+        _minutes = State(initialValue: initialDraft.minutes)
+        _description = State(initialValue: initialDraft.description)
+        self.onSuccess = onSuccess
+    }
 
     private var draft: JiraWorklogDraft {
         JiraWorklogDraft(
@@ -1563,7 +1583,7 @@ private struct JiraWorklogPopover: View {
     }
 }
 
-private struct JiraAssigneePopover: View {
+struct JiraAssigneePopover: View {
     @ObservedObject var model: NotchViewModel
     let issue: JiraIssue
     let state: JiraAssigneeState
@@ -1778,7 +1798,7 @@ private struct JiraAssigneePopover: View {
     }
 }
 
-private struct JiraTransitionPopover: View {
+struct JiraTransitionPopover: View {
     @ObservedObject var model: NotchViewModel
     let issue: JiraIssue
     let state: JiraTransitionState

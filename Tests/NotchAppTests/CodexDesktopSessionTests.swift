@@ -20,6 +20,16 @@ final class CodexDesktopSessionTests: XCTestCase {
         XCTAssertTrue(buffer.isEmpty)
     }
 
+    func testJSONRPCParserPreservesStringRequestID() {
+        var buffer = Data(#"{"id":"approval-1","method":"item/commandExecution/requestApproval","params":{"threadId":"thread"}}"#.utf8)
+        buffer.append(0x0A)
+
+        let message = CodexAppServerClient.drainMessages(buffer: &buffer).first
+
+        XCTAssertEqual(message?.id, .string("approval-1"))
+        XCTAssertEqual(message?.method, "item/commandExecution/requestApproval")
+    }
+
     @MainActor
     func testCodexStatusMappingUsesAttentionFlags() {
         XCTAssertEqual(
@@ -91,6 +101,112 @@ final class CodexDesktopSessionTests: XCTestCase {
         XCTAssertEqual(sessions.map(\.id.sessionID), ["desktop-running", "desktop-complete"])
         XCTAssertEqual(sessions.map(\.status), [.running, .completed])
         XCTAssertEqual(sessions.first?.workspaceName, "NotchApp")
+    }
+
+    func testStateReaderCanSelectAndNamespaceCLISessions() throws {
+        let fixture = try CodexStateFixture()
+        defer { fixture.remove() }
+        let rollout = try fixture.writeRollout(name: "cli.jsonl", events: ["task_started"])
+        try fixture.insert(
+            id: "cli-thread",
+            source: "cli",
+            archived: false,
+            rolloutPath: rollout.path,
+            updatedAtMilliseconds: 1_000,
+            title: "CLI task"
+        )
+
+        let sessions = try CodexStateReader(
+            databaseURL: fixture.databaseURL,
+            sessionSourceID: "local-agents",
+            acceptedThreadSources: ["cli"],
+            agentName: "Codex CLI",
+            sessionIDPrefix: "codex-cli:"
+        ).loadSessions()
+
+        XCTAssertEqual(sessions.map(\.id.sessionID), ["codex-cli:cli-thread"])
+        XCTAssertEqual(sessions.first?.agentName, "Codex CLI")
+    }
+
+    func testHookEventAcceptsLocalAgentsWithoutExposingCommand() throws {
+        let data = Data(#"{"_source":"claude-code","hook_event_name":"PermissionRequest","session_id":"session-1","cwd":"/tmp/App","tool_name":"Bash","tool_input":{"command":"git status"}}"#.utf8)
+
+        let event = try XCTUnwrap(CodexCLIHookEvent(data: data))
+
+        XCTAssertEqual(event.sourceID, "claude-code")
+        XCTAssertTrue(event.isPermissionRequest)
+        XCTAssertEqual(event.detail, "Инструмент: Bash")
+        XCTAssertEqual(event.workspacePath, "/tmp/App")
+    }
+
+    func testHookConfigMergePreservesForeignEntriesAndIsIdempotent() throws {
+        let existing = Data(#"{"custom":true,"hooks":{"PermissionRequest":[{"hooks":[{"type":"command","command":"foreign-hook"}]}]}}"#.utf8)
+        let events = [(name: "PermissionRequest", timeout: 86_400)]
+
+        let first = try CodexCLIHookInstaller.mergedHooksData(
+            existing: existing,
+            command: "'/tmp/nool-agent-bridge' --source codex-cli",
+            events: events,
+            matcher: nil
+        )
+        let second = try CodexCLIHookInstaller.mergedHooksData(
+            existing: first,
+            command: "'/tmp/nool-agent-bridge' --source codex-cli",
+            events: events,
+            matcher: nil
+        )
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: second) as? [String: Any]
+        )
+        let hooks = try XCTUnwrap(object["hooks"] as? [String: Any])
+        let entries = try XCTUnwrap(hooks["PermissionRequest"] as? [[String: Any]])
+
+        XCTAssertEqual(object["custom"] as? Bool, true)
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertEqual(first, second)
+    }
+
+    func testHookConfigRemovalPreservesForeignEntries() throws {
+        let existing = Data(#"{"custom":true,"hooks":{"PermissionRequest":[{"hooks":[{"type":"command","command":"foreign-hook"}]},{"hooks":[{"type":"command","command":"'/tmp/nool-agent-bridge' --source codex-cli"}]}]}}"#.utf8)
+
+        let output = try CodexCLIHookInstaller.removingManagedHooksData(existing: existing)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: output) as? [String: Any]
+        )
+        let hooks = try XCTUnwrap(object["hooks"] as? [String: Any])
+        let entries = try XCTUnwrap(hooks["PermissionRequest"] as? [[String: Any]])
+
+        XCTAssertEqual(object["custom"] as? Bool, true)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(
+            ((entries[0]["hooks"] as? [[String: Any]])?.first?["command"] as? String),
+            "foreign-hook"
+        )
+    }
+
+    func testHooksFeatureEnableDisableRoundTripRestoresPriorState() {
+        let original = """
+        model = "gpt-5"
+
+        [features]
+        hooks = false # keep user choice
+        """
+        let prior = CodexCLIHookInstaller.hooksFeatureState(in: original)
+        let enabled = CodexCLIHookInstaller.settingHooksFeature(in: original, to: .enabled)
+        let restored = CodexCLIHookInstaller.settingHooksFeature(in: enabled, to: prior)
+
+        XCTAssertEqual(prior, .disabled)
+        XCTAssertEqual(CodexCLIHookInstaller.hooksFeatureState(in: enabled), .enabled)
+        XCTAssertEqual(CodexCLIHookInstaller.hooksFeatureState(in: restored), .disabled)
+        XCTAssertTrue(restored.contains("hooks = false # keep user choice"))
+    }
+
+    func testHooksFeatureRemovalRestoresAbsentState() {
+        let original = "model = \"gpt-5\"\n"
+        let enabled = CodexCLIHookInstaller.settingHooksFeature(in: original, to: .enabled)
+        let restored = CodexCLIHookInstaller.settingHooksFeature(in: enabled, to: .absent)
+
+        XCTAssertEqual(CodexCLIHookInstaller.hooksFeatureState(in: restored), .absent)
     }
 
     @MainActor

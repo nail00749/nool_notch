@@ -529,6 +529,10 @@ final class FakeJiraProvider: JiraProviding {
 
     func refreshPinnedSource() {}
 
+    func issue(key: String) async -> Result<JiraIssue, JiraAPIError> {
+        .failure(.notConfigured)
+    }
+
     func loadTransitions(for issueKey: String) async {
         loadedTransitionIssueKeys.append(issueKey)
     }

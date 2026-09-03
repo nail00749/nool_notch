@@ -10,6 +10,7 @@ final class AISessionStore: ObservableObject {
     private let sources: [String: any AISessionSource]
     private var snapshotsBySource: [String: AISessionSourceSnapshot] = [:]
     private var sourceTasks: [String: Task<Void, Never>] = [:]
+    private var activityTracker = AISessionActivityTracker()
 
     init(sources: [any AISessionSource]) {
         self.sources = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0) })
@@ -17,6 +18,10 @@ final class AISessionStore: ObservableObject {
 
     var attentionCount: Int {
         sessions.filter { $0.status.needsAttention }.count
+    }
+
+    var sourceNames: [String: String] {
+        sources.mapValues(\.displayName)
     }
 
     func start() {
@@ -41,14 +46,31 @@ final class AISessionStore: ObservableObject {
         return await source.open(sessionID: session.id.sessionID)
     }
 
+    func respond(
+        to session: AISession,
+        requestID: String,
+        response: AISessionResponse
+    ) async -> Bool {
+        guard let source = sources[session.id.sourceID] else { return false }
+        return await source.respond(
+            sessionID: session.id.sessionID,
+            requestID: requestID,
+            response: response
+        )
+    }
+
     private func apply(_ snapshot: AISessionSourceSnapshot) {
         guard sources[snapshot.sourceID] != nil else { return }
         snapshotsBySource[snapshot.sourceID] = snapshot
         sourceHealth[snapshot.sourceID] = snapshot.health
         lastUpdatedAt = snapshotsBySource.values.map(\.updatedAt).max()
-        sessions = Self.presentationSessions(
-            snapshotsBySource.values.flatMap(\.sessions)
+        let rawSessions = snapshotsBySource.values.flatMap(\.sessions)
+        let sessionsWithActivity = activityTracker.update(
+            sessions: rawSessions,
+            sourceHealth: sourceHealth,
+            at: .now
         )
+        sessions = Self.presentationSessions(sessionsWithActivity)
     }
 
     static func presentationSessions(

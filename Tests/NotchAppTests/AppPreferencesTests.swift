@@ -59,6 +59,9 @@ final class AppPreferencesTests: XCTestCase {
         preferences.selectedAISection = .sessions
 
         XCTAssertEqual(UserDefaultsAppPreferences(defaults: defaults).selectedAISection, .sessions)
+
+        defaults.set("reviews", forKey: UserDefaultsAppPreferences.selectedAISectionKey)
+        XCTAssertEqual(UserDefaultsAppPreferences(defaults: defaults).selectedAISection, .sessions)
     }
 
     func testNonFiniteHoverDelayFallsBackSafely() {

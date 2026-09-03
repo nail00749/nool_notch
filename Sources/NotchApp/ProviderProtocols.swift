@@ -31,6 +31,7 @@ protocol JiraProviding: AnyObject {
     func movePinnedIssue(_ issue: JiraPinnedIssue, by offset: Int)
     func selectPinnedSource(_ source: JiraPinnedSourceID)
     func refreshPinnedSource()
+    func issue(key: String) async -> Result<JiraIssue, JiraAPIError>
     func loadTransitions(for issueKey: String) async
     func performTransition(issueKey: String, transition: JiraTransition) async
     func searchAssignableUsers(

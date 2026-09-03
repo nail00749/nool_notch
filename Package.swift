@@ -8,7 +8,8 @@ let package = Package(
     ],
     products: [
         .library(name: "NotchCore", targets: ["NotchCore"]),
-        .executable(name: "NotchApp", targets: ["NotchApp"])
+        .executable(name: "NotchApp", targets: ["NotchApp"]),
+        .executable(name: "NoolAgentBridge", targets: ["NoolAgentBridge"])
     ],
     targets: [
         .target(
@@ -26,6 +27,10 @@ let package = Package(
                 .linkedLibrary("sqlite3"),
                 .linkedFramework("SceneKit")
             ]
+        ),
+        .executableTarget(
+            name: "NoolAgentBridge",
+            path: "Sources/NoolAgentBridge"
         ),
         .testTarget(
             name: "NotchAppTests",

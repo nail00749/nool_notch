@@ -7,4 +7,19 @@ protocol AISessionSource: AnyObject, Sendable {
 
     func snapshots() -> AsyncStream<AISessionSourceSnapshot>
     func open(sessionID: String) async -> Bool
+    func respond(
+        sessionID: String,
+        requestID: String,
+        response: AISessionResponse
+    ) async -> Bool
+}
+
+extension AISessionSource {
+    func respond(
+        sessionID: String,
+        requestID: String,
+        response: AISessionResponse
+    ) async -> Bool {
+        false
+    }
 }

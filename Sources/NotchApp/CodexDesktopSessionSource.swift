@@ -21,6 +21,7 @@ final class CodexDesktopSessionSource: AISessionSource {
     private var isStarted = false
     private var fallbackSessions: [String: AISession] = [:]
     private var liveStatuses: [String: AISessionStatus] = [:]
+    private var pendingRequests: [String: PendingRequest] = [:]
     private var client: CodexAppServerClient?
     private var health: AISessionSourceHealth = .unavailable(message: "Codex ещё не обнаружен")
 
@@ -67,6 +68,52 @@ final class CodexDesktopSessionSource: AISessionSource {
             return true
         }
         return applicationActivator(Self.bundleIdentifier)
+    }
+
+    func respond(
+        sessionID: String,
+        requestID: String,
+        response: AISessionResponse
+    ) async -> Bool {
+        guard let pending = pendingRequests[sessionID],
+              pending.publicRequest.id == requestID,
+              let client else { return false }
+
+        let result: [String: CodexJSONValue]
+        switch (pending.kind, response) {
+        case (.approval, .approveOnce):
+            result = ["decision": .string("accept")]
+        case (.approval(let allowsSession), .approveForSession) where allowsSession:
+            result = ["decision": .string("acceptForSession")]
+        case (.approval, .deny):
+            result = ["decision": .string("decline")]
+        case (.input(let questionIDs), .answers(let answers)):
+            let encoded = Dictionary(uniqueKeysWithValues: questionIDs.map { questionID in
+                let answer = answers[questionID]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return (questionID, CodexJSONValue.object([
+                    "answers": .array([.string(answer)])
+                ]))
+            })
+            guard encoded.values.allSatisfy({ value in
+                value.objectValue?["answers"]?.arrayValue?.first?.stringValue?.isEmpty == false
+            }) else { return false }
+            result = ["answers": .object(encoded)]
+        default:
+            return false
+        }
+
+        do {
+            try client.sendResponse(id: pending.responseID, result: result)
+            pendingRequests.removeValue(forKey: sessionID)
+            liveStatuses[sessionID] = .running
+            if let existing = fallbackSessions[sessionID] {
+                fallbackSessions[sessionID] = replacing(existing, status: .running, lastActivity: .now)
+            }
+            publish()
+            return true
+        } catch {
+            return false
+        }
     }
 
     static func status(from value: CodexJSONValue?) -> AISessionStatus? {
@@ -281,6 +328,7 @@ final class CodexDesktopSessionSource: AISessionSource {
                 workspacePath: thread["cwd"]?.stringValue ?? existing?.workspacePath,
                 modelName: existing?.modelName,
                 status: status,
+                startedAt: existing?.startedAt ?? .now,
                 lastActivity: .now,
                 isStale: false
             )
@@ -295,13 +343,108 @@ final class CodexDesktopSessionSource: AISessionSource {
             publish()
         case "thread/closed":
             guard let threadID = message.params["threadId"]?.stringValue else { return }
+            pendingRequests.removeValue(forKey: threadID)
             liveStatuses[threadID] = .completed
             if let existing = fallbackSessions[threadID] {
                 fallbackSessions[threadID] = replacing(existing, status: .completed, lastActivity: .now)
             }
             publish()
+        case "item/commandExecution/requestApproval":
+            captureApprovalRequest(message, fileChange: false)
+        case "item/fileChange/requestApproval":
+            captureApprovalRequest(message, fileChange: true)
+        case "item/tool/requestUserInput":
+            captureInputRequest(message)
+        case "serverRequest/resolved":
+            guard let requestID = Self.requestID(from: message.params["requestId"]) else { return }
+            let affectedThreadIDs = pendingRequests.compactMap { threadID, request in
+                request.responseID == requestID ? threadID : nil
+            }
+            affectedThreadIDs.forEach { pendingRequests.removeValue(forKey: $0) }
+            if affectedThreadIDs.isEmpty == false { publish() }
         default:
             break
+        }
+    }
+
+    private func captureApprovalRequest(_ message: CodexAppServerMessage, fileChange: Bool) {
+        guard let responseID = message.id,
+              let threadID = message.params["threadId"]?.stringValue else { return }
+        let command = message.params["command"]?.stringValue
+        let reason = message.params["reason"]?.stringValue
+        let grantRoot = message.params["grantRoot"]?.stringValue
+        let cwd = message.params["cwd"]?.stringValue
+        let availableDecisions = message.params["availableDecisions"]?.arrayValue?
+            .compactMap(\.stringValue) ?? []
+        let allowsSession = fileChange || availableDecisions.contains("acceptForSession")
+        let title = fileChange ? "Изменение файлов" : "Подтверждение команды"
+        let detail = command ?? reason ?? grantRoot ?? "Codex запрашивает разрешение"
+        let request = AISessionAttentionRequest(
+            id: responseID.stableString,
+            kind: .approval,
+            title: title,
+            detail: detail,
+            context: cwd,
+            supportsSessionApproval: allowsSession,
+            questions: []
+        )
+        pendingRequests[threadID] = PendingRequest(
+            responseID: responseID,
+            publicRequest: request,
+            kind: .approval(allowsSession: allowsSession)
+        )
+        markSession(threadID, status: .waitingForApproval)
+    }
+
+    private func captureInputRequest(_ message: CodexAppServerMessage) {
+        guard let responseID = message.id,
+              let threadID = message.params["threadId"]?.stringValue else { return }
+        let questions = message.params["questions"]?.arrayValue?.compactMap { value -> AISessionQuestion? in
+            guard let object = value.objectValue,
+                  let id = object["id"]?.stringValue,
+                  let prompt = object["question"]?.stringValue else { return nil }
+            let options = object["options"]?.arrayValue?.compactMap { option in
+                option.objectValue?["label"]?.stringValue
+            } ?? []
+            return AISessionQuestion(
+                id: id,
+                title: object["header"]?.stringValue ?? "Ответ",
+                prompt: prompt,
+                options: options,
+                allowsFreeform: object["isOther"]?.boolValue ?? true
+            )
+        } ?? []
+        guard questions.isEmpty == false else { return }
+        let request = AISessionAttentionRequest(
+            id: responseID.stableString,
+            kind: .input,
+            title: questions.count == 1 ? questions[0].title : "Codex ждёт ответы",
+            detail: questions.count == 1 ? questions[0].prompt : "Ответь на вопросы, чтобы продолжить задачу",
+            context: nil,
+            supportsSessionApproval: false,
+            questions: questions
+        )
+        pendingRequests[threadID] = PendingRequest(
+            responseID: responseID,
+            publicRequest: request,
+            kind: .input(questionIDs: questions.map(\.id))
+        )
+        markSession(threadID, status: .waitingForInput)
+    }
+
+    private func markSession(_ threadID: String, status: AISessionStatus) {
+        liveStatuses[threadID] = status
+        if let existing = fallbackSessions[threadID] {
+            fallbackSessions[threadID] = replacing(existing, status: status, lastActivity: .now)
+        }
+        publish()
+    }
+
+    private static func requestID(from value: CodexJSONValue?) -> CodexRequestID? {
+        switch value {
+        case .number(let value): .number(Int64(value))
+        case .string(let value): .string(value)
+        default: nil
         }
     }
 
@@ -317,8 +460,10 @@ final class CodexDesktopSessionSource: AISessionSource {
             workspacePath: session.workspacePath,
             modelName: session.modelName,
             status: status,
+            startedAt: session.startedAt,
             lastActivity: lastActivity,
-            isStale: false
+            isStale: false,
+            attentionRequest: pendingRequests[session.id.sessionID]?.publicRequest
         )
     }
 
@@ -333,8 +478,10 @@ final class CodexDesktopSessionSource: AISessionSource {
                 workspacePath: session.workspacePath,
                 modelName: session.modelName,
                 status: status,
+                startedAt: session.startedAt,
                 lastActivity: session.lastActivity,
-                isStale: hasLiveClient == false
+                isStale: hasLiveClient == false,
+                attentionRequest: pendingRequests[session.id.sessionID]?.publicRequest
             )
         }
         continuation?.yield(AISessionSourceSnapshot(
@@ -351,6 +498,7 @@ final class CodexDesktopSessionSource: AISessionSource {
         client?.stop()
         client = nil
         liveStatuses.removeAll()
+        pendingRequests.removeAll()
         health = fallbackSessions.isEmpty
             ? .unavailable(message: "Codex не запущен")
             : .stale(message: "Codex не запущен")
@@ -377,5 +525,16 @@ final class CodexDesktopSessionSource: AISessionSource {
                 delay = min(delay * 2, .seconds(10))
             }
         }
+    }
+
+    private struct PendingRequest {
+        enum Kind {
+            case approval(allowsSession: Bool)
+            case input(questionIDs: [String])
+        }
+
+        let responseID: CodexRequestID
+        let publicRequest: AISessionAttentionRequest
+        let kind: Kind
     }
 }

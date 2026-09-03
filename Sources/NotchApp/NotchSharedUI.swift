@@ -59,7 +59,7 @@ enum AISection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .limits: "Лимиты"
-        case .sessions: "Сессии"
+        case .sessions: "Inbox"
         }
     }
 }
@@ -181,6 +181,8 @@ enum NotchLayout {
     static let compactWingWidth: CGFloat = 60
     static let compactAgentMascotLaneWidth: CGFloat = 50
     static let compactAgentMascotHeightIncrease: CGFloat = 12
+    static let compactHoverHorizontalPadding: CGFloat = 18
+    static let compactHoverBottomPadding: CGFloat = 16
     static let compactBottomRadius: CGFloat = 12
     static let expandedContentSize = CGSize(width: 500, height: 300)
     static let expandedCalendarContentSize = CGSize(width: 500, height: 460)
@@ -246,6 +248,23 @@ enum NotchHoverAction: Equatable {
 }
 
 enum NotchWindowSizingPolicy {
+    static func compactInteractionSize(
+        metrics: NotchLayoutMetrics,
+        isPlaying: Bool = true,
+        compactHeight: CGFloat = NotchLayout.defaultCompactHeight,
+        showsAgentMascot: Bool = false
+    ) -> CGSize {
+        let visibleSize = metrics.compactSize(
+            isPlaying: isPlaying,
+            compactHeight: compactHeight,
+            showsAgentMascot: showsAgentMascot
+        )
+        return CGSize(
+            width: visibleSize.width + NotchLayout.compactHoverHorizontalPadding * 2,
+            height: visibleSize.height + NotchLayout.compactHoverBottomPadding
+        )
+    }
+
     static func size(
         metrics: NotchLayoutMetrics,
         isExpanded: Bool,
@@ -257,7 +276,8 @@ enum NotchWindowSizingPolicy {
         showsAgentMascot: Bool = false
     ) -> CGSize {
         guard isExpanded else {
-            return metrics.compactSize(
+            return compactInteractionSize(
+                metrics: metrics,
                 isPlaying: isPlaying,
                 compactHeight: compactHeight,
                 showsAgentMascot: showsAgentMascot

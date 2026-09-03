@@ -50,14 +50,79 @@ final class AISessionStoreTests: XCTestCase {
         let opened = await store.open(store.sessions.first { $0.id.sourceID == second.id }!)
         XCTAssertTrue(opened)
         XCTAssertEqual(second.openedSessionIDs, ["same"])
+
+        let responded = await store.respond(
+            to: store.sessions.first { $0.id.sourceID == second.id }!,
+            requestID: "request-1",
+            response: .approveOnce
+        )
+        XCTAssertTrue(responded)
+        XCTAssertEqual(second.responses.count, 1)
         store.stop()
+    }
+
+    func testActivityTrackerCountsOnlyRunningIntervals() {
+        let start = Date(timeIntervalSinceReferenceDate: 20_000)
+        var tracker = AISessionActivityTracker()
+        let health = ["source": AISessionSourceHealth.live]
+
+        var result = tracker.update(
+            sessions: [session("timed", status: .running)],
+            sourceHealth: health,
+            at: start
+        )
+        XCTAssertEqual(result[0].activeDuration(at: start), 0)
+
+        result = tracker.update(
+            sessions: [session("timed", status: .waitingForApproval)],
+            sourceHealth: health,
+            at: start.addingTimeInterval(10 * 60)
+        )
+        XCTAssertEqual(result[0].activeDuration(at: start.addingTimeInterval(15 * 60)), 10 * 60)
+
+        result = tracker.update(
+            sessions: [session("timed", status: .running)],
+            sourceHealth: health,
+            at: start.addingTimeInterval(20 * 60)
+        )
+        result = tracker.update(
+            sessions: [session("timed", status: .completed)],
+            sourceHealth: health,
+            at: start.addingTimeInterval(25 * 60)
+        )
+
+        XCTAssertEqual(result[0].activeDuration(at: start.addingTimeInterval(40 * 60)), 15 * 60)
+    }
+
+    func testActivityTrackerPausesWhileSourceIsStale() {
+        let start = Date(timeIntervalSinceReferenceDate: 30_000)
+        var tracker = AISessionActivityTracker()
+        _ = tracker.update(
+            sessions: [session("stale", status: .running)],
+            sourceHealth: ["source": .live],
+            at: start
+        )
+
+        var result = tracker.update(
+            sessions: [session("stale", status: .running, isStale: true)],
+            sourceHealth: ["source": .stale(message: nil)],
+            at: start.addingTimeInterval(2 * 60)
+        )
+        result = tracker.update(
+            sessions: [session("stale", status: .running, isStale: true)],
+            sourceHealth: ["source": .stale(message: nil)],
+            at: start.addingTimeInterval(8 * 60)
+        )
+
+        XCTAssertEqual(result[0].activeDuration(at: start.addingTimeInterval(8 * 60)), 2 * 60)
     }
 
     private func session(
         _ id: String,
         sourceID: String = "source",
         status: AISessionStatus,
-        date: Date = Date(timeIntervalSinceReferenceDate: 1_000)
+        date: Date = Date(timeIntervalSinceReferenceDate: 1_000),
+        isStale: Bool = false
     ) -> AISession {
         AISession(
             id: AISessionID(sourceID: sourceID, sessionID: id),
@@ -67,7 +132,7 @@ final class AISessionStoreTests: XCTestCase {
             modelName: nil,
             status: status,
             lastActivity: date,
-            isStale: false
+            isStale: isStale
         )
     }
 
@@ -82,6 +147,7 @@ private final class FakeAISessionSource: AISessionSource {
     let displayName: String
     private var continuation: AsyncStream<AISessionSourceSnapshot>.Continuation?
     private(set) var openedSessionIDs: [String] = []
+    private(set) var responses: [(String, String, AISessionResponse)] = []
 
     init(id: String) {
         self.id = id
@@ -96,6 +162,15 @@ private final class FakeAISessionSource: AISessionSource {
 
     func open(sessionID: String) async -> Bool {
         openedSessionIDs.append(sessionID)
+        return true
+    }
+
+    func respond(
+        sessionID: String,
+        requestID: String,
+        response: AISessionResponse
+    ) async -> Bool {
+        responses.append((sessionID, requestID, response))
         return true
     }
 

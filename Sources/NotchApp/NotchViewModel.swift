@@ -34,6 +34,15 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var compactAgentSignal: CompactAgentSignal?
     @Published private(set) var aiSourceHealth: [String: AISessionSourceHealth] = [:]
     @Published private(set) var aiSessionsUpdatedAt: Date?
+    @Published private(set) var respondingAISessionIDs: Set<AISessionID> = []
+    @Published private(set) var aiResponseErrors: [AISessionID: String] = [:]
+    @Published private(set) var aiJiraIssueKeys: [AISessionID: String] = [:]
+    @Published private(set) var aiLinkedJiraIssues: [String: JiraIssue] = [:]
+    @Published private(set) var aiLinkedJiraErrors: [String: JiraAPIError] = [:]
+    @Published private(set) var aiLinkedJiraLoadingKeys: Set<String> = []
+    @Published private(set) var codeReviewStates: [AISessionID: CodeReviewLoadState] = [:]
+    @Published private(set) var newReviewActivityCounts: [AISessionID: Int] = [:]
+    @Published private(set) var codeReviewsUpdatedAt: Date?
     @Published private(set) var hasCompletedPanelSwipe: Bool
     @Published private(set) var hoverExpansionDelay: TimeInterval
     @Published var calendarViewMode: CalendarViewMode = .list
@@ -58,12 +67,19 @@ final class NotchViewModel: ObservableObject {
     private let nowPlayingProvider: any NowPlayingProviding
     private let jiraProvider: any JiraProviding
     private let aiSessionStore: AISessionStore
+    private let codeReviewProvider: any CodeReviewProviding
     private var collapseTask: Task<Void, Never>?
     private var calendarTask: Task<Void, Never>?
     private var calendarMonthTask: Task<Void, Never>?
+    private var codeReviewTasks: [AISessionID: Task<Void, Never>] = [:]
+    private var codeReviewGenerations: [AISessionID: UUID] = [:]
+    private var codeReviewWorkspacePaths: [AISessionID: String] = [:]
+    private var codeReviewPollingTask: Task<Void, Never>?
+    private var reviewActivityBaselines: [AISessionID: (requestID: String, ids: Set<String>)] = [:]
     private var hasLoadedCalendar = false
     private var cancellables = Set<AnyCancellable>()
     private let compactAgentSignalController: CompactAgentSignalController
+    let aiSourceNames: [String: String]
 
     init(
         providers: [any QuotaProvider] = [
@@ -75,6 +91,7 @@ final class NotchViewModel: ObservableObject {
         nowPlayingProvider: any NowPlayingProviding = NowPlayingProvider(),
         jiraProvider: (any JiraProviding)? = nil,
         aiSessionStore: AISessionStore = AISessionStore(sources: []),
+        codeReviewProvider: any CodeReviewProviding = LocalCodeReviewProvider(),
         preferences: any AppPreferencesStoring = UserDefaultsAppPreferences()
     ) {
         self.providers = providers
@@ -82,6 +99,8 @@ final class NotchViewModel: ObservableObject {
         self.nowPlayingProvider = nowPlayingProvider
         self.preferences = preferences
         self.aiSessionStore = aiSessionStore
+        self.codeReviewProvider = codeReviewProvider
+        self.aiSourceNames = aiSessionStore.sourceNames
         self.jiraProvider = jiraProvider ?? JiraProvider(
             client: JiraClient(),
             credentialStore: KeychainJiraCredentialStore(),
@@ -159,15 +178,22 @@ final class NotchViewModel: ObservableObject {
         self.jiraProvider.onChange = { [weak self] state in
             guard let self else { return }
             let previousList = self.jiraState.list
+            let wasConfigured = self.isJiraConnectionConfigured(self.jiraState.connection)
             self.jiraState = state
             if case .loaded = state.list, state.list != previousList {
                 self.jiraRefreshedAt = .now
+            }
+            if wasConfigured == false,
+               self.isJiraConnectionConfigured(state.connection) {
+                self.loadMissingAISessionJiraIssues(retryingFailures: true)
             }
         }
         aiSessionStore.$sessions
             .sink { [weak self] sessions in
                 guard let self else { return }
                 self.aiSessions = sessions
+                self.updateAISessionJiraLinks(for: sessions)
+                self.reconcileCodeReviews(for: sessions)
                 self.compactAgentSignalController.consume(
                     sessions,
                     hasReceivedSnapshot: self.aiSessionStore.lastUpdatedAt != nil
@@ -263,6 +289,52 @@ final class NotchViewModel: ObservableObject {
     func selectAISection(_ section: AISection) {
         selectedAISection = section
         preferences.selectedAISection = section
+        updateProviderActivity()
+        if section == .sessions {
+            refreshCodeReviews()
+        }
+    }
+
+    var codeReviewSessions: [AISession] {
+        let repositories = aiSessions.filter { $0.workspacePath?.isEmpty == false }
+        let ordered = repositories.filter(\.status.isActive)
+            + repositories.filter { $0.status.isActive == false }.prefix(3)
+        var seenWorkspaces: Set<String> = []
+        return ordered.filter { session in
+            guard let workspacePath = session.workspacePath else { return false }
+            return seenWorkspaces.insert(workspacePath).inserted
+        }
+    }
+
+    func codeReviewState(for session: AISession) -> CodeReviewLoadState {
+        if let direct = codeReviewStates[session.id] {
+            return direct
+        }
+        guard let representativeID = codeReviewRepresentativeID(for: session) else {
+            return .idle
+        }
+        return codeReviewStates[representativeID] ?? .idle
+    }
+
+    func newReviewActivityCount(for session: AISession) -> Int {
+        if let direct = newReviewActivityCounts[session.id] {
+            return direct
+        }
+        guard let representativeID = codeReviewRepresentativeID(for: session) else {
+            return 0
+        }
+        return newReviewActivityCounts[representativeID, default: 0]
+    }
+
+    func refreshCodeReviews() {
+        for session in codeReviewSessions {
+            refreshCodeReview(for: session)
+        }
+    }
+
+    func openCodeReview(_ request: CodeReviewRequest, for session: AISession) {
+        acknowledgeReviewActivity(for: session)
+        NSWorkspace.shared.open(request.url)
     }
 
     var aiAttentionCount: Int {
@@ -274,6 +346,59 @@ final class NotchViewModel: ObservableObject {
             guard let self, await self.aiSessionStore.open(session) else { return }
             self.isExpanded = false
         }
+    }
+
+    func respondToAISession(_ session: AISession, response: AISessionResponse) {
+        guard let request = session.attentionRequest,
+              respondingAISessionIDs.contains(session.id) == false else { return }
+        respondingAISessionIDs.insert(session.id)
+        aiResponseErrors.removeValue(forKey: session.id)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let succeeded = await self.aiSessionStore.respond(
+                to: session,
+                requestID: request.id,
+                response: response
+            )
+            self.respondingAISessionIDs.remove(session.id)
+            if succeeded == false {
+                self.aiResponseErrors[session.id] = "Не удалось отправить ответ. Открой задачу в Codex."
+            }
+        }
+    }
+
+    func aiSourceName(for session: AISession) -> String {
+        if session.id.sourceID == "local-agents" {
+            return session.agentName
+        }
+        return aiSourceNames[session.id.sourceID] ?? session.agentName
+    }
+
+    func jiraIssueKey(for session: AISession) -> String? {
+        aiJiraIssueKeys[session.id]
+    }
+
+    func linkedJiraIssue(for session: AISession) -> JiraIssue? {
+        jiraIssueKey(for: session).flatMap { aiLinkedJiraIssues[$0] }
+    }
+
+    func linkedJiraError(for session: AISession) -> JiraAPIError? {
+        jiraIssueKey(for: session).flatMap { aiLinkedJiraErrors[$0] }
+    }
+
+    func isLinkedJiraIssueLoading(for session: AISession) -> Bool {
+        jiraIssueKey(for: session).map(aiLinkedJiraLoadingKeys.contains) ?? false
+    }
+
+    func retryLinkedJiraIssue(for session: AISession) {
+        guard let key = jiraIssueKey(for: session) else { return }
+        Task { await loadLinkedJiraIssue(key: key, force: true) }
+    }
+
+    func openJiraIssue(_ issue: JiraIssue) {
+        guard let baseURL = configuredJiraBaseURLString,
+              let url = issue.browserURL(baseURL: baseURL) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     var visiblePanels: [PanelID] {
@@ -340,7 +465,9 @@ final class NotchViewModel: ObservableObject {
         switch panel {
         case .ai:
             if selectedAISection == .sessions {
-                return aiSessionsUpdatedAt
+                return [aiSessionsUpdatedAt, codeReviewsUpdatedAt]
+                    .compactMap { $0 }
+                    .max()
             }
             return visibleQuotaProviders.compactMap { snapshots[$0.id] }
                 .filter { $0.connection != .unavailable }
@@ -363,6 +490,8 @@ final class NotchViewModel: ObservableObject {
         switch panel {
         case .ai:
             if aiAttentionCount > 0 { return aiAttentionCount }
+            let newReviewActivity = newReviewActivityCounts.values.reduce(0, +)
+            if newReviewActivity > 0 { return newReviewActivity }
             return visibleQuotaProviders.compactMap { snapshots[$0.id] }
                 .flatMap(\.windows)
                 .filter { ($0.remainingRatio ?? 1) < 0.2 }
@@ -591,6 +720,7 @@ final class NotchViewModel: ObservableObject {
 
     func submitJiraTransition(issueKey: String, transition: JiraTransition) async {
         await jiraProvider.performTransition(issueKey: issueKey, transition: transition)
+        await loadLinkedJiraIssue(key: issueKey, force: true)
     }
 
     func searchJiraAssignees(
@@ -609,7 +739,11 @@ final class NotchViewModel: ObservableObject {
         issueKey: String,
         selection: JiraAssigneeSelection
     ) async -> Result<Void, JiraAPIError> {
-        await jiraProvider.assign(issueKey: issueKey, selection: selection)
+        let result = await jiraProvider.assign(issueKey: issueKey, selection: selection)
+        if case .success = result {
+            await loadLinkedJiraIssue(key: issueKey, force: true)
+        }
+        return result
     }
 
     func submitJiraWorklog(
@@ -667,6 +801,52 @@ final class NotchViewModel: ObservableObject {
         refresh(provider: provider)
     }
 
+    private func updateAISessionJiraLinks(for sessions: [AISession]) {
+        aiJiraIssueKeys = Dictionary(uniqueKeysWithValues: sessions.compactMap { session in
+            AISessionJiraLink.issueKey(for: session).map { (session.id, $0) }
+        })
+
+        let visibleKeys = Set(aiJiraIssueKeys.values)
+        aiLinkedJiraIssues = aiLinkedJiraIssues.filter { visibleKeys.contains($0.key) }
+        aiLinkedJiraErrors = aiLinkedJiraErrors.filter { visibleKeys.contains($0.key) }
+        aiLinkedJiraLoadingKeys.formIntersection(visibleKeys)
+        loadMissingAISessionJiraIssues(retryingFailures: false)
+    }
+
+    private func loadMissingAISessionJiraIssues(retryingFailures: Bool) {
+        for key in Set(aiJiraIssueKeys.values) {
+            guard aiLinkedJiraIssues[key] == nil,
+                  aiLinkedJiraLoadingKeys.contains(key) == false,
+                  retryingFailures || aiLinkedJiraErrors[key] == nil else { continue }
+            Task { await loadLinkedJiraIssue(key: key, force: retryingFailures) }
+        }
+    }
+
+    private func loadLinkedJiraIssue(key: String, force: Bool) async {
+        guard force || aiLinkedJiraIssues[key] == nil,
+              aiLinkedJiraLoadingKeys.contains(key) == false else { return }
+        aiLinkedJiraLoadingKeys.insert(key)
+        aiLinkedJiraErrors.removeValue(forKey: key)
+        let result = await jiraProvider.issue(key: key)
+        aiLinkedJiraLoadingKeys.remove(key)
+        switch result {
+        case .success(let issue):
+            aiLinkedJiraIssues[key] = issue
+            aiLinkedJiraErrors.removeValue(forKey: key)
+        case .failure(let error):
+            aiLinkedJiraErrors[key] = error
+        }
+    }
+
+    private func isJiraConnectionConfigured(_ connection: JiraConnectionState) -> Bool {
+        switch connection {
+        case .ready, .connected, .validated:
+            true
+        case .notConfigured, .validating, .failed:
+            false
+        }
+    }
+
     private func weeklyQuotaWindow(for providerID: String) -> QuotaWindow? {
         guard let windows = snapshots[providerID]?.windows else { return nil }
         return windows.first {
@@ -701,6 +881,132 @@ final class NotchViewModel: ObservableObject {
                 && visiblePanels.contains(.jira)
                 && isShowingSettings == false
         )
+
+        let showsCodeReviews = isExpanded
+            && selectedPanel == .ai
+            && selectedAISection == .sessions
+            && isShowingSettings == false
+        if showsCodeReviews {
+            if codeReviewPollingTask == nil {
+                refreshCodeReviews()
+                codeReviewPollingTask = Task { @MainActor [weak self] in
+                    while Task.isCancelled == false {
+                        try? await Task.sleep(for: .seconds(30))
+                        guard Task.isCancelled == false else { return }
+                        self?.refreshCodeReviews()
+                    }
+                }
+            }
+        } else {
+            codeReviewPollingTask?.cancel()
+            codeReviewPollingTask = nil
+            for task in codeReviewTasks.values {
+                task.cancel()
+            }
+            codeReviewTasks.removeAll()
+            codeReviewGenerations.removeAll()
+        }
+    }
+
+    private func refreshCodeReview(for session: AISession) {
+        guard let workspacePath = session.workspacePath,
+              workspacePath.isEmpty == false,
+              codeReviewTasks[session.id] == nil else { return }
+        let previous = codeReviewStates[session.id]?.snapshot
+        codeReviewStates[session.id] = .loading(previous: previous)
+        codeReviewWorkspacePaths[session.id] = workspacePath
+        let generation = UUID()
+        codeReviewGenerations[session.id] = generation
+        codeReviewTasks[session.id] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let result = await self.codeReviewProvider.load(workspacePath: workspacePath)
+            guard self.codeReviewGenerations[session.id] == generation else { return }
+            self.codeReviewTasks[session.id] = nil
+            self.codeReviewGenerations[session.id] = nil
+            guard Task.isCancelled == false,
+                  self.aiSessions.contains(where: {
+                      $0.id == session.id
+                          && $0.workspacePath == workspacePath
+                  }) else { return }
+            switch result {
+            case .success(let snapshot):
+                self.recordReviewActivity(snapshot.request, for: session.id)
+                self.codeReviewStates[session.id] = .loaded(snapshot)
+                self.codeReviewsUpdatedAt = .now
+            case .failure(let error):
+                self.codeReviewStates[session.id] = .failed(error, previous: previous)
+            }
+        }
+    }
+
+    private func recordReviewActivity(_ request: CodeReviewRequest?, for sessionID: AISessionID) {
+        guard let request else {
+            reviewActivityBaselines.removeValue(forKey: sessionID)
+            newReviewActivityCounts.removeValue(forKey: sessionID)
+            return
+        }
+        guard let baseline = reviewActivityBaselines[sessionID], baseline.requestID == request.id else {
+            reviewActivityBaselines[sessionID] = (request.id, request.reviewerActivityIDs)
+            newReviewActivityCounts[sessionID] = 0
+            return
+        }
+        let newIDs = request.reviewerActivityIDs.subtracting(baseline.ids)
+        if newIDs.isEmpty == false {
+            newReviewActivityCounts[sessionID, default: 0] += newIDs.count
+        }
+        reviewActivityBaselines[sessionID] = (
+            request.id,
+            baseline.ids.union(request.reviewerActivityIDs)
+        )
+    }
+
+    private func acknowledgeReviewActivity(for session: AISession) {
+        let representativeID = codeReviewRepresentativeID(for: session) ?? session.id
+        newReviewActivityCounts[representativeID] = 0
+    }
+
+    private func codeReviewRepresentativeID(for session: AISession) -> AISessionID? {
+        guard let workspacePath = session.workspacePath else { return nil }
+        return codeReviewSessions.first {
+            $0.workspacePath == workspacePath
+        }?.id
+    }
+
+    private func reconcileCodeReviews(for sessions: [AISession]) {
+        let visibleSessions = codeReviewSessions
+        let visibleIDs = Set(visibleSessions.map(\.id))
+        for id in Array(codeReviewStates.keys) where visibleIDs.contains(id) == false {
+            codeReviewTasks[id]?.cancel()
+            codeReviewTasks.removeValue(forKey: id)
+            codeReviewGenerations.removeValue(forKey: id)
+            codeReviewStates.removeValue(forKey: id)
+            codeReviewWorkspacePaths.removeValue(forKey: id)
+            reviewActivityBaselines.removeValue(forKey: id)
+            newReviewActivityCounts.removeValue(forKey: id)
+        }
+
+        for session in visibleSessions {
+            guard let workspacePath = session.workspacePath, workspacePath.isEmpty == false else {
+                continue
+            }
+            guard let loadedPath = codeReviewWorkspacePaths[session.id],
+                  loadedPath != workspacePath else { continue }
+            codeReviewTasks[session.id]?.cancel()
+            codeReviewTasks.removeValue(forKey: session.id)
+            codeReviewGenerations.removeValue(forKey: session.id)
+            codeReviewStates.removeValue(forKey: session.id)
+            codeReviewWorkspacePaths.removeValue(forKey: session.id)
+            reviewActivityBaselines.removeValue(forKey: session.id)
+            newReviewActivityCounts.removeValue(forKey: session.id)
+        }
+        if isExpanded,
+           selectedPanel == .ai,
+           selectedAISection == .sessions,
+           isShowingSettings == false {
+            for session in visibleSessions where codeReviewStates[session.id] == nil {
+                refreshCodeReview(for: session)
+            }
+        }
     }
 
     private func refreshPanelBadges() {

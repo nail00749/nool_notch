@@ -13,15 +13,27 @@ struct CodexStateReader: Sendable {
     let databaseURL: URL
     let maximumCandidateCount: Int
     let rolloutTailByteLimit: UInt64
+    let sessionSourceID: String
+    let acceptedThreadSources: [String]
+    let agentName: String
+    let sessionIDPrefix: String
 
     init(
         databaseURL: URL = CodexStateReader.defaultDatabaseURL(),
         maximumCandidateCount: Int = 50,
-        rolloutTailByteLimit: UInt64 = 256 * 1_024
+        rolloutTailByteLimit: UInt64 = 256 * 1_024,
+        sessionSourceID: String = CodexStateReader.sourceID,
+        acceptedThreadSources: [String] = ["vscode", "appServer"],
+        agentName: String = "Codex",
+        sessionIDPrefix: String = ""
     ) {
         self.databaseURL = databaseURL
         self.maximumCandidateCount = maximumCandidateCount
         self.rolloutTailByteLimit = rolloutTailByteLimit
+        self.sessionSourceID = sessionSourceID
+        self.acceptedThreadSources = acceptedThreadSources
+        self.agentName = agentName
+        self.sessionIDPrefix = sessionIDPrefix
     }
 
     func loadSessions(now: Date = .now) throws -> [AISession] {
@@ -52,22 +64,23 @@ struct CodexStateReader: Sendable {
         guard let timestampExpression = timestampExpression(columns: columns) else {
             throw CodexStateReaderError.unsupportedSchema
         }
+        let createdExpression = createdTimestampExpression(columns: columns) ?? "NULL"
 
-        let titleExpression = coalesceExpression(
-            candidates: ["name", "title", "preview", "first_user_message"],
-            columns: columns,
-            fallback: "'Codex task'"
-        )
         let cwdExpression = columns.contains("cwd") ? "cwd" : "NULL"
         let modelExpression = columns.contains("model") ? "model" : "NULL"
         let rolloutExpression = columns.contains("rollout_path") ? "rollout_path" : "NULL"
 
+        guard acceptedThreadSources.isEmpty == false else { return [] }
+        let sourcePlaceholders = Array(
+            repeating: "?",
+            count: acceptedThreadSources.count
+        ).joined(separator: ", ")
         let sql = """
-            SELECT id, \(titleExpression), \(cwdExpression), \(modelExpression),
-                   \(rolloutExpression), \(timestampExpression)
+            SELECT id, \(cwdExpression), \(modelExpression),
+                   \(rolloutExpression), \(timestampExpression), \(createdExpression)
             FROM threads
             WHERE archived = 0
-              AND (source = 'vscode' OR source = 'appServer')
+              AND source IN (\(sourcePlaceholders))
             ORDER BY \(timestampExpression) DESC
             LIMIT ?;
             """
@@ -78,30 +91,52 @@ struct CodexStateReader: Sendable {
             throw CodexStateReaderError.queryFailed
         }
         defer { sqlite3_finalize(statement) }
-        sqlite3_bind_int(statement, 1, Int32(max(1, maximumCandidateCount)))
+        for (index, source) in acceptedThreadSources.enumerated() {
+            sqlite3_bind_text(
+                statement,
+                Int32(index + 1),
+                source,
+                -1,
+                unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+            )
+        }
+        sqlite3_bind_int(
+            statement,
+            Int32(acceptedThreadSources.count + 1),
+            Int32(max(1, maximumCandidateCount))
+        )
 
         var sessions: [AISession] = []
         while sqlite3_step(statement) == SQLITE_ROW {
             guard let threadID = columnString(statement, index: 0),
                   threadID.isEmpty == false else { continue }
 
-            let rawTitle = columnString(statement, index: 1)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let title = rawTitle.flatMap { $0.isEmpty ? nil : $0 } ?? "Codex task"
-            let workspace = columnString(statement, index: 2)
-            let model = columnString(statement, index: 3)
-            let rolloutPath = columnString(statement, index: 4)
-            let timestamp = sqlite3_column_double(statement, 5)
+            let workspace = columnString(statement, index: 1)
+            let model = columnString(statement, index: 2)
+            let rolloutPath = columnString(statement, index: 3)
+            let timestamp = sqlite3_column_double(statement, 4)
             let updatedAt = timestamp > 0 ? Date(timeIntervalSince1970: timestamp) : now
+            let createdTimestamp = sqlite3_column_double(statement, 5)
+            let startedAt = createdTimestamp > 0
+                ? Date(timeIntervalSince1970: createdTimestamp)
+                : nil
             let status = rolloutPath.map { latestStatus(rolloutPath: $0) } ?? .unknown
+            let title = workspace.flatMap { path -> String? in
+                let name = URL(fileURLWithPath: path).lastPathComponent
+                return name.isEmpty ? nil : name
+            } ?? "\(agentName) session"
 
             sessions.append(AISession(
-                id: AISessionID(sourceID: Self.sourceID, sessionID: threadID),
-                agentName: "Codex",
+                id: AISessionID(
+                    sourceID: sessionSourceID,
+                    sessionID: sessionIDPrefix + threadID
+                ),
+                agentName: agentName,
                 title: title,
                 workspacePath: workspace,
                 modelName: model,
                 status: status,
+                startedAt: startedAt,
                 lastActivity: updatedAt,
                 isStale: false
             ))
@@ -188,6 +223,16 @@ struct CodexStateReader: Sendable {
         }
         guard expressions.isEmpty == false else { return nil }
         return "COALESCE(\(expressions.joined(separator: ", ")), 0)"
+    }
+
+    private func createdTimestampExpression(columns: Set<String>) -> String? {
+        if columns.contains("created_at_ms") {
+            return "NULLIF(created_at_ms, 0) / 1000.0"
+        }
+        if columns.contains("created_at") {
+            return "NULLIF(created_at, 0)"
+        }
+        return nil
     }
 
     private func coalesceExpression(

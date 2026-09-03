@@ -23,6 +23,22 @@ enum CodexJSONValue: Equatable, Sendable {
         return value
     }
 
+    var boolValue: Bool? {
+        guard case .bool(let value) = self else { return nil }
+        return value
+    }
+
+    var foundationValue: Any {
+        switch self {
+        case .null: NSNull()
+        case .bool(let value): value
+        case .number(let value): value
+        case .string(let value): value
+        case .array(let values): values.map(\.foundationValue)
+        case .object(let values): values.mapValues(\.foundationValue)
+        }
+    }
+
     static func decode(_ value: Any?) -> CodexJSONValue {
         switch value {
         case nil, is NSNull: .null
@@ -37,9 +53,31 @@ enum CodexJSONValue: Equatable, Sendable {
     }
 }
 
+enum CodexRequestID: Hashable, Sendable {
+    case number(Int64)
+    case string(String)
+
+    var foundationValue: Any {
+        switch self {
+        case .number(let value): value
+        case .string(let value): value
+        }
+    }
+
+    var stableString: String {
+        switch self {
+        case .number(let value): "number:\(value)"
+        case .string(let value): "string:\(value)"
+        }
+    }
+}
+
 struct CodexAppServerMessage: Equatable, Sendable {
+    let id: CodexRequestID?
     let method: String?
     let params: [String: CodexJSONValue]
+    let result: CodexJSONValue?
+    let errorMessage: String?
 }
 
 enum CodexAppServerClientError: Error, Equatable, Sendable {
@@ -133,7 +171,11 @@ final class CodexAppServerClient: @unchecked Sendable {
             "method": "initialize",
             "params": [
                 "clientInfo": ["name": "Nool Notch", "version": clientVersion],
-                "capabilities": NSNull()
+                "capabilities": [
+                    "experimentalApi": true,
+                    "requestAttestation": false,
+                    "extensions": [:] as [String: Any]
+                ]
             ]
         ])
     }
@@ -164,11 +206,28 @@ final class CodexAppServerClient: @unchecked Sendable {
             }
             let params = (object["params"] as? [String: Any])?.mapValues(CodexJSONValue.decode) ?? [:]
             messages.append(CodexAppServerMessage(
+                id: requestID(from: object["id"]),
                 method: object["method"] as? String,
-                params: params
+                params: params,
+                result: object.keys.contains("result") ? CodexJSONValue.decode(object["result"]) : nil,
+                errorMessage: (object["error"] as? [String: Any])?["message"] as? String
             ))
         }
         return messages
+    }
+
+    func sendResponse(id: CodexRequestID, result: [String: CodexJSONValue]) throws {
+        try send([
+            "jsonrpc": "2.0",
+            "id": id.foundationValue,
+            "result": result.mapValues(\.foundationValue)
+        ])
+    }
+
+    private static func requestID(from value: Any?) -> CodexRequestID? {
+        if let value = value as? String { return .string(value) }
+        if let value = value as? NSNumber { return .number(value.int64Value) }
+        return nil
     }
 
     private func send(_ object: [String: Any]) throws {
@@ -193,6 +252,12 @@ final class CodexAppServerClient: @unchecked Sendable {
         readBuffer.append(data)
         let messages = Self.drainMessages(buffer: &readBuffer)
         for message in messages {
+            if message.method == nil, message.id == .number(1), message.errorMessage == nil {
+                try? send([
+                    "jsonrpc": "2.0",
+                    "method": "initialized"
+                ])
+            }
             let handler = onMessage
             callbackQueue.async { handler?(message) }
         }

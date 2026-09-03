@@ -38,6 +38,17 @@ Ad-hoc переподпись может сбросить Accessibility trust. �
   hover-policy и запуск сворачивания.
 - `Sources/NotchApp/NotchViewModel.swift` — UI orchestration и состояние
   панелей.
+- `Sources/NotchApp/AISessionStore.swift` — общий inbox и маршрутизация действий
+  к источникам Codex Desktop и локальных CLI agents.
+- `Sources/NotchApp/CodeReviewProvider.swift` — Git remote discovery и
+  read-only GitHub/GitLab PR/MR через `gh`/`glab`.
+- `Sources/NotchApp/AISessionsPanel.swift` — Agent Inbox, связанные Jira-задачи
+  и inline PR/CI-действия для каждой AI-сессии.
+- `Sources/NotchApp/CodexCLIHookServer.swift` и
+  `CodexCLIHookInstaller.swift` — локальный Unix socket и безопасное подключение
+  Codex CLI/Claude Code hooks.
+- `Sources/NoolAgentBridge` — минимальный blocking hook executable, который
+  возвращает решение ожидающему CLI-процессу.
 - `Sources/NotchApp/JiraClient.swift` — HTTP-контракт Jira REST/Agile API.
 - `Sources/NotchApp/JiraProvider.swift` — lifecycle, загрузка, кэш и mutations.
 - `Sources/NotchApp/JiraPanel.swift` — режим `Мои` и основной список задач.
@@ -101,6 +112,26 @@ UI не выполняет сетевые запросы напрямую. Clien
 decode, provider — за lifecycle/state/cache, `NotchViewModel` — за UI-facing
 команды. При обновлении сохраняй последнее успешное значение для loading/error
 state там, где это уже предусмотрено моделью.
+
+PR/CI не хранит и не логирует forge credentials. Для GitHub используй
+авторизацию `gh`, для GitLab и custom/self-hosted GitLab — host-specific
+авторизацию `glab`; хост определяется из remote репозитория.
+
+### Agent Inbox
+
+- `AISessionSource` — граница интеграции; новая IDE или CLI не должна добавлять
+  provider-specific протокол в SwiftUI view.
+- Ответ можно показывать в UI только при наличии живого
+  `AISessionAttentionRequest`; read-only статус не является разрешением на
+  выполнение действия.
+- CLI bridge не логирует payload и слушает Unix socket только текущего
+  пользователя. Не добавляй TCP listener или хранение prompt/response bodies.
+- При изменении `~/.codex/hooks.json`, `~/.codex/config.toml` и
+  `~/.claude/settings.json` сохраняй чужие записи и не перезаписывай
+  неразбираемый конфиг. Managed entry определяется только по
+  `nool-agent-bridge`.
+- После изменений проверяй отдельно read-only discovery, blocking approval и
+  fallback при закрытом Nool: сбой bridge не должен блокировать CLI навсегда.
 
 ## Рабочий процесс
 

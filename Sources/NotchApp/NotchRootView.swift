@@ -188,7 +188,8 @@ struct NotchRootView: View {
                 let pointerIsOutside = NotchHoverPolicy.shouldCollapse(
                     pointerLocation: NSEvent.mouseLocation,
                     screenFrame: screen.frame,
-                    windowSize: NotchLayout.compactSize(
+                    windowSize: NotchWindowSizingPolicy.compactInteractionSize(
+                        metrics: NotchLayout.currentMetrics,
                         isPlaying: isCompactPlaybackActive,
                         compactHeight: visualSettings.compactHeight,
                         showsAgentMascot: model.visibleCompactAgentSignal != nil
@@ -230,9 +231,16 @@ private struct NotchRootInteractionShape: Shape {
         }
 
         return Path(CGRect(
-            x: rect.minX + NotchLayout.compactAgentMascotLaneWidth,
+            x: rect.minX
+                + NotchLayout.compactHoverHorizontalPadding
+                + NotchLayout.compactAgentMascotLaneWidth,
             y: rect.minY,
-            width: max(0, rect.width - NotchLayout.compactAgentMascotLaneWidth),
+            width: max(
+                0,
+                rect.width
+                    - NotchLayout.compactHoverHorizontalPadding
+                    - NotchLayout.compactAgentMascotLaneWidth
+            ),
             height: rect.height
         ))
     }

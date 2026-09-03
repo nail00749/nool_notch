@@ -18,12 +18,16 @@ final class NotchWindowCoordinator: NSObject {
     override init() {
         model = NotchViewModel(
             aiSessionStore: AISessionStore(
-                sources: [CodexDesktopSessionSource()]
+                sources: [
+                    CodexDesktopSessionSource(),
+                    LocalAgentSessionSource()
+                ]
             )
         )
         visualSettings = NotchVisualSettings()
         launchAtLogin = LaunchAtLoginManager()
-        let size = NotchLayout.compactSize(
+        let size = NotchWindowSizingPolicy.compactInteractionSize(
+            metrics: NotchLayout.currentMetrics,
             isPlaying: false,
             compactHeight: visualSettings.compactHeight
         )

@@ -15,6 +15,8 @@ APP_PATH="$PROJECT_ROOT/Build/NotchApp.app"
 
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
 cp "$BIN_PATH/NotchApp" "$APP_PATH/Contents/MacOS/NotchApp"
+cp "$BIN_PATH/NoolAgentBridge" "$APP_PATH/Contents/Resources/nool-agent-bridge"
+chmod 755 "$APP_PATH/Contents/Resources/nool-agent-bridge"
 cp "$PROJECT_ROOT/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
 cp "$PROJECT_ROOT/Resources/AppIcon.icns" "$APP_PATH/Contents/Resources/AppIcon.icns"
 RESOURCE_BUNDLES=("$BIN_PATH"/*.bundle(N))

@@ -121,33 +121,20 @@ final class JiraProvider: JiraProviding {
         let selectedKeys = state.selectedProjectKeys
         refreshTask = Task { [weak self, client] in
             do {
-                let allIssuesPage = try await client.issues(
+                let projects = try await client.projects(
+                    baseURL: configuration.baseURL,
+                    token: configuration.token
+                )
+                let page = try await client.issues(
                     baseURL: configuration.baseURL,
                     token: configuration.token,
-                    projectKeys: []
+                    projectKeys: selectedKeys
                 )
-                let projects = Self.taskProjects(from: allIssuesPage.issues)
-                let availableKeys = Set(projects.map(\.key))
-                let validSelectedKeys = selectedKeys.intersection(availableKeys)
-                let page: JiraSearchPage
-                if validSelectedKeys.isEmpty {
-                    page = allIssuesPage
-                } else {
-                    page = try await client.issues(
-                        baseURL: configuration.baseURL,
-                        token: configuration.token,
-                        projectKeys: validSelectedKeys
-                    )
-                }
                 guard let self,
                       self.isStarted,
                       self.isVisible,
                       self.refreshGeneration == generation else { return }
                 self.state.projects = projects
-                if self.state.selectedProjectKeys != validSelectedKeys {
-                    self.state.selectedProjectKeys = validSelectedKeys
-                    self.preferences.jiraSelectedProjectKeys = validSelectedKeys
-                }
                 self.state.list = .loaded(issues: page.issues, total: page.total)
                 self.publish()
             } catch {
@@ -696,6 +683,34 @@ final class JiraProvider: JiraProviding {
         return result
     }
 
+    func issue(key: String) async -> Result<JiraIssue, JiraAPIError> {
+        let normalizedKey = key.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard normalizedKey.isEmpty == false else { return .failure(.invalidResponse) }
+
+        let configuration: (baseURL: URL, token: String)
+        do {
+            guard let resolved = try configuredCredentials() else {
+                return .failure(.notConfigured)
+            }
+            configuration = resolved
+        } catch {
+            return .failure(Self.normalizedError(error))
+        }
+
+        do {
+            return .success(try await client.issue(
+                baseURL: configuration.baseURL,
+                token: configuration.token,
+                issueKey: normalizedKey
+            ))
+        } catch {
+            let normalized = Self.normalizedError(error)
+            invalidateAuthorizationIfNeeded(normalized)
+            publish()
+            return .failure(normalized)
+        }
+    }
+
     private var isConfigured: Bool {
         switch state.connection {
         case .ready, .connected:
@@ -1074,18 +1089,6 @@ final class JiraProvider: JiraProviding {
                 break
             }
         }
-    }
-
-    private static func taskProjects(from issues: [JiraIssue]) -> [JiraProject] {
-        var projectsByKey: [String: JiraProject] = [:]
-        for issue in issues {
-            projectsByKey[issue.projectKey] = JiraProject(
-                id: issue.projectKey,
-                key: issue.projectKey,
-                name: issue.projectName
-            )
-        }
-        return projectsByKey.values.sorted { $0.key < $1.key }
     }
 
     private func publish() {

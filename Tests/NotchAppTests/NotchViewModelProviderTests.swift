@@ -286,11 +286,58 @@ final class NotchViewModelProviderTests: XCTestCase {
         XCTAssertEqual(source.openedSessionIDs, ["session", "session"])
     }
 
+    func testCodeReviewKeepsRecentCompletedRepositoryVisible() async {
+        let source = MemoryAISessionSource()
+        let store = AISessionStore(sources: [source])
+        let model = makeModel(aiSessionStore: store)
+        let completed = aiSession(source: source, status: .completed)
+
+        source.publish([completed])
+        await settleMainActorTasks()
+
+        XCTAssertEqual(model.codeReviewSessions.map(\.id), [completed.id])
+    }
+
+    func testCodeReviewStateIsSharedBySessionsInTheSameWorkspace() async throws {
+        let source = MemoryAISessionSource()
+        let store = AISessionStore(sources: [source])
+        let snapshot = CodeReviewSnapshot(
+            repository: CodeRepositoryContext(
+                rootPath: "/tmp/NotchApp",
+                branch: "feature/shared",
+                remoteURL: "git@gitlab.example.test:team/app.git",
+                host: "gitlab.example.test",
+                projectPath: "team/app",
+                hostKind: .gitlab
+            ),
+            request: nil
+        )
+        let provider = CountingCodeReviewProvider(result: .success(snapshot))
+        let model = makeModel(aiSessionStore: store, codeReviewProvider: provider)
+        let first = aiSession(source: source, id: "first", status: .running)
+        let second = aiSession(source: source, id: "second", status: .completed)
+
+        source.publish([first, second])
+        await settleMainActorTasks()
+        model.isExpanded = true
+        model.selectAISection(.sessions)
+        for _ in 0..<20 where model.codeReviewState(for: first).snapshot == nil {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(model.codeReviewSessions.map(\.id), [first.id])
+        XCTAssertEqual(model.codeReviewState(for: first).snapshot, snapshot)
+        XCTAssertEqual(model.codeReviewState(for: second).snapshot, snapshot)
+        let callCount = await provider.callCount
+        XCTAssertEqual(callCount, 1)
+    }
+
     private func makeModel(
         calendarProvider: FakeCalendarProvider = FakeCalendarProvider(),
         nowPlayingProvider: FakeNowPlayingProvider = FakeNowPlayingProvider(),
         jiraProvider: FakeJiraProvider = FakeJiraProvider(),
         aiSessionStore: AISessionStore = AISessionStore(sources: []),
+        codeReviewProvider: any CodeReviewProviding = LocalCodeReviewProvider(),
         preferences: MemoryAppPreferences = MemoryAppPreferences()
     ) -> NotchViewModel {
         NotchViewModel(
@@ -299,6 +346,7 @@ final class NotchViewModelProviderTests: XCTestCase {
             nowPlayingProvider: nowPlayingProvider,
             jiraProvider: jiraProvider,
             aiSessionStore: aiSessionStore,
+            codeReviewProvider: codeReviewProvider,
             preferences: preferences
         )
     }
@@ -324,5 +372,21 @@ final class NotchViewModelProviderTests: XCTestCase {
         for _ in 0..<4 {
             await Task.yield()
         }
+    }
+}
+
+private actor CountingCodeReviewProvider: CodeReviewProviding {
+    private let result: Result<CodeReviewSnapshot, CodeReviewError>
+    private var calls = 0
+
+    init(result: Result<CodeReviewSnapshot, CodeReviewError>) {
+        self.result = result
+    }
+
+    var callCount: Int { calls }
+
+    func load(workspacePath: String) async -> Result<CodeReviewSnapshot, CodeReviewError> {
+        calls += 1
+        return result
     }
 }

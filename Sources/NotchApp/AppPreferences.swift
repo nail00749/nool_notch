@@ -40,6 +40,7 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
     static let jiraSelectedProjectKeysKey = "jira.selectedProjectKeys"
     static let jiraPinnedContainersKey = "jira.pinnedContainers"
     static let jiraPinnedIssuesKey = "jira.pinnedIssues"
+    static let cliHooksEnabledKey = "integrations.cliHooksEnabled"
 
     private let defaults: UserDefaults
 
@@ -123,11 +124,13 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
 
     var selectedAISection: AISection {
         get {
-            guard let rawValue = defaults.string(forKey: Self.selectedAISectionKey),
-                  let section = AISection(rawValue: rawValue) else {
+            guard let rawValue = defaults.string(forKey: Self.selectedAISectionKey) else {
                 return .limits
             }
-            return section
+            if rawValue == "reviews" {
+                return .sessions
+            }
+            return AISection(rawValue: rawValue) ?? .limits
         }
         set {
             defaults.set(newValue.rawValue, forKey: Self.selectedAISectionKey)

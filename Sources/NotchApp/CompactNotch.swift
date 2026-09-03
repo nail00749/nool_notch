@@ -78,7 +78,7 @@ struct CompactNotch: View {
                     .accessibilityLabel(
                         "\(presentedAgentSignal.kind.compactMascotAccessibilityLabel). Открыть AI-сессии"
                     )
-                    .accessibilityHint("Открывает раздел «Сессии» в панели AI")
+                    .accessibilityHint("Открывает Agent Inbox в панели AI")
                     .transition(
                         .scale(scale: 0.25, anchor: .topLeading)
                             .combined(with: .opacity)

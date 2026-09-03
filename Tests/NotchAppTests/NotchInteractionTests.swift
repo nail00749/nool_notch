@@ -364,7 +364,7 @@ final class NotchInteractionTests: XCTestCase {
                 calendarViewMode: .list,
                 isShowingSettings: false
             ),
-            CGSize(width: 340, height: 40)
+            CGSize(width: 376, height: 56)
         )
         XCTAssertEqual(
             NotchWindowSizingPolicy.size(
@@ -375,7 +375,28 @@ final class NotchInteractionTests: XCTestCase {
                 isShowingSettings: false,
                 compactHeight: 42
             ),
-            CGSize(width: 340, height: 42)
+            CGSize(width: 376, height: 58)
+        )
+    }
+
+    func testCompactWindowHoverAreaExtendsBeyondVisibleNotch() {
+        let metrics = NotchLayoutMetrics(
+            physicalNotchSize: CGSize(width: 220, height: 38)
+        )
+
+        XCTAssertEqual(metrics.compactSize, CGSize(width: 340, height: 40))
+        XCTAssertEqual(
+            NotchWindowSizingPolicy.compactInteractionSize(metrics: metrics),
+            CGSize(width: 376, height: 56)
+        )
+
+        let screen = CGRect(x: 0, y: 0, width: 1_800, height: 1_169)
+        XCTAssertFalse(
+            NotchHoverPolicy.shouldCollapse(
+                pointerLocation: CGPoint(x: 900, y: 1_116),
+                screenFrame: screen,
+                windowSize: CGSize(width: 376, height: 56)
+            )
         )
     }
 

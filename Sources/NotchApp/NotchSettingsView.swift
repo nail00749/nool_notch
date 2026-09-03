@@ -5,6 +5,7 @@ import SwiftUI
 enum NotchSettingsSection: String, CaseIterable, Identifiable {
     case general
     case limits
+    case integrations
     case music
     case jira
 
@@ -14,6 +15,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general: "Основные"
         case .limits: "Лимиты"
+        case .integrations: "Интеграции"
         case .music: "Музыка"
         case .jira: "Jira"
         }
@@ -23,6 +25,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general: "Поведение и оформление"
         case .limits: "Источники и компактный индикатор"
+        case .integrations: "GitHub, GitLab и PR/CI"
         case .music: "Источник текущего трека"
         case .jira: "Подключение и проекты"
         }
@@ -32,6 +35,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general: "slider.horizontal.3"
         case .limits: "gauge.with.dots.needle.67percent"
+        case .integrations: "point.3.connected.trianglepath.dotted"
         case .music: "waveform"
         case .jira: "checkmark.square"
         }
@@ -45,6 +49,10 @@ struct NotchSettingsView: View {
 
     @State private var selectedSection: NotchSettingsSection
     @State private var swipeTranslation: CGFloat = 0
+    @StateObject private var codeReviewIntegrations = CodeReviewIntegrationStore()
+    @AppStorage(UserDefaultsAppPreferences.cliHooksEnabledKey)
+    private var cliHooksEnabled = false
+    @State private var cliHooksMessage: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var carouselAnimation: Animation {
@@ -244,6 +252,8 @@ struct NotchSettingsView: View {
             generalPage
         case .limits:
             limitsPage
+        case .integrations:
+            integrationsPage
         case .music:
             musicPage
         case .jira:
@@ -734,6 +744,104 @@ struct NotchSettingsView: View {
         }
     }
 
+    private var integrationsPage: some View {
+        VStack(spacing: 12) {
+            SettingsCard(title: "CLI agents", icon: "terminal") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle(
+                        "Разрешить approval из Nool",
+                        isOn: Binding(
+                            get: { cliHooksEnabled },
+                            set: configureCLIHooks
+                        )
+                    )
+                    .tint(Color.signalMint)
+
+                    Text("Выключено по умолчанию. После включения Nool добавит только свои hook-записи Codex CLI и Claude Code; выключение удалит их, сохранив чужие настройки.")
+                        .settingsHintStyle()
+
+                    if let cliHooksMessage {
+                        Text(cliHooksMessage)
+                            .settingsHintStyle()
+                            .foregroundStyle(cliHooksEnabled ? Color.signalMint : Color.signalAmber)
+                    }
+                }
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+            }
+
+            SettingsCard(title: "PR/CI", icon: "arrow.triangle.branch") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Nool определяет GitHub или GitLab по remote репозитория активной или недавней AI-сессии.")
+                        .settingsHintStyle()
+
+                    ForEach(codeReviewIntegrations.statuses) { status in
+                        CodeReviewIntegrationRow(
+                            status: status,
+                            onSetup: { host in
+                                codeReviewIntegrations.beginSetup(for: status, host: host)
+                            }
+                        )
+
+                        if status.id != codeReviewIntegrations.statuses.last?.id {
+                            Divider().overlay(Color.white.opacity(0.06))
+                        }
+                    }
+
+                    if codeReviewIntegrations.statuses.isEmpty {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(Color.signalMint)
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                    }
+
+                    if let message = codeReviewIntegrations.message {
+                        Text(message)
+                            .settingsHintStyle()
+                            .foregroundStyle(Color.signalAmber)
+                    }
+
+                    SettingsActionButton(
+                        title: codeReviewIntegrations.isRefreshing ? "Проверяю…" : "Проверить снова",
+                        icon: "arrow.clockwise",
+                        action: refreshCodeReviewIntegrations
+                    )
+                    .disabled(codeReviewIntegrations.isRefreshing)
+                }
+            }
+
+            SettingsCard(title: "Безопасность", icon: "lock.shield") {
+                Text("Авторизацией и хранением credentials управляют gh и glab через macOS Keychain. Nool не запрашивает, не копирует и не логирует токены.")
+                    .settingsHintStyle()
+            }
+        }
+        .onAppear(perform: refreshCodeReviewIntegrations)
+    }
+
+    private func refreshCodeReviewIntegrations() {
+        codeReviewIntegrations.refresh(
+            workspacePaths: model.codeReviewSessions.compactMap(\.workspacePath)
+        )
+    }
+
+    private func configureCLIHooks(_ isEnabled: Bool) {
+        let previous = cliHooksEnabled
+        do {
+            if isEnabled {
+                try CodexCLIHookInstaller.install()
+                cliHooksMessage = "CLI hooks подключены"
+            } else {
+                try CodexCLIHookInstaller.uninstall()
+                cliHooksMessage = "CLI hooks отключены"
+            }
+            cliHooksEnabled = isEnabled
+        } catch {
+            cliHooksEnabled = previous
+            cliHooksMessage = isEnabled
+                ? "Не удалось подключить CLI hooks"
+                : "Не удалось отключить CLI hooks"
+        }
+    }
+
     private var musicHealth: NowPlayingHealth {
         model.nowPlayingDiagnostics.health(at: Date())
     }
@@ -855,6 +963,103 @@ private struct SettingsActionButton: View {
                     Color.white.opacity(0.08),
                     in: RoundedRectangle(cornerRadius: 11, style: .continuous)
                 )
+        }
+        .buttonStyle(NotchButtonStyle())
+    }
+}
+
+private struct CodeReviewIntegrationRow: View {
+    let status: CodeReviewIntegrationStatus
+    let onSetup: (String?) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 9) {
+                Image(systemName: status.provider == .github ? "chevron.left.forwardslash.chevron.right" : "arrow.triangle.branch")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(statusColor)
+                    .frame(width: 28, height: 28)
+                    .background(statusColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(status.provider.rawValue)
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.84))
+                    Text(statusText)
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .tracking(0.35)
+                        .foregroundStyle(statusColor)
+                }
+
+                Spacer(minLength: 6)
+
+                Text(status.cliName)
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.42))
+                    .padding(.horizontal, 7)
+                    .frame(minHeight: 24)
+                    .background(.black.opacity(0.25), in: Capsule())
+            }
+
+            if status.isInstalled == false {
+                setupButton(title: "Установить \(status.cliName)", host: nil)
+            } else if status.hosts.isEmpty {
+                Text("Открой AI-сессию в GitLab-репозитории — Nool сам добавит его хост из remote.")
+                    .settingsHintStyle()
+                    .padding(.leading, 37)
+            } else {
+                ForEach(status.hosts) { host in
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(host.isAuthenticated ? Color.signalMint : Color.signalAmber)
+                            .frame(width: 6, height: 6)
+                        Text(host.host)
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.58))
+                            .lineLimit(1)
+                        Spacer(minLength: 6)
+                        if host.isAuthenticated {
+                            Text("Подключено")
+                                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                                .foregroundStyle(Color.signalMint)
+                        } else {
+                            setupButton(title: "Подключить", host: host.host)
+                                .frame(width: 112)
+                        }
+                    }
+                    .padding(.leading, 37)
+                    .frame(minHeight: 40)
+                }
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var statusColor: Color {
+        if status.isInstalled == false { return .signalCoral }
+        if status.hosts.isEmpty || status.isReady == false { return .signalAmber }
+        return .signalMint
+    }
+
+    private var statusText: String {
+        if status.isInstalled == false { return "НЕ УСТАНОВЛЕН" }
+        if status.hosts.isEmpty { return "ЖДЁТ РЕПОЗИТОРИЙ" }
+        return status.isReady ? "ГОТОВ" : "НУЖЕН ВХОД"
+    }
+
+    private func setupButton(title: String, host: String?) -> some View {
+        Button { onSetup(host) } label: {
+            Label(
+                title,
+                systemImage: status.isInstalled ? "key.horizontal" : "arrow.down.circle"
+            )
+            .font(.system(size: 10, weight: .semibold, design: .rounded))
+            .foregroundStyle(Color.signalMint)
+            .frame(maxWidth: .infinity, minHeight: 40)
+            .background(
+                Color.signalMint.opacity(0.08),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
         }
         .buttonStyle(NotchButtonStyle())
     }
