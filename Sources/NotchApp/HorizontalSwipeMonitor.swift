@@ -207,6 +207,28 @@ struct SwipeCarousel<Item: Hashable, Page: View>: View {
 
 @MainActor
 enum NotchHaptics {
+    static func compactHoverEntered() {
+        NSHapticFeedbackManager.defaultPerformer.perform(
+            .alignment,
+            performanceTime: .now
+        )
+    }
+
+    static func notchExpanded() {
+        NSHapticFeedbackManager.defaultPerformer.perform(
+            .levelChange,
+            performanceTime: .now
+        )
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(45))
+            guard Task.isCancelled == false else { return }
+            NSHapticFeedbackManager.defaultPerformer.perform(
+                .generic,
+                performanceTime: .now
+            )
+        }
+    }
+
     static func wheelSelectionChanged(performPulse: (() -> Void)? = nil) {
         if let performPulse {
             performPulse()

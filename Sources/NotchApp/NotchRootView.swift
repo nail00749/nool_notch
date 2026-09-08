@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct NotchTransitionStack<Content: View>: View {
     @ViewBuilder let content: Content
@@ -21,21 +22,26 @@ struct NotchRootView: View {
     @ObservedObject var visualSettings: NotchVisualSettings
     let onOpenSettings: (NotchSettingsSection) -> Void
     let onLayoutChange: (_ isExpanded: Bool, _ reduceMotion: Bool) -> Void
+    var onKeyboardFocusChange: (Bool) -> Void = { _ in }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var hoverExpansionEnabled = false
-    @State private var playbackBounce = false
+    @State private var expansionSurfaceSettled = false
     @State private var expansionStartedAt: Date?
-    @State private var expansionTask: Task<Void, Never>?
 
     private var stateAnimation: Animation {
-        reduceMotion
-            ? .linear(duration: 0.01)
-            : .spring(response: 0.56, dampingFraction: 0.88)
+        NotchMotion.layoutAnimation(isExpanded: model.isExpanded, reduceMotion: reduceMotion)
     }
 
     private var isCompactPlaybackActive: Bool {
         model.nowPlayingSnapshot?.playbackState.isPlaying == true
+    }
+
+    private var isCompactLiveActivityActive: Bool {
+        model.primaryLiveActivity != nil
+    }
+
+    private var usesWideCompactLayout: Bool {
+        model.usesWideCompactLayout
     }
 
     private var currentSize: CGSize {
@@ -46,12 +52,37 @@ struct NotchRootView: View {
             calendarViewMode: model.calendarViewMode,
             isShowingSettings: false,
             compactHeight: visualSettings.compactHeight,
-            isPlaying: isCompactPlaybackActive,
-            showsAgentMascot: model.visibleCompactAgentSignal != nil
+            isPlaying: usesWideCompactLayout,
+            showsAgentMascot: model.compactMascotNotice != nil,
+            isHovered: model.isCompactHovered
         )
     }
 
-    var body: some View {
+    private var surfaceShape: NotchSurfaceShape {
+        let compactSize = NotchWindowSizingPolicy.compactInteractionSize(
+            metrics: NotchLayout.currentMetrics,
+            isPlaying: usesWideCompactLayout,
+            compactHeight: visualSettings.compactHeight,
+            showsAgentMascot: model.compactMascotNotice != nil,
+            isHovered: model.isCompactHovered
+        )
+        let surfaceHeight = model.compactMascotNotice == nil
+            ? visualSettings.compactHeight + (model.isCompactHovered ? 6 : 0)
+            : compactSize.height - NotchLayout.compactHoverBottomPadding
+        let expandedSize = NotchWindowSizingPolicy.size(
+            metrics: NotchLayout.currentMetrics, isExpanded: true,
+            selectedPanel: model.selectedPanel, calendarViewMode: model.calendarViewMode,
+            isShowingSettings: false
+        )
+        return NotchSurfaceShape(
+            compactWindowSize: compactSize,
+            compactSurfaceHeight: surfaceHeight,
+            expandedHeight: expandedSize.height,
+            holdsExpandedShape: model.isExpanded && expansionSurfaceSettled
+        )
+    }
+
+    private var surfaceContent: some View {
         NotchTransitionStack {
             if model.isExpanded {
                 ExpandedNotch(
@@ -59,41 +90,87 @@ struct NotchRootView: View {
                     showsSettingsMascot: visualSettings.showsExpandedMascot,
                     onOpenSettings: onOpenSettings
                 )
-                    .transition(.asymmetric(
-                        insertion: .scale(scale: 0.94, anchor: .top).combined(with: .opacity),
-                        removal: .offset(y: -12).combined(with: .opacity)
-                    ))
+                .transition(.identity)
             } else {
                 CompactNotch(
                     model: model,
                     visualSettings: visualSettings,
                     onExpand: { setExpanded(true) }
                 )
+                .transition(.opacity.animation(.easeOut(duration: reduceMotion ? 0.01 : 0.10)))
             }
         }
-        .offset(y: playbackBounce ? -4 : 0)
+        .background { surfaceShape.fill(.black) }
+        .clipShape(surfaceShape)
         .animation(stateAnimation, value: model.isExpanded)
+        .animation(NotchMotion.compactResizeAnimation(reduceMotion: reduceMotion), value: model.isCompactHovered)
         .animation(stateAnimation, value: isCompactPlaybackActive)
+        .animation(NotchMotion.compactResizeAnimation(reduceMotion: reduceMotion), value: usesWideCompactLayout)
+        .animation(stateAnimation, value: isCompactLiveActivityActive)
         .animation(stateAnimation, value: visualSettings.compactHeight)
         .contentShape(
             NotchRootInteractionShape(
                 excludesLeadingMascotLane: model.isExpanded == false
-                    && model.visibleCompactAgentSignal != nil
+                    && model.compactMascotNotice != nil
             )
         )
+    }
+
+    private var interactiveContent: some View {
+        surfaceContent
         .onHover(perform: handleHover)
+        .onDrop(of: [UTType.fileURL.identifier], isTargeted: $model.isFileDropTargeted,
+                perform: model.acceptShelfDrop)
+        .onChange(of: model.isFileDropTargeted) { _, isTargeted in
+            if isTargeted { model.openUtility(.files) }
+        }
+        .onChange(of: model.activeUtility) { _, utility in
+            onKeyboardFocusChange(utility == .search)
+        }
+    }
+
+    private var lifecycleContent: some View {
+        interactiveContent
         .task {
             onLayoutChange(model.isExpanded, reduceMotion)
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            hoverExpansionEnabled = true
         }
+        .task(id: model.isExpanded) { await settleExpansion() }
+        .task(id: model.isCompactHovered ? model.hoverExpansionDelay : -1) {
+            let delay = model.hoverExpansionDelay
+            guard model.isCompactHovered, delay > 0 else { return }
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch {
+                return
+            }
+            guard Task.isCancelled == false,
+                  model.isCompactHovered,
+                  model.isExpanded == false,
+                  model.isTransientSurfaceVisible == false,
+                  let screen = NSScreen.preferredNotchScreen,
+                  NotchHoverPolicy.shouldCollapse(
+                    pointerLocation: NSEvent.mouseLocation,
+                    screenFrame: screen.frame,
+                    windowSize: currentSize
+                  ) == false else { return }
+            setExpanded(true)
+        }
+    }
+
+    private var layoutContent: some View {
+        lifecycleContent
         .onChange(of: model.isExpanded) { _, isExpanded in
             if isExpanded {
-                NotchHaptics.selectionChanged()
+                NotchHaptics.notchExpanded()
             } else {
+                expansionSurfaceSettled = false
+                model.isCompactHovered = false
                 expansionStartedAt = nil
             }
             onLayoutChange(isExpanded, reduceMotion)
+        }
+        .onChange(of: model.isCompactHovered) { _, _ in
+            onLayoutChange(model.isExpanded, reduceMotion)
         }
         .onChange(of: model.selectedPanel) { _, _ in
             onLayoutChange(model.isExpanded, reduceMotion)
@@ -101,25 +178,50 @@ struct NotchRootView: View {
         .onChange(of: model.calendarViewMode) { _, _ in
             onLayoutChange(model.isExpanded, reduceMotion)
         }
+    }
+
+    var body: some View {
+        layoutContent
         .onChange(of: visualSettings.compactHeight) { _, _ in
             onLayoutChange(model.isExpanded, reduceMotion)
         }
-        .onChange(of: model.visibleCompactAgentSignal?.id) { _, _ in
+        .onChange(of: model.compactMascotNotice?.id) { _, _ in
+            onLayoutChange(model.isExpanded, reduceMotion)
+        }
+        .onChange(of: model.primaryLiveActivity?.id) { _, _ in
+            onLayoutChange(model.isExpanded, reduceMotion)
+        }
+        .onChange(of: model.compactMeetingReminder?.event.id) { _, _ in
+            onLayoutChange(model.isExpanded, reduceMotion)
+        }
+        .onChange(of: model.usesWideCompactLayout) { _, _ in
             onLayoutChange(model.isExpanded, reduceMotion)
         }
         .onChange(of: model.isTransientSurfaceVisible) { wasVisible, isVisible in
             guard wasVisible, isVisible == false, model.isExpanded else { return }
+            guard let screen = NSScreen.preferredNotchScreen,
+                  NotchHoverPolicy.shouldCollapse(
+                    pointerLocation: NSEvent.mouseLocation,
+                    screenFrame: screen.frame,
+                    windowSize: currentSize
+                  ) else { return }
             setExpanded(false)
         }
         .onChange(of: playbackSignal) { _, _ in
             onLayoutChange(model.isExpanded, reduceMotion)
-            guard isCompactPlaybackActive else { return }
-            triggerPlaybackBounce()
         }
-        .onDisappear {
-            expansionTask?.cancel()
-            expansionTask = nil
-        }
+    }
+
+    @MainActor
+    private func settleExpansion() async {
+        guard model.isExpanded else { return }
+        do {
+            if reduceMotion == false {
+                try await Task.sleep(for: .seconds(NotchMotion.expansionDuration))
+            }
+        } catch { return }
+        guard Task.isCancelled == false, model.isExpanded else { return }
+        expansionSurfaceSettled = true
     }
 
     private func setExpanded(_ isExpanded: Bool) {
@@ -145,28 +247,27 @@ struct NotchRootView: View {
             return
         }
 
-        withAnimation(stateAnimation) {
+        withAnimation(NotchMotion.layoutAnimation(isExpanded: isExpanded, reduceMotion: reduceMotion)) {
             model.isExpanded = isExpanded
         }
     }
 
     private func handleHover(_ isHovering: Bool) {
-        if isHovering == false {
-            expansionTask?.cancel()
-            expansionTask = nil
+        // The outgoing compact view must keep its hover size throughout expansion.
+        if model.isExpanded == false {
+            if isHovering, model.isCompactHovered == false {
+                NotchHaptics.compactHoverEntered()
+            }
+            model.isCompactHovered = isHovering
         }
 
         switch NotchHoverPolicy.action(
             isHovering: isHovering,
             isExpanded: model.isExpanded,
-            hoverExpansionEnabled: hoverExpansionEnabled,
+            hoverExpansionEnabled: false,
             isContextMenuVisible: model.isTransientSurfaceVisible
         ) {
-        case .expand:
-            scheduleExpansion()
         case .cancelCollapse:
-            expansionTask?.cancel()
-            expansionTask = nil
             model.cancelScheduledCollapse()
         case .scheduleCollapse:
             setExpanded(false)
@@ -175,51 +276,11 @@ struct NotchRootView: View {
         }
     }
 
-    private func scheduleExpansion() {
-        expansionTask?.cancel()
-        let delay = NotchHoverPolicy.expansionDelay(
-            configuredDelay: model.hoverExpansionDelay
-        )
-        expansionTask = Task { @MainActor in
-            let nanoseconds = UInt64(delay * 1_000_000_000)
-            try? await Task.sleep(nanoseconds: nanoseconds)
-            guard Task.isCancelled == false, model.isExpanded == false else { return }
-            if let screen = NSScreen.preferredNotchScreen {
-                let pointerIsOutside = NotchHoverPolicy.shouldCollapse(
-                    pointerLocation: NSEvent.mouseLocation,
-                    screenFrame: screen.frame,
-                    windowSize: NotchWindowSizingPolicy.compactInteractionSize(
-                        metrics: NotchLayout.currentMetrics,
-                        isPlaying: isCompactPlaybackActive,
-                        compactHeight: visualSettings.compactHeight,
-                        showsAgentMascot: model.visibleCompactAgentSignal != nil
-                    )
-                )
-                guard pointerIsOutside == false else { return }
-            }
-            expansionTask = nil
-            setExpanded(true)
-        }
-    }
-
     private var playbackSignal: String {
         guard let snapshot = model.nowPlayingSnapshot else { return "none" }
         return "\(snapshot.id)|\(snapshot.playbackState)"
     }
 
-    private func triggerPlaybackBounce() {
-        guard reduceMotion == false else { return }
-
-        withAnimation(.spring(response: 0.16, dampingFraction: 0.42)) {
-            playbackBounce = true
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
-                playbackBounce = false
-            }
-        }
-    }
 }
 
 private struct NotchRootInteractionShape: Shape {

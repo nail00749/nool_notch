@@ -30,17 +30,96 @@ struct OllamaQuotaProvider: QuotaProvider, QuotaProviderAuthenticating, Sendable
 }
 
 @MainActor
-private final class OllamaWebSession: NSObject, WKNavigationDelegate, NSWindowDelegate {
+protocol OllamaUsagePage: AnyObject {
+    func reloadUsage() async throws
+    func bodyText() async throws -> String
+}
+
+@MainActor
+final class OllamaUsageReader {
+    private var lastSuccessfulSnapshot: QuotaSnapshot?
+    private var refreshTask: Task<QuotaSnapshot, Never>?
+
+    func loadSnapshot(from page: any OllamaUsagePage) async -> QuotaSnapshot {
+        if let refreshTask { return await refreshTask.value }
+        let task = Task { @MainActor in
+            do {
+                try await page.reloadUsage()
+                let body = try await page.bodyText()
+                return try self.recordLoadedBody(body)
+            } catch {
+                return self.failureSnapshot(for: error)
+            }
+        }
+        refreshTask = task
+        let snapshot = await task.value
+        refreshTask = nil
+        return snapshot
+    }
+
+    func recordLoadedBody(_ body: String) throws -> QuotaSnapshot {
+        let snapshot = try OllamaUsageParser.snapshot(from: body)
+        lastSuccessfulSnapshot = snapshot
+        return snapshot
+    }
+
+    private func failureSnapshot(for error: Error) -> QuotaSnapshot {
+        if let usageError = error as? OllamaUsageError,
+           case .authenticationRequired = usageError {
+            // A different account may be signing in. Do not retain its predecessor's usage.
+            lastSuccessfulSnapshot = nil
+            return usageError.snapshot(sourceURL: URL(string: "https://ollama.com/settings")!)
+        }
+        if let previous = lastSuccessfulSnapshot {
+            return QuotaSnapshot(
+                providerID: previous.providerID,
+                providerName: previous.providerName,
+                windows: previous.windows,
+                connection: .stale,
+                updatedAt: previous.updatedAt,
+                sourceURL: previous.sourceURL,
+                message: "Не удалось обновить Ollama. Показаны последние загруженные лимиты."
+            )
+        }
+        if let error = error as? OllamaUsageError {
+            return error.snapshot(sourceURL: URL(string: "https://ollama.com/settings")!)
+        }
+        return .unavailable(
+            providerID: "ollama-cloud",
+            providerName: "Ollama Cloud",
+            sourceURL: URL(string: "https://ollama.com/settings"),
+            message: "Не удалось обновить usage со страницы Ollama."
+        )
+    }
+}
+
+@MainActor
+final class OllamaWebSession: NSObject, WKNavigationDelegate, NSWindowDelegate, OllamaUsagePage {
     static let shared = OllamaWebSession()
 
-    private let settingsURL = URL(string: "https://ollama.com/settings")!
+    private let settingsURL: URL
     private var webView: WKWebView?
     private var authWindow: NSWindow?
     private var onUpdate: (@MainActor () -> Void)?
     private var isAuthenticating = false
+    private let usageReader = OllamaUsageReader()
+    private var navigationContinuation: CheckedContinuation<Void, Error>?
+    private var awaitedNavigation: WKNavigation?
+    private var navigationTimeoutTask: Task<Void, Never>?
+    private var navigationGeneration = 0
+
+    init(
+        webView: WKWebView? = nil,
+        settingsURL: URL = URL(string: "https://ollama.com/settings")!
+    ) {
+        self.webView = webView
+        self.settingsURL = settingsURL
+        super.init()
+        webView?.navigationDelegate = self
+    }
 
     func loadSnapshot() async -> QuotaSnapshot {
-        guard let webView else {
+        guard webView != nil, isAuthenticating == false else {
             return .requiresAuthentication(
                 providerID: "ollama-cloud",
                 providerName: "Ollama Cloud",
@@ -49,18 +128,55 @@ private final class OllamaWebSession: NSObject, WKNavigationDelegate, NSWindowDe
             )
         }
 
-        do {
-            let body = try await webView.evaluateJavaScript("document.body.innerText") as? String ?? ""
-            return try OllamaUsageParser.snapshot(from: body)
-        } catch let error as OllamaUsageError {
-            return error.snapshot(sourceURL: settingsURL)
-        } catch {
-            return .unavailable(
-                providerID: "ollama-cloud",
-                providerName: "Ollama Cloud",
-                sourceURL: settingsURL,
-                message: "Не удалось прочитать usage со страницы Ollama."
-            )
+        return await usageReader.loadSnapshot(from: self)
+    }
+
+    func reloadUsage() async throws {
+        guard let webView, isAuthenticating == false else {
+            throw OllamaUsageError.authenticationRequired
+        }
+        try await withCheckedThrowingContinuation { continuation in
+            navigationContinuation = continuation
+            awaitedNavigation = webView.load(settingsRequest)
+            guard let navigation = awaitedNavigation else {
+                finishNavigation(throwing: URLError(.cannotLoadFromNetwork))
+                return
+            }
+            navigationTimeoutTask = Task { @MainActor [weak self] in
+                do { try await Task.sleep(for: .seconds(15)) } catch { return }
+                guard let self, self.awaitedNavigation === navigation else { return }
+                self.finishNavigation(throwing: URLError(.timedOut))
+                self.webView?.stopLoading()
+            }
+        }
+    }
+
+    func bodyText() async throws -> String {
+        guard let webView,
+              webView.url?.host == "ollama.com",
+              ["/settings", "/settings/"].contains(webView.url?.path ?? "") else {
+            throw OllamaUsageError.authenticationRequired
+        }
+        let generation = navigationGeneration
+        let body = try await webView.evaluateJavaScript("document.body.innerText") as? String ?? ""
+        guard generation == navigationGeneration else { throw URLError(.cancelled) }
+        return body
+    }
+
+    private var settingsRequest: URLRequest {
+        URLRequest(url: settingsURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+    }
+
+    private func finishNavigation(throwing error: Error? = nil) {
+        let continuation = navigationContinuation
+        navigationContinuation = nil
+        awaitedNavigation = nil
+        navigationTimeoutTask?.cancel()
+        navigationTimeoutTask = nil
+        if let error {
+            continuation?.resume(throwing: error)
+        } else {
+            continuation?.resume()
         }
     }
 
@@ -71,42 +187,43 @@ private final class OllamaWebSession: NSObject, WKNavigationDelegate, NSWindowDe
         applyAttachmentPolicy()
 
         if webView?.url == nil {
-            webView?.load(URLRequest(url: settingsURL))
+            webView?.load(settingsRequest)
         } else {
-            refreshAndNotify()
+            onUpdate()
         }
     }
 
     func beginAuthentication(onUpdate: @escaping @MainActor () -> Void) {
         self.onUpdate = onUpdate
         ensureWebView()
+        let wasAuthenticating = isAuthenticating
         isAuthenticating = true
+        finishNavigation(throwing: OllamaUsageError.authenticationRequired)
         applyAttachmentPolicy()
         NSApp.activate(ignoringOtherApps: true)
         authWindow?.level = .floating
         authWindow?.orderFrontRegardless()
         authWindow?.makeKey()
 
-        if webView?.url == nil {
-            webView?.load(URLRequest(url: settingsURL))
-        } else {
-            refreshAndNotify()
+        if wasAuthenticating == false {
+            webView?.load(settingsRequest)
         }
     }
 
     private func ensureWebView() {
-        guard webView == nil else { return }
+        if webView == nil {
+            let configuration = WKWebViewConfiguration()
+            configuration.websiteDataStore = .default()
+            let webView = WKWebView(
+                frame: NSRect(x: 0, y: 0, width: 920, height: 680),
+                configuration: configuration
+            )
+            webView.navigationDelegate = self
+            webView.allowsBackForwardNavigationGestures = true
+            self.webView = webView
+        }
 
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
-        let webView = WKWebView(
-            frame: NSRect(x: 0, y: 0, width: 920, height: 680),
-            configuration: configuration
-        )
-        webView.navigationDelegate = self
-        webView.allowsBackForwardNavigationGestures = true
-        self.webView = webView
-
+        guard authWindow == nil else { return }
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 920, height: 680),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -144,11 +261,14 @@ private final class OllamaWebSession: NSObject, WKNavigationDelegate, NSWindowDe
         webView.stopLoading()
     }
 
-    private func refreshAndNotify() {
+    private func recordFinishedNavigation() {
+        let generation = navigationGeneration
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let snapshot = await loadSnapshot()
-            if snapshot.connection == .live {
+            guard let body = try? await bodyText(),
+                  generation == navigationGeneration,
+                  (try? usageReader.recordLoadedBody(body)) != nil else { return }
+            if isAuthenticating {
                 isAuthenticating = false
                 applyAttachmentPolicy()
             }
@@ -163,9 +283,33 @@ private final class OllamaWebSession: NSObject, WKNavigationDelegate, NSWindowDe
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        let host = webView.url?.host
-        guard host == "ollama.com" || host == "signin.ollama.com" else { return }
-        refreshAndNotify()
+        if let awaitedNavigation, navigation === awaitedNavigation {
+            finishNavigation()
+            return
+        }
+        // Only unsolicited navigation (initial load or sign-in) notifies the owner.
+        // A requested refresh already has a waiting caller; notifying again would reload forever.
+        recordFinishedNavigation()
+    }
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        navigationGeneration += 1
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        if let awaitedNavigation, navigation === awaitedNavigation {
+            finishNavigation(throwing: error)
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        if let awaitedNavigation, navigation === awaitedNavigation {
+            finishNavigation(throwing: error)
+        }
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        finishNavigation(throwing: URLError(.networkConnectionLost))
     }
 }
 

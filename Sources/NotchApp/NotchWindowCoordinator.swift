@@ -14,6 +14,7 @@ final class NotchWindowCoordinator: NSObject {
     private let launchAtLogin: LaunchAtLoginManager
     private var lastLayoutWasExpanded = false
     private var targetWindowFrame: NSRect?
+    private var applicationBeforeSearch: NSRunningApplication?
 
     override init() {
         model = NotchViewModel(
@@ -26,6 +27,9 @@ final class NotchWindowCoordinator: NSObject {
         )
         visualSettings = NotchVisualSettings()
         launchAtLogin = LaunchAtLoginManager()
+        model.timerSource.onCompletion = {
+            NSSound(named: NSSound.Name("Glass"))?.play()
+        }
         let size = NotchWindowSizingPolicy.compactInteractionSize(
             metrics: NotchLayout.currentMetrics,
             isPlaying: false,
@@ -76,6 +80,23 @@ final class NotchWindowCoordinator: NSObject {
             },
             onLayoutChange: { [weak self] isExpanded, reduceMotion in
                 self?.animateWindow(to: isExpanded, reduceMotion: reduceMotion)
+            },
+            onKeyboardFocusChange: { [weak self] enabled in
+                guard let self else { return }
+                self.window.acceptsKeyboardFocus = enabled
+                if enabled {
+                    let previous = NSWorkspace.shared.frontmostApplication
+                    self.applicationBeforeSearch = previous?.processIdentifier == ProcessInfo.processInfo.processIdentifier
+                        ? nil : previous
+                    NSApp.activate(ignoringOtherApps: true)
+                    self.window.makeKeyAndOrderFront(nil)
+                } else {
+                    if self.window.isKeyWindow { self.window.resignKey() }
+                    if NSApp.isActive, self.settingsWindow.isVisible == false {
+                        self.applicationBeforeSearch?.activate(options: [])
+                    }
+                    self.applicationBeforeSearch = nil
+                }
             }
         )
         .preferredColorScheme(.dark)
@@ -144,8 +165,9 @@ final class NotchWindowCoordinator: NSObject {
             calendarViewMode: model.calendarViewMode,
             isShowingSettings: model.isShowingSettings,
             compactHeight: visualSettings.compactHeight,
-            isPlaying: model.nowPlayingSnapshot?.playbackState.isPlaying == true,
-            showsAgentMascot: model.visibleCompactAgentSignal != nil
+            isPlaying: model.usesWideCompactLayout,
+            showsAgentMascot: model.compactMascotNotice != nil,
+            isHovered: model.isCompactHovered
         )
         let frame = NSRect(
             origin: Self.origin(for: NSScreen.preferredNotchScreen, size: size),
@@ -167,8 +189,8 @@ final class NotchWindowCoordinator: NSObject {
                 context.duration = NotchMotion.compactResizeDuration
                 context.timingFunction = NotchMotion.compactResizeTimingFunction()
             } else {
-                context.duration = isExpanded ? 0.54 : 0.30
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                context.duration = isExpanded ? NotchMotion.expansionDuration : NotchMotion.collapseDuration
+                context.timingFunction = NotchMotion.compactResizeTimingFunction()
             }
             window.animator().setFrame(frame, display: true)
         }

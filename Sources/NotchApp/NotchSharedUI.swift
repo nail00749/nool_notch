@@ -3,6 +3,14 @@ import SwiftUI
 
 enum NotchMotion {
     static let compactResizeDuration: TimeInterval = 0.36
+    static let expansionDuration: TimeInterval = 0.54
+    static let collapseDuration: TimeInterval = 0.30
+
+    static func layoutAnimation(isExpanded: Bool, reduceMotion: Bool) -> Animation {
+        reduceMotion
+            ? .linear(duration: 0.01)
+            : .timingCurve(0.2, 0, 0, 1, duration: isExpanded ? expansionDuration : collapseDuration)
+    }
 
     static func compactResizeAnimation(reduceMotion: Bool) -> Animation {
         reduceMotion
@@ -17,6 +25,7 @@ enum NotchMotion {
 
 enum PanelID: String, CaseIterable, Identifiable {
     case ai
+    case live
     case calendar
     case music
     case jira
@@ -27,6 +36,8 @@ enum PanelID: String, CaseIterable, Identifiable {
         switch self {
         case .ai:
             "AI"
+        case .live:
+            "Live"
         case .calendar:
             "Календарь"
         case .music:
@@ -40,6 +51,8 @@ enum PanelID: String, CaseIterable, Identifiable {
         switch self {
         case .ai:
             "sparkles"
+        case .live:
+            "bolt.horizontal.circle"
         case .calendar:
             "calendar"
         case .music:
@@ -99,13 +112,18 @@ struct NotchLayoutMetrics: Equatable {
     func compactSize(
         isPlaying: Bool,
         compactHeight: CGFloat = NotchLayout.defaultCompactHeight,
-        showsAgentMascot: Bool = false
+        showsAgentMascot: Bool = false,
+        isHovered: Bool = false
     ) -> CGSize {
-        let baseSize = baseCompactSize(
+        var baseSize = baseCompactSize(
             isPlaying: isPlaying,
             compactHeight: compactHeight
         )
 
+        if isHovered {
+            baseSize.width += 24
+            baseSize.height += 6
+        }
         guard showsAgentMascot else { return baseSize }
         return CGSize(
             width: baseSize.width + NotchLayout.compactAgentMascotLaneWidth * 2,
@@ -193,12 +211,14 @@ enum NotchLayout {
     static func compactSize(
         isPlaying: Bool,
         compactHeight: CGFloat = defaultCompactHeight,
-        showsAgentMascot: Bool = false
+        showsAgentMascot: Bool = false,
+        isHovered: Bool = false
     ) -> CGSize {
         currentMetrics.compactSize(
             isPlaying: isPlaying,
             compactHeight: compactHeight,
-            showsAgentMascot: showsAgentMascot
+            showsAgentMascot: showsAgentMascot,
+            isHovered: isHovered
         )
     }
     static var expandedSize: CGSize { currentMetrics.expandedSize }
@@ -241,7 +261,6 @@ enum NotchLayout {
 }
 
 enum NotchHoverAction: Equatable {
-    case expand
     case cancelCollapse
     case scheduleCollapse
     case none
@@ -252,12 +271,14 @@ enum NotchWindowSizingPolicy {
         metrics: NotchLayoutMetrics,
         isPlaying: Bool = true,
         compactHeight: CGFloat = NotchLayout.defaultCompactHeight,
-        showsAgentMascot: Bool = false
+        showsAgentMascot: Bool = false,
+        isHovered: Bool = false
     ) -> CGSize {
         let visibleSize = metrics.compactSize(
             isPlaying: isPlaying,
             compactHeight: compactHeight,
-            showsAgentMascot: showsAgentMascot
+            showsAgentMascot: showsAgentMascot,
+            isHovered: isHovered
         )
         return CGSize(
             width: visibleSize.width + NotchLayout.compactHoverHorizontalPadding * 2,
@@ -273,19 +294,21 @@ enum NotchWindowSizingPolicy {
         isShowingSettings: Bool,
         compactHeight: CGFloat = NotchLayout.defaultCompactHeight,
         isPlaying: Bool = true,
-        showsAgentMascot: Bool = false
+        showsAgentMascot: Bool = false,
+        isHovered: Bool = false
     ) -> CGSize {
         guard isExpanded else {
             return compactInteractionSize(
                 metrics: metrics,
                 isPlaying: isPlaying,
                 compactHeight: compactHeight,
-                showsAgentMascot: showsAgentMascot
+                showsAgentMascot: showsAgentMascot,
+                isHovered: isHovered
             )
         }
         guard isShowingSettings == false else { return metrics.expandedSize }
 
-        if selectedPanel == .music || selectedPanel == .jira {
+        if selectedPanel == .live || selectedPanel == .music || selectedPanel == .jira {
             return metrics.expandedMusicSize
         }
         if selectedPanel == .calendar, calendarViewMode == .month {
@@ -296,13 +319,13 @@ enum NotchWindowSizingPolicy {
 }
 
 enum NotchHoverPolicy {
-    static let expansionAnimationDuration: TimeInterval = 0.54
+    static let expansionAnimationDuration: TimeInterval = NotchMotion.expansionDuration
     static let collapseGracePeriod: TimeInterval = 0.18
 
     static func expansionDelay(configuredDelay: TimeInterval) -> TimeInterval {
         guard configuredDelay.isFinite else { return 0.5 }
-        let clamped = min(1, max(0, configuredDelay))
-        return (clamped * 10).rounded() / 10
+        let clamped = min(1.5, max(0, configuredDelay))
+        return (clamped * 2).rounded() / 2
     }
 
     static func action(
@@ -315,7 +338,7 @@ enum NotchHoverPolicy {
             if isExpanded {
                 return .cancelCollapse
             }
-            return hoverExpansionEnabled ? .expand : .none
+            return .none
         }
 
         guard isExpanded, isContextMenuVisible == false else { return .none }

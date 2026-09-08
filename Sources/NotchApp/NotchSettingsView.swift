@@ -270,26 +270,17 @@ struct NotchSettingsView: View {
         VStack(spacing: 12) {
             SettingsCard(title: "Поведение", icon: "cursorarrow.motionlines") {
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text("Задержка раскрытия")
-                        Spacer()
-                        Text(delayText)
-                            .foregroundStyle(Color.signalMint)
-                            .monospacedDigit()
+                    Picker("Раскрытие наведением", selection: Binding(
+                        get: { model.hoverExpansionDelay },
+                        set: model.setHoverExpansionDelay
+                    )) {
+                        Text("Выключено").tag(0.0)
+                        Text("0,5 с").tag(0.5)
+                        Text("1 с").tag(1.0)
+                        Text("1,5 с").tag(1.5)
                     }
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-
-                    Slider(
-                        value: Binding(
-                            get: { model.hoverExpansionDelay },
-                            set: model.setHoverExpansionDelay
-                        ),
-                        in: 0...1,
-                        step: 0.1
-                    )
-                    .tint(Color.signalMint)
-
-                    Text("Задержка применяется только к раскрытию челки наведением.")
+                    .pickerStyle(.menu)
+                    Text("Короткое наведение слегка увеличивает челку. Клик всегда открывает панели сразу.")
                         .settingsHintStyle()
                 }
             }

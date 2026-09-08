@@ -26,5 +26,7 @@
 	<true/>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>NotchApp показывает ближайшие события в челке.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>NotchApp показывает подключение, отключение и заряд Bluetooth-наушников в челке.</string>
 </dict>
 </plist>

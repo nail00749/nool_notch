@@ -16,7 +16,7 @@ struct ExpandedNotch: View {
     private var contentAnimation: Animation {
         reduceMotion
             ? .linear(duration: 0.01)
-            : .easeOut(duration: 0.34)
+            : .easeOut(duration: 0.20)
     }
 
     private var carouselAnimation: Animation {
@@ -38,39 +38,59 @@ struct ExpandedNotch: View {
     var body: some View {
         VStack(spacing: 0) {
             ExpandedNotchHeader(
-                title: model.selectedPanel.title,
+                title: model.activeUtility?.title ?? model.selectedPanel.title,
                 physicalNotchSize: NotchLayout.physicalNotchSize,
                 sideWingWidth: NotchLayout.expandedHeaderWingWidth,
                 showsMascot: showsSettingsMascot,
                 onShowSettings: { onOpenSettings(.general) }
             )
             .opacity(contentVisible ? 1 : 0)
-            .offset(y: contentVisible ? 0 : 8)
-            .animation(contentAnimation.delay(reduceMotion ? 0 : 0.06), value: contentVisible)
+            .offset(y: contentVisible ? 0 : 3)
+            .animation(contentAnimation, value: contentVisible)
 
-            PanelSwitcher(
-                panels: model.visiblePanels,
-                selectedPanel: model.selectedPanel,
-                badge: panelBadge,
-                onSelect: selectPanel
-            )
+            HStack(spacing: 4) {
+                PanelSwitcher(
+                    panels: model.visiblePanels,
+                    selectedPanel: model.activeUtility == nil ? model.selectedPanel : nil,
+                    badge: panelBadge,
+                    onSelect: selectPanel
+                )
+                utilityButton(.search, icon: "magnifyingglass")
+                utilityButton(.files, icon: "tray")
+            }
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
             .opacity(contentVisible ? 1 : 0)
-            .offset(y: contentVisible ? 0 : 8)
-            .animation(contentAnimation.delay(reduceMotion ? 0 : 0.15), value: contentVisible)
+            .offset(y: contentVisible ? 0 : 3)
+            .animation(contentAnimation.delay(reduceMotion ? 0 : 0.03), value: contentVisible)
 
-            SwipeCarousel(
-                items: model.visiblePanels,
-                selection: model.selectedPanel,
-                translation: swipeTranslation
-            ) { panel in
-                panelPage(panel)
+            Group {
+                if model.activeUtility == .search {
+                    UnifiedSearchPanel(model: model)
+                } else if model.activeUtility == .files {
+                    FileShelfPanel(store: model.fileShelfStore, onChooseFiles: model.chooseShelfFiles)
+                } else {
+                    SwipeCarousel(
+                        items: model.visiblePanels,
+                        selection: model.selectedPanel,
+                        translation: swipeTranslation
+                    ) { panel in
+                        panelPage(panel)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background {
+                        HorizontalSwipeMonitor(
+                            onChanged: updateSwipe,
+                            onThresholdReached: commitSwipe,
+                            onEnded: finishSwipe
+                        )
+                    }
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .opacity(contentVisible ? 1 : 0)
-            .offset(y: contentVisible ? 0 : 8)
-            .animation(contentAnimation.delay(reduceMotion ? 0 : 0.24), value: contentVisible)
+            .offset(y: contentVisible ? 0 : 3)
+            .animation(contentAnimation.delay(reduceMotion ? 0 : 0.06), value: contentVisible)
 
             footer
             .font(.system(size: 10, weight: .medium, design: .rounded))
@@ -78,32 +98,13 @@ struct ExpandedNotch: View {
             .padding(.horizontal, 22)
             .padding(.vertical, 8)
             .opacity(contentVisible ? 1 : 0)
-            .offset(y: contentVisible ? 0 : 6)
-            .animation(contentAnimation.delay(reduceMotion ? 0 : 0.33), value: contentVisible)
+            .offset(y: contentVisible ? 0 : 3)
+            .animation(contentAnimation.delay(reduceMotion ? 0 : 0.06), value: contentVisible)
         }
         .frame(width: expandedSize.width, height: expandedSize.height)
-        .background(Color.black)
-        .clipShape(
-            UnevenRoundedRectangle(
-                cornerRadii: RectangleCornerRadii(
-                    topLeading: 0,
-                    bottomLeading: 28,
-                    bottomTrailing: 28,
-                    topTrailing: 0
-                ),
-                style: .continuous
-            )
-        )
-        .compositingGroup()
-        .background {
-            HorizontalSwipeMonitor(
-                onChanged: updateSwipe,
-                onThresholdReached: commitSwipe,
-                onEnded: finishSwipe
-            )
-        }
+
         .onAppear {
-            withAnimation(contentAnimation.delay(reduceMotion ? 0 : 0.06)) {
+            withAnimation(contentAnimation) {
                 model.expandedContentVisible = true
             }
         }
@@ -118,6 +119,8 @@ struct ExpandedNotch: View {
         switch panel {
         case .ai:
             AIPanel(model: model)
+        case .live:
+            LiveActivitiesPanel(model: model)
         case .calendar:
             CalendarPanel(model: model)
         case .music:
@@ -130,8 +133,30 @@ struct ExpandedNotch: View {
         }
     }
 
+    private func utilityButton(_ utility: NotchUtilityPanel, icon: String) -> some View {
+        Button {
+            if model.activeUtility == utility { model.closeUtility() }
+            else { model.openUtility(utility) }
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(model.activeUtility == utility ? Color.signalMint : .white.opacity(0.65))
+                .frame(width: 34, height: 40)
+                .background(model.activeUtility == utility ? .white.opacity(0.12) : .clear,
+                            in: RoundedRectangle(cornerRadius: 10))
+                .overlay(alignment: .topTrailing) {
+                    if utility == .files, model.fileShelfStore.entries.isEmpty == false {
+                        Circle().fill(Color.signalMint).frame(width: 5, height: 5).padding(4)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(utility.title)
+        .help(utility == .files ? "Временная полка файлов" : "Поиск по загруженным данным")
+    }
+
     private func selectPanel(_ panel: PanelID) {
-        guard panel != model.selectedPanel else { return }
+        guard panel != model.selectedPanel || model.activeUtility != nil else { return }
         withAnimation(carouselAnimation) {
             swipeTranslation = 0
             model.selectPanel(panel)
@@ -222,17 +247,24 @@ struct ExpandedNotch: View {
         switch panel {
         case .ai:
             let warningCount = model.numericBadgeCount(for: .ai) ?? 0
+            guard warningCount > 0 else { return nil }
             return PanelTabBadge(
                 text: String(warningCount),
-                color: warningCount > 0
-                    ? (model.aiAttentionCount > 0 ? Color.signalAmber : Color.signalCoral)
-                    : Color.white.opacity(0.42)
+                color: model.aiAttentionCount > 0 ? Color.signalAmber : Color.signalCoral
+            )
+        case .live:
+            let count = model.numericBadgeCount(for: .live) ?? 0
+            guard count > 0 else { return nil }
+            return PanelTabBadge(
+                text: String(min(count, 99)),
+                color: Color.white.opacity(0.42)
             )
         case .calendar:
             let todayCount = model.numericBadgeCount(for: .calendar) ?? 0
+            guard todayCount > 0 else { return nil }
             return PanelTabBadge(
                 text: String(todayCount),
-                color: todayCount > 0 ? Color.signalCyan : Color.white.opacity(0.42)
+                color: Color.white.opacity(0.42)
             )
         case .music:
             guard model.nowPlayingSnapshot?.playbackState.isPlaying == true else { return nil }
@@ -245,6 +277,7 @@ struct ExpandedNotch: View {
             case .idle: issues = []
             }
             let issueCount = model.numericBadgeCount(for: .jira) ?? 0
+            guard issueCount > 0 else { return nil }
             let startOfToday = Calendar.current.startOfDay(for: .now)
             let hasOverdue = issues.contains { issue in
                 issue.dueDate.map { $0 < startOfToday } ?? false
@@ -253,7 +286,7 @@ struct ExpandedNotch: View {
                 text: issueCount > 99 ? "99+" : String(issueCount),
                 color: hasOverdue
                     ? Color.signalCoral
-                    : issueCount > 0 ? Color.signalMint : Color.white.opacity(0.42)
+                    : Color.white.opacity(0.42)
             )
         }
     }
@@ -358,19 +391,37 @@ private struct HeaderButton: View {
 
 private struct PanelSwitcher: View {
     let panels: [PanelID]
-    let selectedPanel: PanelID
+    let selectedPanel: PanelID?
     let badge: (PanelID) -> PanelTabBadge?
     let onSelect: (PanelID) -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        HStack(spacing: 5) {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                tabs
+            }
+            .onAppear { if let selectedPanel { proxy.scrollTo(selectedPanel) } }
+            .onChange(of: selectedPanel) { _, panel in
+                guard let panel else { return }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) {
+                    proxy.scrollTo(panel)
+                }
+            }
+        }
+        .frame(height: 40)
+    }
+
+    private var tabs: some View {
+        HStack(spacing: 3) {
             ForEach(panels) { panel in
                 Button {
                     withAnimation(.easeOut(duration: 0.16)) {
                         onSelect(panel)
                     }
                 } label: {
-                    HStack(spacing: 7) {
+                    HStack(spacing: 5) {
                         Image(systemName: panel.iconName)
                             .font(.system(size: 11, weight: .semibold))
                         Text(panel.title)
@@ -381,14 +432,16 @@ private struct PanelSwitcher: View {
                         }
                     }
                     .foregroundStyle(selectedPanel == panel ? .white : .white.opacity(0.46))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 34)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 9)
+                    .frame(height: 32)
                     .background(
                         selectedPanel == panel ? Color.white.opacity(0.14) : .clear,
                         in: RoundedRectangle(cornerRadius: 11, style: .continuous)
                     )
                 }
                 .buttonStyle(NotchButtonStyle())
+                .id(panel)
                 .accessibilityAddTraits(selectedPanel == panel ? .isSelected : [])
             }
         }

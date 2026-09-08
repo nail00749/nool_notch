@@ -58,6 +58,61 @@ struct CompactAgentMascot: View {
     }
 }
 
+struct CompactLiveActivityMascot: View {
+    let activity: LiveActivity
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            NoolWavingMascot()
+                .frame(width: 46, height: 52)
+
+            Image(systemName: activity.kind.iconName)
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(.black)
+                .frame(width: 13, height: 13)
+                .background(Color.signalCyan, in: Circle())
+                .overlay {
+                    Circle().stroke(.white.opacity(0.12), lineWidth: 0.5)
+                }
+                .offset(x: 1, y: 1)
+                .accessibilityHidden(true)
+        }
+        .frame(width: 46, height: 52)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(activity.title). \(activity.detail ?? "Новое событие")")
+    }
+}
+
+struct CompactNoticeMascot: View {
+    let notice: CompactMascotNotice
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            // Keep the scene alive while events in one batch change the badge.
+            NoolWavingMascot()
+                .frame(width: 46, height: 52)
+            Group {
+                switch notice {
+                case .agent(let signal):
+                    Text(signal.kind.glyph)
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .frame(width: 13, height: 13)
+                        .background(signal.kind.accentColor, in: Circle())
+                case .live(let activity):
+                    Image(systemName: activity.kind.iconName)
+                        .font(.system(size: 7, weight: .bold))
+                        .frame(width: 13, height: 13)
+                        .background(Color.signalCyan, in: Circle())
+                }
+            }
+            .foregroundStyle(.black)
+            .offset(x: 1, y: 1)
+            .accessibilityHidden(true)
+        }
+        .frame(width: 46, height: 52)
+    }
+}
+
 struct NoolWavingMascot: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -85,7 +140,7 @@ private struct NoolMascotSceneView: NSViewRepresentable {
 
         guard let sceneURL = Bundle.module.url(
             forResource: "NoolMascot",
-            withExtension: "usdc"
+            withExtension: "usdz"
         ), let scene = try? SCNScene(url: sceneURL, options: nil) else {
             return sceneView
         }
@@ -95,10 +150,10 @@ private struct NoolMascotSceneView: NSViewRepresentable {
         configureCameraAndLighting(in: scene, for: sceneView)
 
         if let waveNode = scene.rootNode.childNode(
-            withName: "NoolPhotoYork_Wave_Pivot",
+            withName: "NoolYork_Wave_Pivot",
             recursively: true
         ) {
-            waveNode.eulerAngles.y = -1.05
+            waveNode.eulerAngles.y = -2.0
             context.coordinator.waveNode = waveNode
             context.coordinator.neutralRotation = waveNode.eulerAngles
         }
@@ -114,18 +169,18 @@ private struct NoolMascotSceneView: NSViewRepresentable {
     private func configureCameraAndLighting(in scene: SCNScene, for sceneView: SCNView) {
         let target = SCNNode()
         target.name = "Nool_UI_Target"
-        target.position = SCNVector3(0.08, -0.09, 1.91)
+        target.position = SCNVector3(0.22, -0.12, 1.72)
         scene.rootNode.addChildNode(target)
 
         let cameraNode = SCNNode()
         cameraNode.name = "Nool_UI_Camera"
         let camera = SCNCamera()
         camera.usesOrthographicProjection = true
-        camera.orthographicScale = 2.35
+        camera.orthographicScale = 2.05
         camera.zNear = 0.1
         camera.zFar = 100
         cameraNode.camera = camera
-        cameraNode.position = SCNVector3(8.2, -11.5, 6.35)
+        cameraNode.position = SCNVector3(3.8, -11.5, 3.95)
         let cameraLookAt = SCNLookAtConstraint(target: target)
         cameraLookAt.isGimbalLockEnabled = true
         cameraLookAt.worldUp = SCNVector3(0, 0, 1)
@@ -138,7 +193,7 @@ private struct NoolMascotSceneView: NSViewRepresentable {
         let ambient = SCNLight()
         ambient.type = .ambient
         ambient.color = NSColor(white: 0.65, alpha: 1)
-        ambient.intensity = 600
+        ambient.intensity = 750
         ambientNode.light = ambient
         scene.rootNode.addChildNode(ambientNode)
 
@@ -147,7 +202,7 @@ private struct NoolMascotSceneView: NSViewRepresentable {
         let key = SCNLight()
         key.type = .directional
         key.color = NSColor.white
-        key.intensity = 1_200
+        key.intensity = 1_000
         key.castsShadow = false
         keyNode.light = key
         keyNode.position = SCNVector3(-4, -6, 8)

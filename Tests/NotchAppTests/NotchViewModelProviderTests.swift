@@ -4,6 +4,148 @@ import XCTest
 
 @MainActor
 final class NotchViewModelProviderTests: XCTestCase {
+    func testRunningAndPausedTimerAppearInCompactAndCancelClearsIt() {
+        let model = makeModel()
+        model.timerSource.create(duration: 300)
+        XCTAssertEqual(model.compactTimer?.countdownText, "05:00")
+        XCTAssertTrue(model.usesWideCompactLayout)
+        XCTAssertFalse(model.isExpanded)
+        model.timerSource.toggle()
+        XCTAssertEqual(model.compactTimer?.state, .paused)
+        model.timerSource.cancel()
+        XCTAssertNil(model.compactTimer)
+        XCTAssertFalse(model.usesWideCompactLayout)
+    }
+
+    func testAgentAttentionSuppressesCompactTimerWithoutStoppingIt() async {
+        let source = MemoryAISessionSource()
+        let model = makeModel(aiSessionStore: AISessionStore(sources: [source]))
+        model.timerSource.create(duration: 300)
+        source.publish([aiSession(source: source, status: .waitingForApproval)])
+        await settleMainActorTasks()
+        XCTAssertNil(model.compactTimer)
+        XCTAssertEqual(model.timerSource.snapshot?.state, .active)
+        source.publish([aiSession(source: source, status: .running)])
+        await settleMainActorTasks()
+        XCTAssertNotNil(model.compactTimer)
+        model.timerSource.cancel()
+    }
+
+    func testHiddenCalendarIgnoresLateLoadAfterReenable() async {
+        let calendar = FakeCalendarProvider()
+        calendar.canLoadWithoutPrompt = true
+        var finishOldLoad: CheckedContinuation<CalendarLoadState, Never>?
+        calendar.upcomingLoader = { await withCheckedContinuation { finishOldLoad = $0 } }
+        let model = makeModel(calendarProvider: calendar)
+        await settleMainActorTasks()
+        XCTAssertNotNil(finishOldLoad)
+        model.setPanelVisible(.calendar, isVisible: false)
+        calendar.upcomingLoader = nil
+        calendar.upcomingState = .loaded(CalendarSnapshot(upcomingEvents: [], monthEvents: []))
+        model.setPanelVisible(.calendar, isVisible: true)
+        await settleMainActorTasks()
+        let obsoleteEvent = CalendarEvent(id: "old", title: "Cancelled meeting",
+            startDate: Date().addingTimeInterval(120), endDate: Date().addingTimeInterval(1800),
+            isAllDay: false, calendarTitle: "Test")
+        finishOldLoad?.resume(returning: .loaded(CalendarSnapshot(upcomingEvents: [obsoleteEvent], monthEvents: [])))
+        await settleMainActorTasks()
+        XCTAssertNil(model.upcomingMeetingReminder)
+        XCTAssertEqual(calendar.loadUpcomingEventsCallCount, 2)
+    }
+
+    func testManualRefreshKeepsReminderUntilReplacementArrives() async {
+        let calendar = FakeCalendarProvider()
+        calendar.canLoadWithoutPrompt = true
+        let event = CalendarEvent(id: "meeting", title: "Test meeting",
+            startDate: Date().addingTimeInterval(120), endDate: Date().addingTimeInterval(1800),
+            isAllDay: false, calendarTitle: "Test")
+        calendar.upcomingState = .loaded(CalendarSnapshot(upcomingEvents: [event], monthEvents: []))
+        let model = makeModel(calendarProvider: calendar)
+        await settleMainActorTasks()
+        var finish: CheckedContinuation<CalendarLoadState, Never>?
+        calendar.upcomingLoader = { await withCheckedContinuation { finish = $0 } }
+        model.refreshCalendar()
+        await settleMainActorTasks()
+        XCTAssertEqual(model.calendarState, .loading)
+        XCTAssertEqual(model.compactMeetingReminder?.event, event)
+        XCTAssertNotNil(finish)
+        finish?.resume(returning: .loaded(CalendarSnapshot(upcomingEvents: [], monthEvents: [])))
+        await settleMainActorTasks()
+        XCTAssertNil(model.compactMeetingReminder)
+    }
+
+    func testEnablingCalendarLoadsReminderImmediately() async {
+        let calendar = FakeCalendarProvider()
+        calendar.canLoadWithoutPrompt = true
+        let event = CalendarEvent(id: "meeting", title: "Test meeting",
+            startDate: Date().addingTimeInterval(120), endDate: Date().addingTimeInterval(1800),
+            isAllDay: false, calendarTitle: "Test")
+        calendar.upcomingState = .loaded(CalendarSnapshot(upcomingEvents: [event], monthEvents: []))
+        let model = makeModel(calendarProvider: calendar,
+            preferences: MemoryAppPreferences(hiddenPanelIDs: [.calendar]))
+        await settleMainActorTasks()
+        XCTAssertEqual(calendar.loadUpcomingEventsCallCount, 0)
+        model.setPanelVisible(.calendar, isVisible: true)
+        await settleMainActorTasks()
+        XCTAssertEqual(model.compactMeetingReminder?.event, event)
+        model.setPanelVisible(.calendar, isVisible: false)
+        XCTAssertNil(model.upcomingMeetingReminder)
+    }
+
+    func testReminderLoadsWhileCollapsedOnlyWithExistingPermission() async {
+        let calendar = FakeCalendarProvider()
+        let noAccessModel = makeModel(calendarProvider: calendar)
+        await settleMainActorTasks()
+        XCTAssertEqual(calendar.loadUpcomingEventsCallCount, 0)
+        XCTAssertNil(noAccessModel.compactMeetingReminder)
+
+        calendar.canLoadWithoutPrompt = true
+        let event = CalendarEvent(id: "meeting", title: "Test meeting",
+            startDate: Date().addingTimeInterval(120), endDate: Date().addingTimeInterval(1800),
+            isAllDay: false, calendarTitle: "Test")
+        calendar.upcomingState = .loaded(CalendarSnapshot(upcomingEvents: [event], monthEvents: []))
+        let model = makeModel(calendarProvider: calendar)
+        await settleMainActorTasks()
+        XCTAssertFalse(model.isExpanded)
+        XCTAssertEqual(model.compactMeetingReminder?.event, event)
+        XCTAssertTrue(model.usesWideCompactLayout)
+    }
+
+    func testAgentAttentionTakesPriorityOverMeetingReminder() async {
+        let calendar = FakeCalendarProvider()
+        calendar.canLoadWithoutPrompt = true
+        let event = CalendarEvent(id: "meeting", title: "Test meeting",
+            startDate: Date().addingTimeInterval(120), endDate: Date().addingTimeInterval(1800),
+            isAllDay: false, calendarTitle: "Test")
+        calendar.upcomingState = .loaded(CalendarSnapshot(upcomingEvents: [event], monthEvents: []))
+        let source = MemoryAISessionSource()
+        let model = makeModel(calendarProvider: calendar, aiSessionStore: AISessionStore(sources: [source]))
+        await settleMainActorTasks()
+        XCTAssertNotNil(model.compactMeetingReminder)
+        source.publish([aiSession(source: source, status: .waitingForApproval)])
+        await settleMainActorTasks()
+        XCTAssertNil(model.compactMeetingReminder)
+        source.publish([aiSession(source: source, status: .completed)])
+        await settleMainActorTasks()
+        XCTAssertNotNil(model.compactMeetingReminder)
+    }
+
+    func testCalendarRefreshClearsRemovedMeetingReminder() async {
+        let calendar = FakeCalendarProvider()
+        calendar.canLoadWithoutPrompt = true
+        let event = CalendarEvent(id: "meeting", title: "Test meeting",
+            startDate: Date().addingTimeInterval(120), endDate: Date().addingTimeInterval(1800),
+            isAllDay: false, calendarTitle: "Test")
+        calendar.upcomingState = .loaded(CalendarSnapshot(upcomingEvents: [event], monthEvents: []))
+        let model = makeModel(calendarProvider: calendar)
+        await settleMainActorTasks()
+        XCTAssertNotNil(model.compactMeetingReminder)
+        calendar.upcomingState = .loaded(CalendarSnapshot(upcomingEvents: [], monthEvents: []))
+        model.refreshCalendar()
+        await settleMainActorTasks()
+        XCTAssertNil(model.compactMeetingReminder)
+    }
+
     func testInjectedNowPlayingProviderDrivesViewModel() {
         let nowPlaying = FakeNowPlayingProvider()
         let model = makeModel(nowPlayingProvider: nowPlaying)
@@ -91,6 +233,21 @@ final class NotchViewModelProviderTests: XCTestCase {
         XCTAssertEqual(calendar.loadUpcomingEventsCallCount, 1)
         XCTAssertEqual(model.calendarState, calendar.upcomingState)
         XCTAssertEqual(jira.visibilities.last, true)
+    }
+
+    func testSearchDoesNotRequestCalendarAccessWhenCalendarIsHidden() async {
+        let calendar = FakeCalendarProvider()
+        let model = makeModel(
+            calendarProvider: calendar,
+            preferences: MemoryAppPreferences(hiddenPanelIDs: [.calendar])
+        )
+        await settleMainActorTasks()
+
+        model.openUtility(.search)
+        await settleMainActorTasks()
+
+        XCTAssertEqual(model.activeUtility, .search)
+        XCTAssertEqual(calendar.loadUpcomingEventsCallCount, 0)
     }
 
     func testInjectedJiraProviderStateReachesViewModel() {

@@ -25,7 +25,10 @@ let package = Package(
             ],
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
-                .linkedFramework("SceneKit")
+                .linkedFramework("CoreAudio"),
+                .linkedFramework("IOBluetooth"),
+                .linkedFramework("SceneKit"),
+                .linkedFramework("IOKit")
             ]
         ),
         .executableTarget(

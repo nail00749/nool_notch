@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import EventKit
 import Foundation
 import NotchCore
 
@@ -13,8 +14,14 @@ enum NotchTransientSurface: Hashable {
 
 @MainActor
 final class NotchViewModel: ObservableObject {
+    @Published var isCompactHovered = false
+    @Published private(set) var activeUtility: NotchUtilityPanel?
+    @Published var isFileDropTargeted = false
+    @Published private(set) var isChoosingShelfFiles = false
+    let fileShelfStore = FileShelfStore()
     @Published var isExpanded = false {
         didSet {
+            if isExpanded == false { activeUtility = nil }
             updateProviderActivity()
             if isExpanded, oldValue == false {
                 refreshPanelBadges()
@@ -32,6 +39,9 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var selectedAISection: AISection
     @Published private(set) var aiSessions: [AISession] = []
     @Published private(set) var compactAgentSignal: CompactAgentSignal?
+    @Published private(set) var compactMascotPresentation: CompactMascotPresentation?
+    private var compactMascotBatch = CompactMascotBatch()
+    private var compactMascotExpiryTask: Task<Void, Never>?
     @Published private(set) var aiSourceHealth: [String: AISessionSourceHealth] = [:]
     @Published private(set) var aiSessionsUpdatedAt: Date?
     @Published private(set) var respondingAISessionIDs: Set<AISessionID> = []
@@ -51,11 +61,16 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var hiddenQuotaProviderIDs: Set<String>
     @Published private(set) var compactQuotaProviderID: String
     @Published private(set) var calendarState: CalendarLoadState = .idle
+    @Published private(set) var upcomingMeetingReminder: MeetingReminder?
+    private var reminderEvents: [CalendarEvent] = []
+    private var reminderCalendarRefreshAt = Date.distantPast
     @Published private(set) var calendarEventsByMonth: [CalendarMonthKey: [CalendarEvent]] = [:]
     @Published private(set) var loadingCalendarMonth: CalendarMonthKey?
     @Published private(set) var nowPlayingSnapshot: NowPlayingSnapshot?
     @Published private(set) var nowPlayingRequiresAccessibilityAccess = false
     @Published private(set) var nowPlayingDiagnostics = NowPlayingDiagnostics.unavailable
+    @Published private(set) var liveActivities: [LiveActivity] = []
+    @Published private(set) var liveActivitiesUpdatedAt: Date?
     @Published private(set) var jiraState = JiraProviderState()
     @Published private(set) var calendarRefreshedAt: Date?
     @Published private(set) var jiraRefreshedAt: Date?
@@ -65,6 +80,7 @@ final class NotchViewModel: ObservableObject {
     private let preferences: any AppPreferencesStoring
     private let calendarProvider: any CalendarProviding
     private let nowPlayingProvider: any NowPlayingProviding
+    private let liveActivityCenter: LiveActivityCenter
     private let jiraProvider: any JiraProviding
     private let aiSessionStore: AISessionStore
     private let codeReviewProvider: any CodeReviewProviding
@@ -77,6 +93,7 @@ final class NotchViewModel: ObservableObject {
     private var codeReviewPollingTask: Task<Void, Never>?
     private var reviewActivityBaselines: [AISessionID: (requestID: String, ids: Set<String>)] = [:]
     private var hasLoadedCalendar = false
+    private var linkedJiraGeneration: UInt = 0
     private var cancellables = Set<AnyCancellable>()
     private let compactAgentSignalController: CompactAgentSignalController
     let aiSourceNames: [String: String]
@@ -89,6 +106,7 @@ final class NotchViewModel: ObservableObject {
         ],
         calendarProvider: any CalendarProviding = CalendarEventProvider(),
         nowPlayingProvider: any NowPlayingProviding = NowPlayingProvider(),
+        liveActivityCenter: LiveActivityCenter = LiveActivityCenter(),
         jiraProvider: (any JiraProviding)? = nil,
         aiSessionStore: AISessionStore = AISessionStore(sources: []),
         codeReviewProvider: any CodeReviewProviding = LocalCodeReviewProvider(),
@@ -97,6 +115,7 @@ final class NotchViewModel: ObservableObject {
         self.providers = providers
         self.calendarProvider = calendarProvider
         self.nowPlayingProvider = nowPlayingProvider
+        self.liveActivityCenter = liveActivityCenter
         self.preferences = preferences
         self.aiSessionStore = aiSessionStore
         self.codeReviewProvider = codeReviewProvider
@@ -156,6 +175,7 @@ final class NotchViewModel: ObservableObject {
         preferences.compactQuotaProviderID = compactQuotaProviderID
         compactAgentSignalController.onChange = { [weak self] signal in
             self?.compactAgentSignal = signal
+            self?.refreshCompactMascot()
         }
 
         for provider in providers {
@@ -175,11 +195,23 @@ final class NotchViewModel: ObservableObject {
         nowPlayingProvider.onDiagnosticsChange = { [weak self] diagnostics in
             self?.nowPlayingDiagnostics = diagnostics
         }
+        liveActivityCenter.$activities
+            .sink { [weak self] activities in
+                self?.liveActivities = activities
+                self?.refreshCompactMascot()
+            }
+            .store(in: &cancellables)
+        liveActivityCenter.$updatedAt
+            .sink { [weak self] date in self?.liveActivitiesUpdatedAt = date }
+            .store(in: &cancellables)
         self.jiraProvider.onChange = { [weak self] state in
             guard let self else { return }
             let previousList = self.jiraState.list
             let wasConfigured = self.isJiraConnectionConfigured(self.jiraState.connection)
             self.jiraState = state
+            if wasConfigured, self.isJiraConnectionConfigured(state.connection) == false {
+                self.invalidateLinkedJiraIssues()
+            }
             if case .loaded = state.list, state.list != previousList {
                 self.jiraRefreshedAt = .now
             }
@@ -210,7 +242,84 @@ final class NotchViewModel: ObservableObject {
         aiSessionStore.start()
         self.jiraProvider.start()
         nowPlayingProvider.start()
+        liveActivityCenter.start()
+        fileShelfStore.objectWillChange
+            .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &cancellables)
         refresh()
+        startMeetingReminders()
+    }
+
+    var compactMeetingReminder: MeetingReminder? {
+        guard visiblePanels.contains(.calendar),
+              aiSessions.contains(where: { $0.status.needsAttention }) == false else { return nil }
+        return upcomingMeetingReminder
+    }
+
+    var usesWideCompactLayout: Bool {
+        nowPlayingSnapshot?.playbackState.isPlaying == true
+            || compactMeetingReminder != nil || compactTimer != nil
+    }
+
+    var timerSource: NoolTimerSource { liveActivityCenter.timerSource }
+
+    var compactTimer: NoolTimerSnapshot? {
+        guard visiblePanels.contains(.live),
+              aiSessions.contains(where: { $0.status.needsAttention }) == false,
+              let timer = timerSource.snapshot,
+              timer.state == .active || timer.state == .paused else { return nil }
+        return timer
+    }
+
+    func openTimer() {
+        selectPanel(.live)
+        isExpanded = true
+    }
+
+    private func startMeetingReminders() {
+        refreshMeetingReminderCalendar()
+        Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+            .sink { [weak self] date in
+                guard let self else { return }
+                self.updateMeetingReminder(at: date)
+                if date.timeIntervalSince(self.reminderCalendarRefreshAt) >= 60 {
+                    self.refreshMeetingReminderCalendar()
+                }
+            }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .EKEventStoreChanged)
+            .debounce(for: .seconds(1), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.refreshMeetingReminderCalendar() }
+            .store(in: &cancellables)
+        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.refreshMeetingReminderCalendar() }
+            .store(in: &cancellables)
+    }
+
+    private func refreshMeetingReminderCalendar() {
+        reminderCalendarRefreshAt = .now
+        guard visiblePanels.contains(.calendar), calendarProvider.canLoadWithoutPrompt else {
+            if visiblePanels.contains(.calendar) == false {
+                calendarTask?.cancel()
+                calendarTask = nil
+            }
+            reminderEvents = []
+            upcomingMeetingReminder = nil
+            return
+        }
+        guard calendarTask == nil else { return }
+        refreshCalendar(inBackground: true)
+    }
+
+    private func updateMeetingReminder(at date: Date) {
+        let reminder = MeetingReminder.select(from: reminderEvents, at: date)
+        if upcomingMeetingReminder != reminder { upcomingMeetingReminder = reminder }
+    }
+
+    func openReminderCalendar() {
+        selectPanel(.calendar)
+        isExpanded = true
     }
 
     func snapshot(for providerID: String) -> QuotaSnapshot? {
@@ -281,6 +390,7 @@ final class NotchViewModel: ObservableObject {
 
     func selectPanel(_ panel: PanelID) {
         guard visiblePanels.contains(panel) else { return }
+        activeUtility = nil
         selectedPanel = panel
         preferences.lastSelectedPanel = panel
         updateProviderActivity()
@@ -409,6 +519,48 @@ final class NotchViewModel: ObservableObject {
         visiblePanels.contains(.ai) ? compactAgentSignal : nil
     }
 
+    var primaryLiveActivity: LiveActivity? {
+        guard visiblePanels.contains(.live) else { return nil }
+        return LiveActivityFeed.primaryCompactActivity(in: liveActivities)
+    }
+
+    var compactMascotNotice: CompactMascotNotice? {
+        compactMascotPresentation?.notice
+    }
+
+    private func refreshCompactMascot() {
+        let now = Date()
+        var candidates: [CompactMascotNotice] = []
+        if visiblePanels.contains(.live) {
+            candidates += liveActivities.filter { $0.showsNotificationMascot(at: now) }
+                .map(CompactMascotNotice.live)
+        }
+        if let signal = visibleCompactAgentSignal {
+            candidates.append(.agent(signal))
+        }
+        let previousID = compactMascotPresentation?.id
+        compactMascotBatch.update(candidates, at: now)
+        compactMascotPresentation = compactMascotBatch.presentation
+        guard previousID != compactMascotPresentation?.id else { return }
+        compactMascotExpiryTask?.cancel()
+        compactMascotExpiryTask = nil
+        if let presentation = compactMascotPresentation {
+            compactMascotExpiryTask = Task { @MainActor [weak self] in
+                do {
+                    try await Task.sleep(for: .seconds(max(0, presentation.expiresAt.timeIntervalSinceNow)))
+                } catch { return }
+                guard Task.isCancelled == false else { return }
+                self?.refreshCompactMascot()
+            }
+        }
+    }
+
+    func prepareToOpenPrimaryLiveActivity() {
+        guard primaryLiveActivity != nil else { return }
+        cancelScheduledCollapse()
+        selectPanel(.live)
+    }
+
     func openCompactAgentSessions() {
         guard let signal = visibleCompactAgentSignal else { return }
         compactAgentSignalController.acknowledge(signal)
@@ -416,6 +568,17 @@ final class NotchViewModel: ObservableObject {
         selectPanel(.ai)
         selectAISection(.sessions)
         isExpanded = true
+    }
+
+    func openCompactMascotNotice(_ notice: CompactMascotNotice) {
+        switch notice {
+        case .agent:
+            openCompactAgentSessions()
+        case .live:
+            cancelScheduledCollapse()
+            selectPanel(.live)
+            isExpanded = true
+        }
     }
 
     func canHidePanel(_ panel: PanelID) -> Bool {
@@ -438,6 +601,8 @@ final class NotchViewModel: ObservableObject {
             }
         }
         preferences.hiddenPanelIDs = hiddenPanelIDs
+        if panel == .calendar { refreshMeetingReminderCalendar() }
+        refreshCompactMascot()
         updateProviderActivity()
     }
 
@@ -473,6 +638,8 @@ final class NotchViewModel: ObservableObject {
                 .filter { $0.connection != .unavailable }
                 .map(\.updatedAt)
                 .max()
+        case .live:
+            return liveActivitiesUpdatedAt
         case .calendar:
             return calendarRefreshedAt
         case .music:
@@ -496,6 +663,8 @@ final class NotchViewModel: ObservableObject {
                 .flatMap(\.windows)
                 .filter { ($0.remainingRatio ?? 1) < 0.2 }
                 .count
+        case .live:
+            return liveActivities.filter { $0.state != .completed }.count
         case .calendar:
             guard case .loaded(let snapshot) = calendarState else { return 0 }
             return snapshot.upcomingEvents.filter {
@@ -553,6 +722,57 @@ final class NotchViewModel: ObservableObject {
 
     var isTransientSurfaceVisible: Bool {
         isContextMenuVisible || activeTransientSurfaces.isEmpty == false
+            || activeUtility == .search || isFileDropTargeted
+            || fileShelfStore.isImporting || isChoosingShelfFiles
+    }
+
+    func openUtility(_ utility: NotchUtilityPanel) {
+        cancelScheduledCollapse()
+        activeUtility = utility
+        isExpanded = true
+    }
+
+    func closeUtility() { activeUtility = nil }
+
+    func acceptShelfDrop(_ providers: [NSItemProvider]) -> Bool {
+        let accepted = fileShelfStore.acceptDrop(providers: providers)
+        if accepted { openUtility(.files) }
+        return accepted
+    }
+
+    func chooseShelfFiles() {
+        cancelScheduledCollapse()
+        isChoosingShelfFiles = true
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = true
+        panel.prompt = "На полку"
+        panel.begin { [weak self] response in
+            Task { @MainActor in
+                guard let self else { return }
+                if response == .OK { self.fileShelfStore.add(urls: panel.urls) }
+                self.isChoosingShelfFiles = false
+            }
+        }
+    }
+
+    func searchResults(query: String) -> [UnifiedSearchResult] {
+        var issues: [JiraIssue]
+        switch jiraState.list {
+        case .loaded(let loaded, _): issues = loaded
+        case .loading(let previous), .failed(_, let previous): issues = previous ?? []
+        case .idle: issues = []
+        }
+        issues += jiraState.pinned.sourceStates.values.flatMap(\.issues)
+        issues += Array(aiLinkedJiraIssues.values)
+        var events = calendarEventsByMonth.values.flatMap { $0 }
+        if case .loaded(let snapshot) = calendarState { events += snapshot.upcomingEvents }
+        return UnifiedSearch.results(query: query, issues: issues, sessions: aiSessions, events: events)
+    }
+
+    func openMeetingURL(_ url: URL) {
+        guard url.scheme?.lowercased() == "https" else { return }
+        NSWorkspace.shared.open(url)
     }
 
     func transientSurfaceDidPresent(_ surface: NotchTransientSurface) {
@@ -608,22 +828,30 @@ final class NotchViewModel: ObservableObject {
         refreshCalendar()
     }
 
-    func refreshCalendar() {
+    func refreshCalendar() { refreshCalendar(inBackground: false) }
+
+    private func refreshCalendar(inBackground: Bool) {
         hasLoadedCalendar = true
         calendarTask?.cancel()
-        calendarMonthTask?.cancel()
-        calendarEventsByMonth.removeAll()
-        loadingCalendarMonth = nil
-        calendarState = .loading
+        if inBackground == false {
+            calendarMonthTask?.cancel()
+            calendarEventsByMonth.removeAll()
+            loadingCalendarMonth = nil
+            calendarState = .loading
+        }
         calendarTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let state = await self.calendarProvider.loadUpcomingEvents()
             guard Task.isCancelled == false else { return }
             self.calendarState = state
             if case .loaded(let snapshot) = state {
+                self.reminderEvents = snapshot.upcomingEvents
                 self.calendarEventsByMonth[CalendarMonthKey(date: Date())] = snapshot.monthEvents
                 self.calendarRefreshedAt = .now
+            } else {
+                self.reminderEvents = []
             }
+            self.updateMeetingReminder(at: .now)
             self.calendarTask = nil
         }
     }
@@ -667,10 +895,17 @@ final class NotchViewModel: ObservableObject {
         baseURLText: String,
         token: String
     ) async -> Result<JiraUser, JiraAPIError> {
-        await jiraProvider.connect(baseURLText: baseURLText, token: token)
+        let result = await jiraProvider.connect(baseURLText: baseURLText, token: token)
+        if case .success = result {
+            // A reconnect can change the server/token without changing the displayed user.
+            invalidateLinkedJiraIssues()
+            loadMissingAISessionJiraIssues(retryingFailures: true)
+        }
+        return result
     }
 
     func disconnectJira() {
+        invalidateLinkedJiraIssues()
         jiraProvider.disconnect()
     }
 
@@ -814,12 +1049,23 @@ final class NotchViewModel: ObservableObject {
     }
 
     private func loadMissingAISessionJiraIssues(retryingFailures: Bool) {
+        let generation = linkedJiraGeneration
         for key in Set(aiJiraIssueKeys.values) {
             guard aiLinkedJiraIssues[key] == nil,
                   aiLinkedJiraLoadingKeys.contains(key) == false,
                   retryingFailures || aiLinkedJiraErrors[key] == nil else { continue }
-            Task { await loadLinkedJiraIssue(key: key, force: retryingFailures) }
+            Task {
+                guard generation == linkedJiraGeneration else { return }
+                await loadLinkedJiraIssue(key: key, force: retryingFailures)
+            }
         }
+    }
+
+    private func invalidateLinkedJiraIssues() {
+        linkedJiraGeneration &+= 1
+        aiLinkedJiraIssues.removeAll()
+        aiLinkedJiraErrors.removeAll()
+        aiLinkedJiraLoadingKeys.removeAll()
     }
 
     private func loadLinkedJiraIssue(key: String, force: Bool) async {
@@ -827,8 +1073,11 @@ final class NotchViewModel: ObservableObject {
               aiLinkedJiraLoadingKeys.contains(key) == false else { return }
         aiLinkedJiraLoadingKeys.insert(key)
         aiLinkedJiraErrors.removeValue(forKey: key)
+        let generation = linkedJiraGeneration
         let result = await jiraProvider.issue(key: key)
+        guard generation == linkedJiraGeneration else { return }
         aiLinkedJiraLoadingKeys.remove(key)
+        guard aiJiraIssueKeys.values.contains(key) else { return }
         switch result {
         case .success(let issue):
             aiLinkedJiraIssues[key] = issue

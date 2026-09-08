@@ -58,6 +58,15 @@ Ad-hoc переподпись может сбросить Accessibility trust. �
 - `Sources/NotchApp/JiraCredentialStore.swift` — Jira-токен в Keychain.
 - `Sources/NotchApp/NowPlayingProvider.swift` и
   `AccessibilityNowPlayingSource.swift` — метаданные и fallback плеера.
+- `Sources/NotchApp/LiveActivityCenter.swift` и `LiveActivityModels.swift` —
+  source-neutral агрегация Live Activities и приоритет compact-индикатора.
+- `Sources/NotchApp/SystemBatteryActivitySource.swift` — публичный системный
+  источник состояния батареи Mac.
+- `BluetoothAudioActivitySource.swift`, `SystemCallActivitySource.swift` и
+  `SystemDownloadActivitySource.swift` — системные источники Bluetooth-аудио,
+  активного microphone input и незавершённых файлов Downloads.
+- `ExternalLiveActivitySource.swift` — read-only JSON bridge для источников без
+  публичного macOS API, например доставок и внешних таймеров.
 - `Tests/NotchAppTests` — provider, client, model и interaction tests.
 - `Tests/Signing` — shell-проверки signing script.
 - `CHANGELOG.md` — пользовательские изменения в `Unreleased` и по версиям.
@@ -132,6 +141,20 @@ PR/CI не хранит и не логирует forge credentials. Для GitHu
   `nool-agent-bridge`.
 - После изменений проверяй отдельно read-only discovery, blocking approval и
   fallback при закрытом Nool: сбой bridge не должен блокировать CLI навсегда.
+
+### Live Activities
+
+- Системные источники реализуют `LiveActivitySource`; SwiftUI не опрашивает ОС
+  и файловую систему напрямую.
+- Новый системный старт или финиш показывает маскота не дольше 12 секунд.
+  Активный звонок, загрузка или таймер может оставаться в compact-индикаторе,
+  но не должен бесконечно поддерживать анимацию маскота.
+- Не читай Notification Center других приложений и не добавляй private API.
+  Для доставки и внешних таймеров используй только локальный JSON bridge.
+- Bluetooth discovery выполняй через public connect/disconnect notifications;
+  редкую reconciliation-проверку запускай вне main actor и с timeout.
+  Синхронный `IOBluetoothDevice.pairedDevices()` может заблокировать UI и
+  тестовый runner.
 
 ## Рабочий процесс
 

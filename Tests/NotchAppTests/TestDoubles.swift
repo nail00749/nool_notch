@@ -454,6 +454,7 @@ extension JiraSearchPage {
 @MainActor
 final class FakeJiraProvider: JiraProviding {
     var onChange: ((JiraProviderState) -> Void)?
+    var issueLoader: ((String) async -> Result<JiraIssue, JiraAPIError>)?
     var checkResult: Result<JiraUser, JiraAPIError> = .success(
         .fixture(displayName: "Checked User")
     )
@@ -530,7 +531,8 @@ final class FakeJiraProvider: JiraProviding {
     func refreshPinnedSource() {}
 
     func issue(key: String) async -> Result<JiraIssue, JiraAPIError> {
-        .failure(.notConfigured)
+        if let issueLoader { return await issueLoader(key) }
+        return .failure(.notConfigured)
     }
 
     func loadTransitions(for issueKey: String) async {
@@ -572,12 +574,15 @@ final class FakeJiraProvider: JiraProviding {
 
 @MainActor
 final class FakeCalendarProvider: CalendarProviding {
+    var canLoadWithoutPrompt = false
+    var upcomingLoader: (() async -> CalendarLoadState)?
     var upcomingState: CalendarLoadState = .idle
     var eventsByMonth: [CalendarMonthKey: [CalendarEvent]] = [:]
     private(set) var loadUpcomingEventsCallCount = 0
 
     func loadUpcomingEvents() async -> CalendarLoadState {
         loadUpcomingEventsCallCount += 1
+        if let upcomingLoader { return await upcomingLoader() }
         return upcomingState
     }
 

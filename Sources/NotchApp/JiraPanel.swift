@@ -1297,16 +1297,18 @@ private struct JiraIssueRow: View {
     }
 }
 
-private struct JiraDurationWheel: View {
+struct JiraDurationWheel: View {
     let title: String
     let unit: String
     let values: [Int]
     @Binding var selection: Int
+    var rowHeight: CGFloat = 40
+    var accentColor: Color = .signalMint
+    var valueFontSize: CGFloat = 15
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scrollPosition: Int?
 
-    private let rowHeight: CGFloat = 40
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1316,10 +1318,10 @@ private struct JiraDurationWheel: View {
 
             ZStack {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(Color.signalMint.opacity(0.12))
+                    .fill(accentColor.opacity(0.12))
                     .overlay {
                         RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .stroke(Color.signalMint.opacity(0.18), lineWidth: 1)
+                            .stroke(accentColor.opacity(0.18), lineWidth: 1)
                     }
                     .frame(height: rowHeight)
 
@@ -1336,7 +1338,7 @@ private struct JiraDurationWheel: View {
                                         .font(.system(size: 9, weight: .semibold, design: .rounded))
                                         .foregroundStyle(.secondary)
                                 }
-                                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                .font(.system(size: valueFontSize, weight: .semibold, design: .rounded))
                                 .foregroundStyle(value == selection ? .primary : .secondary)
                                 .opacity(value == selection ? 1 : 0.42)
                                 .scaleEffect(value == selection ? 1 : 0.88)

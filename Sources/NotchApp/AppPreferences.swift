@@ -26,7 +26,7 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
         "ollama-cloud"
     ]
     static let defaultHoverExpansionDelay: TimeInterval = 0.5
-    static let hoverExpansionDelayKey = "interaction.hoverExpansionDelay"
+    static let hoverExpansionDelayKey = "interaction.hoverExpansionDelay.v2"
     static let lastSelectedPanelKey = "navigation.lastSelectedPanel"
     static let panelOrderKey = "navigation.panelOrder"
     static let hiddenPanelIDsKey = "navigation.hiddenPanelIDs"
@@ -51,6 +51,11 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
     var hoverExpansionDelay: TimeInterval {
         get {
             guard defaults.object(forKey: Self.hoverExpansionDelayKey) != nil else {
+                if defaults.object(forKey: "interaction.hoverExpansionDelay") != nil {
+                    let legacy = defaults.double(forKey: "interaction.hoverExpansionDelay")
+                    // Zero previously meant immediate expansion, not disabled.
+                    return legacy <= 0 ? 1 : max(0.5, Self.clampedDelay(legacy))
+                }
                 return Self.defaultHoverExpansionDelay
             }
             return Self.clampedDelay(defaults.double(forKey: Self.hoverExpansionDelayKey))
@@ -207,7 +212,7 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
 
     private static func clampedDelay(_ value: TimeInterval) -> TimeInterval {
         guard value.isFinite else { return defaultHoverExpansionDelay }
-        return min(1, max(0, value))
+        return (min(1.5, max(0, value)) * 2).rounded() / 2
     }
 
     private static func normalizedPanelOrder(_ panels: [PanelID]) -> [PanelID] {

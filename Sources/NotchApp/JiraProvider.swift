@@ -31,6 +31,7 @@ final class JiraProvider: JiraProviding {
     private var pinnedSourceTask: Task<Void, Never>?
     private var pinnedCatalogGeneration: UInt = 0
     private var pinnedSourceGeneration: UInt = 0
+    private var pendingPinIssueKeys: Set<String> = []
 
     init(
         client: JiraClientProtocol,
@@ -188,6 +189,10 @@ final class JiraProvider: JiraProviding {
         cancelPinnedTasks()
 
         preferences.jiraBaseURLString = baseURLText
+        state.projects = []
+        state.list = .idle
+        state.transitionsByIssueKey = [:]
+        state.pinned.pinIssueError = nil
         state.selectedProjectKeys = preferences.jiraSelectedProjectKeys
         state.connection = .connected(user)
         publish()
@@ -343,6 +348,8 @@ final class JiraProvider: JiraProviding {
             return
         }
 
+        guard pendingPinIssueKeys.insert(normalizedKey).inserted else { return }
+        let lifecycle = lifecycleGeneration
         state.pinned.isPinningIssue = true
         state.pinned.pinIssueError = nil
         publish()
@@ -352,17 +359,25 @@ final class JiraProvider: JiraProviding {
                 token: configuration.token,
                 issueKey: normalizedKey
             )
+            guard lifecycleGeneration == lifecycle,
+                  pendingPinIssueKeys.contains(normalizedKey) else { return }
             let pin = JiraPinnedIssue(key: issue.key, summary: issue.summary)
-            state.pinned.issues.append(pin)
+            if state.pinned.issues.contains(where: { $0.key == pin.key }) == false {
+                state.pinned.issues.append(pin)
+            }
             preferences.jiraPinnedIssues = state.pinned.issues
             state.pinned.selectedSource = .issues
             state.pinned.sourceStates[.issues] = .idle
-            state.pinned.isPinningIssue = false
+            pendingPinIssueKeys.remove(normalizedKey)
+            state.pinned.isPinningIssue = pendingPinIssueKeys.isEmpty == false
             publish()
             loadPinnedSource(.issues, force: true)
         } catch {
             let normalized = Self.normalizedError(error)
-            state.pinned.isPinningIssue = false
+            guard lifecycleGeneration == lifecycle,
+                  pendingPinIssueKeys.contains(normalizedKey) else { return }
+            pendingPinIssueKeys.remove(normalizedKey)
+            state.pinned.isPinningIssue = pendingPinIssueKeys.isEmpty == false
             state.pinned.pinIssueError = normalized
             invalidateAuthorizationIfNeeded(normalized)
             publish()
@@ -686,6 +701,7 @@ final class JiraProvider: JiraProviding {
     func issue(key: String) async -> Result<JiraIssue, JiraAPIError> {
         let normalizedKey = key.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard normalizedKey.isEmpty == false else { return .failure(.invalidResponse) }
+        let lifecycle = lifecycleGeneration
 
         let configuration: (baseURL: URL, token: String)
         do {
@@ -698,13 +714,16 @@ final class JiraProvider: JiraProviding {
         }
 
         do {
-            return .success(try await client.issue(
+            let issue = try await client.issue(
                 baseURL: configuration.baseURL,
                 token: configuration.token,
                 issueKey: normalizedKey
-            ))
+            )
+            guard lifecycleGeneration == lifecycle else { return .failure(.network) }
+            return .success(issue)
         } catch {
             let normalized = Self.normalizedError(error)
+            guard lifecycleGeneration == lifecycle else { return .failure(normalized) }
             invalidateAuthorizationIfNeeded(normalized)
             publish()
             return .failure(normalized)
@@ -905,6 +924,8 @@ final class JiraProvider: JiraProviding {
 
     private func cancelTransitionTasks() {
         lifecycleGeneration &+= 1
+        pendingPinIssueKeys.removeAll()
+        state.pinned.isPinningIssue = false
         for task in transitionTasks.values {
             task.cancel()
         }

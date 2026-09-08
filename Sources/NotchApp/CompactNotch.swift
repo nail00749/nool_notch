@@ -14,34 +14,44 @@ struct CompactNotch: View {
     let onExpand: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var presentedAgentSignal: CompactAgentSignal?
+    @State private var presentedMascotNotice: CompactMascotNotice?
     @State private var mascotPresentationTask: Task<Void, Never>?
 
     private var isPlaying: Bool {
         model.nowPlayingSnapshot?.playbackState.isPlaying == true
     }
 
-    private var compactAgentSignal: CompactAgentSignal? {
-        model.visibleCompactAgentSignal
+    private var usesWideLayout: Bool {
+        model.usesWideCompactLayout
+    }
+
+    private var mascotNotice: CompactMascotNotice? {
+        model.compactMascotNotice
+    }
+
+    private var primaryLiveActivity: LiveActivity? {
+        model.primaryLiveActivity
     }
 
     private var baseCompactSize: CGSize {
         NotchLayout.compactSize(
-            isPlaying: isPlaying,
-            compactHeight: visualSettings.compactHeight
+            isPlaying: usesWideLayout,
+            compactHeight: visualSettings.compactHeight,
+            isHovered: model.isCompactHovered
         )
     }
 
     private var compactSize: CGSize {
         NotchLayout.compactSize(
-            isPlaying: isPlaying,
+            isPlaying: usesWideLayout,
             compactHeight: visualSettings.compactHeight,
-            showsAgentMascot: compactAgentSignal != nil
+            showsAgentMascot: mascotNotice != nil,
+            isHovered: model.isCompactHovered
         )
     }
 
     private var leadingMascotExtension: CGFloat {
-        compactAgentSignal == nil ? 0 : NotchLayout.compactAgentMascotLaneWidth
+        mascotNotice == nil ? 0 : NotchLayout.compactAgentMascotLaneWidth
     }
 
     private var mascotLayoutAnimation: Animation {
@@ -64,9 +74,9 @@ struct CompactNotch: View {
                         alignment: .topTrailing
                     )
 
-                if let presentedAgentSignal {
-                    Button(action: model.openCompactAgentSessions) {
-                        CompactAgentMascot(signal: presentedAgentSignal)
+                if let presentedMascotNotice {
+                    Button(action: { model.openCompactMascotNotice(presentedMascotNotice) }) {
+                        mascotView(for: presentedMascotNotice)
                             .frame(width: 46, height: 52)
                     }
                     .buttonStyle(NotchButtonStyle())
@@ -76,14 +86,14 @@ struct CompactNotch: View {
                         alignment: .top
                     )
                     .accessibilityLabel(
-                        "\(presentedAgentSignal.kind.compactMascotAccessibilityLabel). Открыть AI-сессии"
+                        accessibilityLabel(for: presentedMascotNotice)
                     )
-                    .accessibilityHint("Открывает Agent Inbox в панели AI")
+                    .accessibilityHint("Открывает связанную панель")
                     .transition(
                         .scale(scale: 0.25, anchor: .topLeading)
                             .combined(with: .opacity)
                     )
-                } else if compactAgentSignal != nil {
+                } else if mascotNotice != nil {
                     Color.clear
                         .frame(
                             width: NotchLayout.compactAgentMascotLaneWidth,
@@ -98,12 +108,17 @@ struct CompactNotch: View {
             height: compactSize.height,
             alignment: .top
         )
-        .animation(mascotLayoutAnimation, value: compactAgentSignal?.id)
+        .animation(mascotLayoutAnimation, value: mascotNotice?.id)
         .onAppear {
-            scheduleMascotPresentation(for: compactAgentSignal)
+            scheduleMascotPresentation(for: mascotNotice)
         }
-        .onChange(of: compactAgentSignal?.id) { _, _ in
-            scheduleMascotPresentation(for: compactAgentSignal)
+        .onChange(of: model.compactMascotPresentation?.id) { _, _ in
+            scheduleMascotPresentation(for: mascotNotice)
+        }
+        .onChange(of: mascotNotice) { _, notice in
+            if presentedMascotNotice != nil, notice != nil {
+                presentedMascotNotice = notice
+            }
         }
         .onDisappear {
             mascotPresentationTask?.cancel()
@@ -111,37 +126,39 @@ struct CompactNotch: View {
         }
     }
 
-    private func scheduleMascotPresentation(for signal: CompactAgentSignal?) {
+    private func scheduleMascotPresentation(for notice: CompactMascotNotice?) {
         mascotPresentationTask?.cancel()
         mascotPresentationTask = nil
 
-        guard let signal else {
+        guard notice != nil else {
             withAnimation(mascotContentAnimation) {
-                presentedAgentSignal = nil
+                presentedMascotNotice = nil
             }
             return
         }
 
-        presentedAgentSignal = nil
+        presentedMascotNotice = nil
+        let presentationID = model.compactMascotPresentation?.id
         mascotPresentationTask = Task { @MainActor in
             let delay = reduceMotion ? 0.02 : NotchMotion.compactResizeDuration + 0.04
             try? await Task.sleep(for: .seconds(delay))
             guard Task.isCancelled == false,
-                  model.visibleCompactAgentSignal?.id == signal.id else { return }
+                  model.compactMascotPresentation?.id == presentationID,
+                  let latestNotice = model.compactMascotNotice else { return }
 
             withAnimation(mascotContentAnimation) {
-                presentedAgentSignal = signal
+                presentedMascotNotice = latestNotice
             }
             mascotPresentationTask = nil
         }
     }
 
     private var compactSurface: some View {
-        Color.black
+        Color.clear
             .frame(
                 width: compactSize.width,
-                height: compactAgentSignal == nil
-                    ? visualSettings.compactHeight
+                height: mascotNotice == nil
+                    ? visualSettings.compactHeight + (model.isCompactHovered ? 6 : 0)
                     : compactSize.height
             )
             .clipShape(
@@ -171,7 +188,7 @@ struct CompactNotch: View {
             .compositingGroup()
             .animation(
                 reduceMotion ? .linear(duration: 0.01) : .easeInOut(duration: 0.30),
-                value: isPlaying
+                value: usesWideLayout
             )
             .animation(
                 reduceMotion ? .linear(duration: 0.01) : .easeInOut(duration: 0.24),
@@ -180,19 +197,58 @@ struct CompactNotch: View {
             .allowsHitTesting(false)
     }
 
+    private func mascotView(for notice: CompactMascotNotice) -> some View {
+        CompactNoticeMascot(notice: notice)
+    }
+
+    private func accessibilityLabel(for notice: CompactMascotNotice) -> String {
+        switch notice {
+        case .agent(let signal):
+            return "\(signal.kind.compactMascotAccessibilityLabel). Открыть AI-сессии"
+        case .live(let activity):
+            return "\(activity.title). \(activity.detail ?? "Системное событие"). Открыть Live"
+        }
+    }
+
     private var notchButton: some View {
-        Button(action: onExpand) {
+        Group {
+            if let reminder = model.compactMeetingReminder {
+                CompactMeetingReminderView(
+                    reminder: reminder,
+                    physicalNotchSize: NotchLayout.physicalNotchSize,
+                    onOpenCalendar: model.openReminderCalendar,
+                    onJoin: model.openMeetingURL
+                )
+                .frame(width: baseCompactSize.width,
+                       height: visualSettings.compactHeight + (model.isCompactHovered ? 6 : 0))
+                .frame(width: baseCompactSize.width + leadingMascotExtension, alignment: .trailing)
+            } else if let timer = model.compactTimer {
+                CompactTimerView(timer: timer,
+                    physicalNotchSize: NotchLayout.physicalNotchSize,
+                    onOpen: model.openTimer, onToggle: model.timerSource.toggle)
+                    .frame(width: baseCompactSize.width,
+                           height: visualSettings.compactHeight + (model.isCompactHovered ? 6 : 0))
+                    .frame(width: baseCompactSize.width + leadingMascotExtension, alignment: .trailing)
+            } else {
+                defaultNotchButton
+            }
+        }
+    }
+
+    private var defaultNotchButton: some View {
+        Button(action: openCompactContent) {
             compactContent
                 .frame(
                     width: baseCompactSize.width,
-                    height: visualSettings.compactHeight
+                    height: visualSettings.compactHeight + (model.isCompactHovered ? 6 : 0)
                 )
                 .frame(
                     width: baseCompactSize.width + leadingMascotExtension,
                     alignment: .trailing
                 )
+                .contentShape(Rectangle())
         }
-        .buttonStyle(NotchButtonStyle())
+        .buttonStyle(.plain)
         .frame(
             width: baseCompactSize.width + leadingMascotExtension,
             height: baseCompactSize.height,
@@ -243,6 +299,13 @@ struct CompactNotch: View {
                 }
             }
         }
+    }
+
+    private func openCompactContent() {
+        if primaryLiveActivity != nil {
+            model.prepareToOpenPrimaryLiveActivity()
+        }
+        onExpand()
     }
 
     @ViewBuilder

@@ -141,6 +141,26 @@ final class NotchInteractionTests: XCTestCase {
         XCTAssertEqual(metrics.expandedCalendarSize, CGSize(width: 500, height: 460))
     }
 
+    func testHoverOnlyEnlargesCompactGeometryAndDoesNotChangeExpandedGeometry() {
+        let metrics = NotchLayoutMetrics(physicalNotchSize: .zero)
+        let idle = metrics.compactSize(isPlaying: false)
+        let hovered = metrics.compactSize(isPlaying: false, isHovered: true)
+        XCTAssertEqual(hovered.width - idle.width, 24)
+        XCTAssertEqual(hovered.height - idle.height, 6)
+        let window = NotchWindowSizingPolicy.compactInteractionSize(
+            metrics: metrics, isPlaying: false, isHovered: true
+        )
+        XCTAssertGreaterThan(window.width, hovered.width)
+        XCTAssertGreaterThan(window.height, hovered.height)
+        XCTAssertEqual(
+            NotchWindowSizingPolicy.size(
+                metrics: metrics, isExpanded: true, selectedPanel: .music,
+                calendarViewMode: .month, isShowingSettings: false, isHovered: true
+            ),
+            metrics.expandedMusicSize
+        )
+    }
+
     func testPersistentRootHoverPolicyOwnsOpenAndCloseActions() {
         XCTAssertEqual(
             NotchHoverPolicy.action(
@@ -149,7 +169,7 @@ final class NotchInteractionTests: XCTestCase {
                 hoverExpansionEnabled: true,
                 isContextMenuVisible: false
             ),
-            .expand
+            .none
         )
         XCTAssertEqual(
             NotchHoverPolicy.action(
@@ -259,7 +279,7 @@ final class NotchInteractionTests: XCTestCase {
         )
         XCTAssertEqual(
             NotchHoverPolicy.expansionDelay(configuredDelay: 2),
-            1,
+            1.5,
             accuracy: 0.001
         )
     }

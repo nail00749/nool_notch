@@ -9,6 +9,73 @@ struct CalendarEvent: Identifiable, Equatable, Sendable {
     let endDate: Date
     let isAllDay: Bool
     let calendarTitle: String
+    let joinURL: URL?
+
+    init(
+        id: String,
+        title: String,
+        startDate: Date,
+        endDate: Date,
+        isAllDay: Bool,
+        calendarTitle: String,
+        joinURL: URL? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.startDate = startDate
+        self.endDate = endDate
+        self.isAllDay = isAllDay
+        self.calendarTitle = calendarTitle
+        self.joinURL = joinURL
+    }
+}
+
+enum CalendarConferenceLinkResolver {
+    private static let supportedDomains: Set<String> = [
+        "zoom.us",
+        "meet.google.com",
+        "teams.microsoft.com",
+        "teams.live.com",
+        "teams.cloud.microsoft",
+        "webex.com",
+        "gotomeet.me",
+        "whereby.com",
+        "meet.jit.si"
+    ]
+
+    static func joinURL(
+        eventURL: URL?,
+        location: String?,
+        notes: String?
+    ) -> URL? {
+        let candidates = [eventURL].compactMap { $0 }
+            + urls(in: location)
+            + urls(in: notes)
+
+        return candidates.first(where: isSupportedConferenceURL)
+    }
+
+    private static func urls(in text: String?) -> [URL] {
+        guard let text, text.isEmpty == false,
+              let detector = try? NSDataDetector(
+                types: NSTextCheckingResult.CheckingType.link.rawValue
+              ) else {
+            return []
+        }
+
+        let range = NSRange(text.startIndex..., in: text)
+        return detector.matches(in: text, range: range).compactMap(\.url)
+    }
+
+    private static func isSupportedConferenceURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased() else {
+            return false
+        }
+
+        return supportedDomains.contains(host)
+            || supportedDomains.contains { host.hasSuffix(".\($0)") }
+    }
 }
 
 struct CalendarSnapshot: Equatable, Sendable {
@@ -67,6 +134,10 @@ private final class CalendarAccessRequest {
 final class CalendarEventProvider: CalendarProviding {
     private let store = EKEventStore()
 
+    var canLoadWithoutPrompt: Bool {
+        EKEventStore.authorizationStatus(for: .event) == .fullAccess
+    }
+
     func loadUpcomingEvents() async -> CalendarLoadState {
         guard await hasFullAccess() else {
             return .denied
@@ -80,11 +151,10 @@ final class CalendarEventProvider: CalendarProviding {
         let month = CalendarMonthKey(date: startDate)
         let upcomingEvents = events(from: startDate, to: endDate)
             .sorted { $0.startDate < $1.startDate }
-            .prefix(5)
 
         return .loaded(
             CalendarSnapshot(
-                upcomingEvents: Array(upcomingEvents),
+                upcomingEvents: upcomingEvents,
                 monthEvents: events(from: month.startDate, to: month.endDate)
             )
         )
@@ -118,7 +188,12 @@ final class CalendarEventProvider: CalendarProviding {
                     startDate: event.startDate,
                     endDate: event.endDate,
                     isAllDay: event.isAllDay,
-                    calendarTitle: event.calendar.title
+                    calendarTitle: event.calendar.title,
+                    joinURL: CalendarConferenceLinkResolver.joinURL(
+                        eventURL: event.url,
+                        location: event.location,
+                        notes: event.notes
+                    )
                 )
             }
     }

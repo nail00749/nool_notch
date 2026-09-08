@@ -59,7 +59,8 @@ private struct CalendarPanelContent: View {
                 CalendarEventsList(
                     events: snapshot.upcomingEvents,
                     viewMode: $model.calendarViewMode,
-                    onRefresh: model.refreshCalendar
+                    onRefresh: model.refreshCalendar,
+                    onJoin: model.openMeetingURL
                 )
             case .month:
                 CalendarMonthView(
@@ -416,6 +417,7 @@ private struct CalendarEventsList: View {
     let events: [CalendarEvent]
     @Binding var viewMode: CalendarViewMode
     let onRefresh: () -> Void
+    let onJoin: (URL) -> Void
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
@@ -438,6 +440,8 @@ private struct CalendarEventsList: View {
                     .foregroundStyle(.white.opacity(0.64))
                     .accessibilityLabel("Обновить календарь")
                 }
+
+                UpcomingMeetingCard(events: events, onJoin: onJoin)
 
                 if events.isEmpty {
                     CalendarMessagePanel(

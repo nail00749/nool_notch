@@ -4,54 +4,6 @@ import XCTest
 @testable import NotchApp
 
 final class CodexDesktopSessionTests: XCTestCase {
-    func testJSONRPCParserBuffersPartialLines() {
-        var buffer = Data(#"{"method":"thread/status/changed","params":{"threadId":"a"}}"#.utf8)
-        XCTAssertTrue(CodexAppServerClient.drainMessages(buffer: &buffer).isEmpty)
-
-        buffer.append(0x0A)
-        buffer.append(Data(#"{"method":"thread/closed","params":{"threadId":"b"}}"#.utf8))
-        let first = CodexAppServerClient.drainMessages(buffer: &buffer)
-
-        XCTAssertEqual(first.map(\.method), ["thread/status/changed"])
-        XCTAssertFalse(buffer.isEmpty)
-
-        buffer.append(0x0A)
-        XCTAssertEqual(CodexAppServerClient.drainMessages(buffer: &buffer).map(\.method), ["thread/closed"])
-        XCTAssertTrue(buffer.isEmpty)
-    }
-
-    func testJSONRPCParserPreservesStringRequestID() {
-        var buffer = Data(#"{"id":"approval-1","method":"item/commandExecution/requestApproval","params":{"threadId":"thread"}}"#.utf8)
-        buffer.append(0x0A)
-
-        let message = CodexAppServerClient.drainMessages(buffer: &buffer).first
-
-        XCTAssertEqual(message?.id, .string("approval-1"))
-        XCTAssertEqual(message?.method, "item/commandExecution/requestApproval")
-    }
-
-    @MainActor
-    func testCodexStatusMappingUsesAttentionFlags() {
-        XCTAssertEqual(
-            CodexDesktopSessionSource.status(from: .object([
-                "type": .string("active"),
-                "activeFlags": .array([.string("waitingOnApproval")])
-            ])),
-            .waitingForApproval
-        )
-        XCTAssertEqual(
-            CodexDesktopSessionSource.status(from: .object([
-                "type": .string("active"),
-                "activeFlags": .array([.string("waitingOnUserInput")])
-            ])),
-            .waitingForInput
-        )
-        XCTAssertEqual(
-            CodexDesktopSessionSource.status(from: .object(["type": .string("idle")])),
-            .completed
-        )
-    }
-
     func testStateReaderIncludesDesktopAndExcludesCLIAndArchived() throws {
         let fixture = try CodexStateFixture()
         defer { fixture.remove() }
@@ -220,6 +172,70 @@ final class CodexDesktopSessionTests: XCTestCase {
         let opened = await source.open(sessionID: "thread id")
         XCTAssertTrue(opened)
         XCTAssertEqual(recorder.urls.first?.absoluteString, "codex://threads/thread%20id")
+    }
+
+    @MainActor
+    func testLocalDatabaseSnapshotIsStaleAndCannotAcceptAttentionResponses() async throws {
+        let fixture = try CodexStateFixture()
+        defer { fixture.remove() }
+        let rollout = try fixture.writeRollout(name: "local.jsonl", events: ["task_started"])
+        try fixture.insert(
+            id: "desktop-local",
+            source: "appServer",
+            archived: false,
+            rolloutPath: rollout.path,
+            updatedAtMilliseconds: 2_000_000,
+            title: "Local task"
+        )
+
+        let source = CodexDesktopSessionSource(
+            reader: CodexStateReader(databaseURL: fixture.databaseURL),
+            urlOpener: { _ in false },
+            applicationActivator: { _ in false }
+        )
+        var iterator = source.snapshots().makeAsyncIterator()
+        let firstSnapshot = await iterator.next()
+        let snapshot = try XCTUnwrap(firstSnapshot)
+
+        guard case .stale = snapshot.health else {
+            return XCTFail("A local SQLite read must be reported as stale")
+        }
+        XCTAssertEqual(snapshot.sessions.count, 1)
+        XCTAssertTrue(snapshot.sessions[0].isStale)
+        XCTAssertNil(snapshot.sessions[0].attentionRequest)
+        let responded = await source.respond(
+            sessionID: "desktop-local",
+            requestID: "request",
+            response: .approveOnce
+        )
+        XCTAssertFalse(responded)
+    }
+
+    @MainActor
+    func testReadFailurePreservesLastLocalSnapshot() async throws {
+        let fixture = try CodexStateFixture()
+        defer { fixture.remove() }
+        let rollout = try fixture.writeRollout(name: "last.jsonl", events: ["task_complete"])
+        try fixture.insert(
+            id: "last-session", source: "appServer", archived: false,
+            rolloutPath: rollout.path, updatedAtMilliseconds: 2_000_000,
+            title: "Last session"
+        )
+        let source = CodexDesktopSessionSource(
+            reader: CodexStateReader(databaseURL: fixture.databaseURL),
+            pollingInterval: .milliseconds(20)
+        )
+        var iterator = source.snapshots().makeAsyncIterator()
+        let first = await iterator.next()
+        XCTAssertEqual(first?.sessions.count, 1)
+        fixture.remove()
+
+        let next = await iterator.next()
+
+        XCTAssertEqual(next?.sessions, first?.sessions)
+        guard case .stale = next?.health else {
+            return XCTFail("Unavailable local storage must not promote cached history to live")
+        }
     }
 }
 

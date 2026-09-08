@@ -4,6 +4,28 @@ import XCTest
 
 @MainActor
 final class AppPreferencesTests: XCTestCase {
+    func testLegacyZeroDelayDoesNotDisableHoverAfterMigration() {
+        let suiteName = "NotchAppTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(0.0, forKey: "interaction.hoverExpansionDelay")
+        let preferences = UserDefaultsAppPreferences(defaults: defaults)
+        XCTAssertEqual(preferences.hoverExpansionDelay, 1)
+        preferences.hoverExpansionDelay = 0
+        XCTAssertEqual(UserDefaultsAppPreferences(defaults: defaults).hoverExpansionDelay, 0)
+    }
+
+    func testHoverDelayPresetsIncludingDisabledRoundTrip() {
+        let suiteName = "NotchAppTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let preferences = UserDefaultsAppPreferences(defaults: defaults)
+        for delay in [0.0, 0.5, 1.0, 1.5] {
+            preferences.hoverExpansionDelay = delay
+            XCTAssertEqual(UserDefaultsAppPreferences(defaults: defaults).hoverExpansionDelay, delay)
+        }
+    }
+
     func testPreferencesClampDelayAndRestorePrimaryPanel() {
         let suiteName = "NotchAppTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -14,7 +36,7 @@ final class AppPreferencesTests: XCTestCase {
         preferences.lastSelectedPanel = .music
 
         let restored = UserDefaultsAppPreferences(defaults: defaults)
-        XCTAssertEqual(restored.hoverExpansionDelay, 1)
+        XCTAssertEqual(restored.hoverExpansionDelay, 1.5)
         XCTAssertEqual(restored.lastSelectedPanel, .music)
     }
 
