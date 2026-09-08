@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ExpandedNotch: View {
     @ObservedObject var model: NotchViewModel
+    let layoutMetrics: NotchLayoutMetrics
     let showsSettingsMascot: Bool
     let onOpenSettings: (NotchSettingsSection) -> Void
 
@@ -27,7 +28,7 @@ struct ExpandedNotch: View {
 
     private var expandedSize: CGSize {
         NotchWindowSizingPolicy.size(
-            metrics: NotchLayout.currentMetrics,
+            metrics: layoutMetrics,
             isExpanded: true,
             selectedPanel: model.selectedPanel,
             calendarViewMode: model.calendarViewMode,
@@ -39,8 +40,8 @@ struct ExpandedNotch: View {
         VStack(spacing: 0) {
             ExpandedNotchHeader(
                 title: model.activeUtility?.title ?? model.selectedPanel.title,
-                physicalNotchSize: NotchLayout.physicalNotchSize,
-                sideWingWidth: NotchLayout.expandedHeaderWingWidth,
+                physicalNotchSize: layoutMetrics.physicalNotchSize,
+                sideWingWidth: layoutMetrics.expandedHeaderWingWidth,
                 showsMascot: showsSettingsMascot,
                 onShowSettings: { onOpenSettings(.general) }
             )

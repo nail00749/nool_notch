@@ -4,6 +4,8 @@ import SwiftUI
 
 enum NotchSettingsSection: String, CaseIterable, Identifiable {
     case general
+    case displays
+    case updates
     case limits
     case integrations
     case music
@@ -14,6 +16,8 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: "Основные"
+        case .displays: "Дисплеи"
+        case .updates: "Обновления"
         case .limits: "Лимиты"
         case .integrations: "Интеграции"
         case .music: "Музыка"
@@ -24,6 +28,8 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .general: "Поведение и оформление"
+        case .displays: "Экран и отдельные размеры"
+        case .updates: "Версия и Homebrew"
         case .limits: "Источники и компактный индикатор"
         case .integrations: "GitHub, GitLab и PR/CI"
         case .music: "Источник текущего трека"
@@ -34,6 +40,8 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
     var iconName: String {
         switch self {
         case .general: "slider.horizontal.3"
+        case .displays: "display.2"
+        case .updates: "arrow.triangle.2.circlepath"
         case .limits: "gauge.with.dots.needle.67percent"
         case .integrations: "point.3.connected.trianglepath.dotted"
         case .music: "waveform"
@@ -45,11 +53,13 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
 struct NotchSettingsView: View {
     @ObservedObject var model: NotchViewModel
     @ObservedObject var settings: NotchVisualSettings
+    @ObservedObject var displaySettings: NotchDisplaySettings
     @ObservedObject var launchAtLogin: LaunchAtLoginManager
 
     @State private var selectedSection: NotchSettingsSection
     @State private var swipeTranslation: CGFloat = 0
     @StateObject private var codeReviewIntegrations = CodeReviewIntegrationStore()
+    @StateObject private var updateProvider = AppUpdateProvider()
     @AppStorage(UserDefaultsAppPreferences.cliHooksEnabledKey)
     private var cliHooksEnabled = false
     @State private var cliHooksMessage: String?
@@ -64,11 +74,13 @@ struct NotchSettingsView: View {
     init(
         model: NotchViewModel,
         settings: NotchVisualSettings,
+        displaySettings: NotchDisplaySettings,
         launchAtLogin: LaunchAtLoginManager,
         initialSection: NotchSettingsSection = .general
     ) {
         self.model = model
         self.settings = settings
+        self.displaySettings = displaySettings
         self.launchAtLogin = launchAtLogin
         _selectedSection = State(initialValue: initialSection)
     }
@@ -250,6 +262,10 @@ struct NotchSettingsView: View {
         switch section {
         case .general:
             generalPage
+        case .displays:
+            displaysPage
+        case .updates:
+            updatesPage
         case .limits:
             limitsPage
         case .integrations:
@@ -264,6 +280,276 @@ struct NotchSettingsView: View {
                 JiraPinnedSettingsView(model: model)
             }
         }
+    }
+
+    private var displaysPage: some View {
+        VStack(spacing: 12) {
+            SettingsCard(title: "Расположение", icon: "display.2") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("Показывать Nool", selection: displayModeBinding) {
+                        ForEach(NotchDisplayMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    if displaySettings.mode == .fixed {
+                        Picker("Дисплей", selection: fixedDisplayBinding) {
+                            ForEach(displaySettings.connectedDisplays) { display in
+                                Text(display.selectionTitle).tag(display.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
+
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(Color.signalMint)
+                            .frame(width: 6, height: 6)
+                        Text("Сейчас: \(displaySettings.activeDisplay?.name ?? "дисплей не определён")")
+                            .foregroundStyle(.white.opacity(0.68))
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        Button("Обновить") { displaySettings.refreshConnectedDisplays() }
+                            .buttonStyle(NotchButtonStyle())
+                            .foregroundStyle(Color.signalMint)
+                            .frame(minHeight: 40)
+                    }
+
+                    Text(displayModeHint)
+                        .settingsHintStyle()
+                }
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .tint(Color.signalMint)
+            }
+
+            SettingsCard(title: "Размеры по дисплеям", icon: "arrow.up.left.and.arrow.down.right") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle(
+                        "Отдельная высота для каждого дисплея",
+                        isOn: $displaySettings.usesPerDisplayCompactHeight
+                    )
+                    .frame(minHeight: 40)
+
+                    if displaySettings.usesPerDisplayCompactHeight {
+                        ForEach(displaySettings.connectedDisplays) { display in
+                            displayHeightRow(display)
+
+                            if display.id != displaySettings.connectedDisplays.last?.id {
+                                Divider().overlay(Color.white.opacity(0.06))
+                            }
+                        }
+                    } else {
+                        Text("Используется общая высота из раздела «Основные».")
+                            .settingsHintStyle()
+                    }
+                }
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .tint(Color.signalMint)
+            }
+        }
+        .onAppear { displaySettings.refreshConnectedDisplays() }
+    }
+
+    private func displayHeightRow(_ display: NotchDisplayDescriptor) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Image(systemName: display.isBuiltIn ? "laptopcomputer" : "display")
+                    .foregroundStyle(
+                        display.id == displaySettings.activeDisplayID
+                            ? Color.signalMint : .white.opacity(0.42)
+                    )
+                    .frame(width: 18)
+                Text(display.name)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Text("\(Int(displayHeight(for: display).rounded())) px")
+                    .foregroundStyle(Color.signalMint)
+                    .monospacedDigit()
+            }
+
+            Slider(
+                value: Binding(
+                    get: { displayHeight(for: display) },
+                    set: { displaySettings.setCompactHeight($0, for: display.id) }
+                ),
+                in: NotchLayout.compactHeightRange,
+                step: 1
+            )
+            .frame(minHeight: 40)
+            .accessibilityLabel("Высота челки на дисплее \(display.name)")
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var updatesPage: some View {
+        VStack(spacing: 12) {
+            SettingsCard(title: "Версия", icon: "shippingbox") {
+                VStack(alignment: .leading, spacing: 10) {
+                    DiagnosticRow(
+                        title: "Установлена",
+                        value: updateProvider.installedVersion.description,
+                        showsDivider: updateProvider.state != .idle
+                    )
+
+                    updateStatusContent
+                }
+            }
+
+            if case .result(let release, let availability) = updateProvider.state,
+               availability == .updateAvailable {
+                SettingsCard(title: "Что нового", icon: "sparkles") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(release.title)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.88))
+
+                        Text(release.notes)
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.62))
+                            .textSelection(.enabled)
+                            .lineLimit(14)
+
+                        Text(AppUpdateProvider.homebrewCommand)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color.signalMint)
+                            .textSelection(.enabled)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                .black.opacity(0.34),
+                                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            )
+
+                        HStack(spacing: 8) {
+                            SettingsActionButton(
+                                title: "Скопировать команду",
+                                icon: "doc.on.doc",
+                                isAccent: true,
+                                action: copyHomebrewCommand
+                            )
+                            SettingsActionButton(
+                                title: "Открыть релиз",
+                                icon: "arrow.up.right.square",
+                                action: { NSWorkspace.shared.open(release.pageURL) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            SettingsCard(title: "Как обновить", icon: "terminal") {
+                Text("Nool не запускает установку без подтверждения. Команда обновляет Homebrew и только cask `nool-notch`; настройки и Keychain сохраняются.")
+                    .settingsHintStyle()
+            }
+        }
+        .task {
+            if updateProvider.state == .idle {
+                await updateProvider.check()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var updateStatusContent: some View {
+        switch updateProvider.state {
+        case .idle, .checking:
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small).tint(Color.signalMint)
+                Text("Проверяю последний релиз…")
+                    .settingsHintStyle()
+            }
+            .frame(minHeight: 40)
+        case .result(let release, let availability):
+            DiagnosticRow(
+                title: "Последняя",
+                value: release.version.description,
+                isHealthy: availability != .updateAvailable,
+                showsDivider: false
+            )
+
+            HStack(spacing: 8) {
+                Image(systemName: availability == .updateAvailable
+                    ? "arrow.down.circle.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(availability == .updateAvailable
+                        ? Color.signalAmber : Color.signalMint)
+                Text(updateStatusText(availability))
+                    .foregroundStyle(.white.opacity(0.72))
+                Spacer(minLength: 8)
+                Button("Проверить снова") {
+                    Task { await updateProvider.check() }
+                }
+                .buttonStyle(NotchButtonStyle())
+                .foregroundStyle(Color.signalMint)
+                .frame(minHeight: 40)
+            }
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
+        case .failed(let message):
+            Text(message)
+                .settingsHintStyle()
+                .foregroundStyle(Color.signalAmber)
+            SettingsActionButton(
+                title: "Повторить проверку",
+                icon: "arrow.clockwise",
+                action: { Task { await updateProvider.check() } }
+            )
+        }
+    }
+
+    private var displayModeBinding: Binding<NotchDisplayMode> {
+        Binding(
+            get: { displaySettings.mode },
+            set: { mode in
+                if mode == .fixed, displaySettings.fixedDisplayID == nil {
+                    displaySettings.fixedDisplayID = displaySettings.activeDisplayID
+                        ?? displaySettings.connectedDisplays.first?.id
+                }
+                displaySettings.mode = mode
+            }
+        )
+    }
+
+    private var fixedDisplayBinding: Binding<String> {
+        Binding(
+            get: {
+                displaySettings.fixedDisplayID
+                    ?? displaySettings.activeDisplayID
+                    ?? displaySettings.connectedDisplays.first?.id
+                    ?? ""
+            },
+            set: { displaySettings.fixedDisplayID = $0 }
+        )
+    }
+
+    private func displayHeight(for display: NotchDisplayDescriptor) -> CGFloat {
+        displaySettings.compactHeight(for: display.id, fallback: settings.compactHeight)
+    }
+
+    private var displayModeHint: String {
+        switch displaySettings.mode {
+        case .automatic:
+            "Nool остаётся на встроенном дисплее. Если его нет, используется экран под указателем."
+        case .followPointer:
+            "Свернутая челка переезжает, когда указатель переходит на другой экран. Открытая панель остаётся на месте."
+        case .fixed:
+            "Если выбранный дисплей отключён, Nool временно вернётся на встроенный или основной экран."
+        }
+    }
+
+    private func updateStatusText(_ availability: AppUpdateAvailability) -> String {
+        switch availability {
+        case .updateAvailable: "Доступно обновление"
+        case .upToDate: "Установлена актуальная версия"
+        case .developmentBuild: "Сборка новее опубликованного релиза"
+        }
+    }
+
+    private func copyHomebrewCommand() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(
+            AppUpdateProvider.homebrewCommand,
+            forType: .string
+        )
     }
 
     private var generalPage: some View {

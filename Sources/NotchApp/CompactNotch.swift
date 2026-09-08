@@ -11,6 +11,8 @@ enum CompactMusicArtwork {
 struct CompactNotch: View {
     @ObservedObject var model: NotchViewModel
     @ObservedObject var visualSettings: NotchVisualSettings
+    let layoutMetrics: NotchLayoutMetrics
+    let compactHeight: CGFloat
     let onExpand: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -34,17 +36,17 @@ struct CompactNotch: View {
     }
 
     private var baseCompactSize: CGSize {
-        NotchLayout.compactSize(
+        layoutMetrics.compactSize(
             isPlaying: usesWideLayout,
-            compactHeight: visualSettings.compactHeight,
+            compactHeight: compactHeight,
             isHovered: model.isCompactHovered
         )
     }
 
     private var compactSize: CGSize {
-        NotchLayout.compactSize(
+        layoutMetrics.compactSize(
             isPlaying: usesWideLayout,
-            compactHeight: visualSettings.compactHeight,
+            compactHeight: compactHeight,
             showsAgentMascot: mascotNotice != nil,
             isHovered: model.isCompactHovered
         )
@@ -158,7 +160,7 @@ struct CompactNotch: View {
             .frame(
                 width: compactSize.width,
                 height: mascotNotice == nil
-                    ? visualSettings.compactHeight + (model.isCompactHovered ? 6 : 0)
+                    ? compactHeight + (model.isCompactHovered ? 6 : 0)
                     : compactSize.height
             )
             .clipShape(
@@ -192,7 +194,7 @@ struct CompactNotch: View {
             )
             .animation(
                 reduceMotion ? .linear(duration: 0.01) : .easeInOut(duration: 0.24),
-                value: visualSettings.compactHeight
+                value: compactHeight
             )
             .allowsHitTesting(false)
     }
@@ -215,19 +217,19 @@ struct CompactNotch: View {
             if let reminder = model.compactMeetingReminder {
                 CompactMeetingReminderView(
                     reminder: reminder,
-                    physicalNotchSize: NotchLayout.physicalNotchSize,
+                    physicalNotchSize: layoutMetrics.physicalNotchSize,
                     onOpenCalendar: model.openReminderCalendar,
                     onJoin: model.openMeetingURL
                 )
                 .frame(width: baseCompactSize.width,
-                       height: visualSettings.compactHeight + (model.isCompactHovered ? 6 : 0))
+                       height: compactHeight + (model.isCompactHovered ? 6 : 0))
                 .frame(width: baseCompactSize.width + leadingMascotExtension, alignment: .trailing)
             } else if let timer = model.compactTimer {
                 CompactTimerView(timer: timer,
-                    physicalNotchSize: NotchLayout.physicalNotchSize,
+                    physicalNotchSize: layoutMetrics.physicalNotchSize,
                     onOpen: model.openTimer, onToggle: model.timerSource.toggle)
                     .frame(width: baseCompactSize.width,
-                           height: visualSettings.compactHeight + (model.isCompactHovered ? 6 : 0))
+                           height: compactHeight + (model.isCompactHovered ? 6 : 0))
                     .frame(width: baseCompactSize.width + leadingMascotExtension, alignment: .trailing)
             } else {
                 defaultNotchButton
@@ -240,7 +242,7 @@ struct CompactNotch: View {
             compactContent
                 .frame(
                     width: baseCompactSize.width,
-                    height: visualSettings.compactHeight + (model.isCompactHovered ? 6 : 0)
+                    height: compactHeight + (model.isCompactHovered ? 6 : 0)
                 )
                 .frame(
                     width: baseCompactSize.width + leadingMascotExtension,
@@ -260,7 +262,7 @@ struct CompactNotch: View {
 
     @ViewBuilder
     private var compactContent: some View {
-        let physicalNotchSize = NotchLayout.physicalNotchSize
+        let physicalNotchSize = layoutMetrics.physicalNotchSize
 
         if physicalNotchSize.width > 0, physicalNotchSize.height > 0 {
             if isPlaying {

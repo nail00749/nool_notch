@@ -7,6 +7,15 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-08
+
+### Added
+
+- Добавлены режимы размещения Nool на встроенном, выбранном или текущем под
+  указателем дисплее; для каждого монитора можно сохранить отдельную высоту челки.
+- В настройках появилась проверка последнего GitHub Release с описанием изменений,
+  переходом к релизу и копированием команды обновления Homebrew.
+
 ## [0.3.0] - 2026-09-08
 
 ### Added
@@ -177,7 +186,8 @@
 - Добавлены панели лимитов, календаря, Now Playing и Jira.
 - Добавлены arm64 release packaging, checksum и ad-hoc подпись.
 
-[Unreleased]: https://github.com/nail00749/nool_notch/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/nail00749/nool_notch/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/nail00749/nool_notch/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/nail00749/nool_notch/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nail00749/nool_notch/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/nail00749/nool_notch/compare/v0.1.4...v0.1.5

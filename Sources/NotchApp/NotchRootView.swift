@@ -20,6 +20,7 @@ struct NotchTransitionStack<Content: View>: View {
 struct NotchRootView: View {
     @ObservedObject var model: NotchViewModel
     @ObservedObject var visualSettings: NotchVisualSettings
+    @ObservedObject var displaySettings: NotchDisplaySettings
     let onOpenSettings: (NotchSettingsSection) -> Void
     let onLayoutChange: (_ isExpanded: Bool, _ reduceMotion: Bool) -> Void
     var onKeyboardFocusChange: (Bool) -> Void = { _ in }
@@ -44,14 +45,20 @@ struct NotchRootView: View {
         model.usesWideCompactLayout
     }
 
+    private var compactHeight: CGFloat {
+        displaySettings.effectiveCompactHeight(fallback: visualSettings.compactHeight)
+    }
+
+    private var layoutMetrics: NotchLayoutMetrics { displaySettings.activeMetrics }
+
     private var currentSize: CGSize {
         NotchWindowSizingPolicy.size(
-            metrics: NotchLayout.currentMetrics,
+            metrics: layoutMetrics,
             isExpanded: model.isExpanded,
             selectedPanel: model.selectedPanel,
             calendarViewMode: model.calendarViewMode,
             isShowingSettings: false,
-            compactHeight: visualSettings.compactHeight,
+            compactHeight: compactHeight,
             isPlaying: usesWideCompactLayout,
             showsAgentMascot: model.compactMascotNotice != nil,
             isHovered: model.isCompactHovered
@@ -60,17 +67,17 @@ struct NotchRootView: View {
 
     private var surfaceShape: NotchSurfaceShape {
         let compactSize = NotchWindowSizingPolicy.compactInteractionSize(
-            metrics: NotchLayout.currentMetrics,
+            metrics: layoutMetrics,
             isPlaying: usesWideCompactLayout,
-            compactHeight: visualSettings.compactHeight,
+            compactHeight: compactHeight,
             showsAgentMascot: model.compactMascotNotice != nil,
             isHovered: model.isCompactHovered
         )
         let surfaceHeight = model.compactMascotNotice == nil
-            ? visualSettings.compactHeight + (model.isCompactHovered ? 6 : 0)
+            ? compactHeight + (model.isCompactHovered ? 6 : 0)
             : compactSize.height - NotchLayout.compactHoverBottomPadding
         let expandedSize = NotchWindowSizingPolicy.size(
-            metrics: NotchLayout.currentMetrics, isExpanded: true,
+            metrics: layoutMetrics, isExpanded: true,
             selectedPanel: model.selectedPanel, calendarViewMode: model.calendarViewMode,
             isShowingSettings: false
         )
@@ -87,6 +94,7 @@ struct NotchRootView: View {
             if model.isExpanded {
                 ExpandedNotch(
                     model: model,
+                    layoutMetrics: layoutMetrics,
                     showsSettingsMascot: visualSettings.showsExpandedMascot,
                     onOpenSettings: onOpenSettings
                 )
@@ -95,6 +103,8 @@ struct NotchRootView: View {
                 CompactNotch(
                     model: model,
                     visualSettings: visualSettings,
+                    layoutMetrics: layoutMetrics,
+                    compactHeight: compactHeight,
                     onExpand: { setExpanded(true) }
                 )
                 .transition(.opacity.animation(.easeOut(duration: reduceMotion ? 0.01 : 0.10)))
@@ -107,7 +117,7 @@ struct NotchRootView: View {
         .animation(stateAnimation, value: isCompactPlaybackActive)
         .animation(NotchMotion.compactResizeAnimation(reduceMotion: reduceMotion), value: usesWideCompactLayout)
         .animation(stateAnimation, value: isCompactLiveActivityActive)
-        .animation(stateAnimation, value: visualSettings.compactHeight)
+        .animation(stateAnimation, value: compactHeight)
         .contentShape(
             NotchRootInteractionShape(
                 excludesLeadingMascotLane: model.isExpanded == false
@@ -147,10 +157,10 @@ struct NotchRootView: View {
                   model.isCompactHovered,
                   model.isExpanded == false,
                   model.isTransientSurfaceVisible == false,
-                  let screen = NSScreen.preferredNotchScreen,
+                  let screenFrame = displaySettings.activeScreenFrame,
                   NotchHoverPolicy.shouldCollapse(
                     pointerLocation: NSEvent.mouseLocation,
-                    screenFrame: screen.frame,
+                    screenFrame: screenFrame,
                     windowSize: currentSize
                   ) == false else { return }
             setExpanded(true)
@@ -182,7 +192,10 @@ struct NotchRootView: View {
 
     var body: some View {
         layoutContent
-        .onChange(of: visualSettings.compactHeight) { _, _ in
+        .onChange(of: compactHeight) { _, _ in
+            onLayoutChange(model.isExpanded, reduceMotion)
+        }
+        .onChange(of: displaySettings.activeDisplayID) { _, _ in
             onLayoutChange(model.isExpanded, reduceMotion)
         }
         .onChange(of: model.compactMascotNotice?.id) { _, _ in
@@ -199,10 +212,10 @@ struct NotchRootView: View {
         }
         .onChange(of: model.isTransientSurfaceVisible) { wasVisible, isVisible in
             guard wasVisible, isVisible == false, model.isExpanded else { return }
-            guard let screen = NSScreen.preferredNotchScreen,
+            guard let screenFrame = displaySettings.activeScreenFrame,
                   NotchHoverPolicy.shouldCollapse(
                     pointerLocation: NSEvent.mouseLocation,
-                    screenFrame: screen.frame,
+                    screenFrame: screenFrame,
                     windowSize: currentSize
                   ) else { return }
             setExpanded(false)
@@ -236,10 +249,10 @@ struct NotchRootView: View {
             model.scheduleCollapse(
                 after: NotchHoverPolicy.collapseDelay(elapsedSinceExpansion: elapsed),
                 onlyIf: {
-                    guard let screen = NSScreen.preferredNotchScreen else { return true }
+                    guard let screenFrame = displaySettings.activeScreenFrame else { return true }
                     return NotchHoverPolicy.shouldCollapse(
                         pointerLocation: NSEvent.mouseLocation,
-                        screenFrame: screen.frame,
+                        screenFrame: screenFrame,
                         windowSize: expandedWindowSize
                     )
                 }

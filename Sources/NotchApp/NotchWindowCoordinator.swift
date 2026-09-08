@@ -11,10 +11,12 @@ final class NotchWindowCoordinator: NSObject {
     private let settingsWindow: NSPanel
     private let model: NotchViewModel
     private let visualSettings: NotchVisualSettings
+    private let displaySettings: NotchDisplaySettings
     private let launchAtLogin: LaunchAtLoginManager
     private var lastLayoutWasExpanded = false
     private var targetWindowFrame: NSRect?
     private var applicationBeforeSearch: NSRunningApplication?
+    private var displayFollowTimer: Timer?
 
     override init() {
         model = NotchViewModel(
@@ -26,16 +28,23 @@ final class NotchWindowCoordinator: NSObject {
             )
         )
         visualSettings = NotchVisualSettings()
+        displaySettings = NotchDisplaySettings()
         launchAtLogin = LaunchAtLoginManager()
+        displaySettings.refreshConnectedDisplays()
+        let initialScreen = displaySettings.selectedScreen()
+        displaySettings.setActiveScreen(initialScreen)
         model.timerSource.onCompletion = {
             NSSound(named: NSSound.Name("Glass"))?.play()
         }
-        let size = NotchWindowSizingPolicy.compactInteractionSize(
-            metrics: NotchLayout.currentMetrics,
-            isPlaying: false,
-            compactHeight: visualSettings.compactHeight
+        let compactHeight = displaySettings.effectiveCompactHeight(
+            fallback: visualSettings.compactHeight
         )
-        let origin = Self.origin(for: NSScreen.preferredNotchScreen, size: size)
+        let size = NotchWindowSizingPolicy.compactInteractionSize(
+            metrics: displaySettings.activeMetrics,
+            isPlaying: false,
+            compactHeight: compactHeight
+        )
+        let origin = Self.origin(for: initialScreen, size: size)
         window = NotchPanel(
             contentRect: NSRect(origin: origin, size: size),
             styleMask: [
@@ -67,6 +76,7 @@ final class NotchWindowCoordinator: NSObject {
             rootView: NotchSettingsView(
                 model: model,
                 settings: visualSettings,
+                displaySettings: displaySettings,
                 launchAtLogin: launchAtLogin,
                 initialSection: .general
             )
@@ -75,6 +85,7 @@ final class NotchWindowCoordinator: NSObject {
         let contentView = NotchRootView(
             model: model,
             visualSettings: visualSettings,
+            displaySettings: displaySettings,
             onOpenSettings: { [weak self] section in
                 self?.showSettingsWindow(section: section)
             },
@@ -126,16 +137,28 @@ final class NotchWindowCoordinator: NSObject {
         ]
         window.hidesOnDeactivate = false
         window.isMovableByWindowBackground = false
+
+        displaySettings.onConfigurationChange = { [weak self] in
+            self?.configureDisplayFollowing()
+            self?.reposition()
+        }
     }
 
     func show() {
+        configureDisplayFollowing()
         window.orderFrontRegardless()
     }
 
     func reposition() {
+        displaySettings.refreshConnectedDisplays()
+        let screen = displaySettings.selectedScreen(
+            preserveActiveDisplay: model.isExpanded
+        )
+        displaySettings.setActiveScreen(screen)
+        let size = targetWindowSize()
         let frame = NSRect(
-            origin: Self.origin(for: NSScreen.preferredNotchScreen, size: window.frame.size),
-            size: window.frame.size
+            origin: Self.origin(for: screen, size: size),
+            size: size
         )
         targetWindowFrame = frame
         window.setFrame(frame, display: true)
@@ -148,6 +171,7 @@ final class NotchWindowCoordinator: NSObject {
             rootView: NotchSettingsView(
                 model: model,
                 settings: visualSettings,
+                displaySettings: displaySettings,
                 launchAtLogin: launchAtLogin,
                 initialSection: section
             )
@@ -158,19 +182,10 @@ final class NotchWindowCoordinator: NSObject {
     }
 
     private func animateWindow(to isExpanded: Bool, reduceMotion: Bool) {
-        let size = NotchWindowSizingPolicy.size(
-            metrics: NotchLayout.currentMetrics,
-            isExpanded: isExpanded,
-            selectedPanel: model.selectedPanel,
-            calendarViewMode: model.calendarViewMode,
-            isShowingSettings: model.isShowingSettings,
-            compactHeight: visualSettings.compactHeight,
-            isPlaying: model.usesWideCompactLayout,
-            showsAgentMascot: model.compactMascotNotice != nil,
-            isHovered: model.isCompactHovered
-        )
+        let size = targetWindowSize(isExpanded: isExpanded)
+        let screen = displaySettings.activeScreen ?? displaySettings.selectedScreen()
         let frame = NSRect(
-            origin: Self.origin(for: NSScreen.preferredNotchScreen, size: size),
+            origin: Self.origin(for: screen, size: size),
             size: size
         )
         let wasExpanded = lastLayoutWasExpanded
@@ -194,6 +209,41 @@ final class NotchWindowCoordinator: NSObject {
             }
             window.animator().setFrame(frame, display: true)
         }
+    }
+
+    private func targetWindowSize(isExpanded: Bool? = nil) -> NSSize {
+        NotchWindowSizingPolicy.size(
+            metrics: displaySettings.activeMetrics,
+            isExpanded: isExpanded ?? model.isExpanded,
+            selectedPanel: model.selectedPanel,
+            calendarViewMode: model.calendarViewMode,
+            isShowingSettings: model.isShowingSettings,
+            compactHeight: displaySettings.effectiveCompactHeight(
+                fallback: visualSettings.compactHeight
+            ),
+            isPlaying: model.usesWideCompactLayout,
+            showsAgentMascot: model.compactMascotNotice != nil,
+            isHovered: model.isCompactHovered
+        )
+    }
+
+    private func configureDisplayFollowing() {
+        displayFollowTimer?.invalidate()
+        displayFollowTimer = nil
+        guard displaySettings.mode == .followPointer else { return }
+
+        let timer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.model.isExpanded == false else { return }
+                let previousDisplayID = self.displaySettings.activeDisplayID
+                let screen = self.displaySettings.selectedScreen()
+                self.displaySettings.setActiveScreen(screen)
+                guard previousDisplayID != self.displaySettings.activeDisplayID else { return }
+                self.reposition()
+            }
+        }
+        displayFollowTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private static func origin(for screen: NSScreen?, size: NSSize) -> NSPoint {
