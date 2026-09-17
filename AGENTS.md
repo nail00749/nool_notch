@@ -32,6 +32,10 @@ Ad-hoc переподпись может сбросить Accessibility trust. �
 - `Package.swift` — SwiftPM targets `NotchCore`, `NotchApp`, `NotchAppTests`.
 - `Sources/NotchCore` — общие модели квот без UI.
 - `Sources/NotchApp/NotchApp.swift` — вход в приложение.
+- `Sources/NotchApp/Launcher` — отдельная панель поиска: coordinator окна,
+  глобальная горячая клавиша, источники приложений/Spotlight, калькулятор и
+  включаемая локальная история буфера. Обычный выход из приложения должен
+  дождаться фоновой записи или удаления истории через `waitForPersistence()`.
 - `Sources/NotchApp/NotchWindowCoordinator.swift` — создание, позиционирование
   и внешняя геометрия `NSPanel`.
 - `Sources/NotchApp/NotchRootView.swift` — compact/expanded transition,
@@ -40,6 +44,16 @@ Ad-hoc переподпись может сбросить Accessibility trust. �
   панелей.
 - `Sources/NotchApp/AISessionStore.swift` — общий inbox и маршрутизация действий
   к источникам Codex Desktop и локальных CLI agents.
+- `Sources/NotchApp/Launcher/AI` — отдельный текстовый чат Launcher: общий store,
+  FoundationModels и subprocess-адаптеры Codex/Claude. Облачные подключения
+  opt-in; история локально в Application Support, инструменты CLI отключены.
+  Ollama подключается только к loopback и установленным локальным моделям.
+  Вложения загружаются через `AIChatAttachmentLoader` вне main actor;
+  сохраняются в истории как извлечённый текст или нормализованные изображения.
+  Поддержка изображений определяется моделью; отсутствие capability запрещает
+  отправку. Не включай CLI tools для чтения вложений и не передавай пути файлов.
+  Выделенный текст читается через Accessibility, отправляется только после
+  проверки черновика; вставка повторно проверяет выделение и фокус приложения.
 - `Sources/NotchApp/CodeReviewProvider.swift` — Git remote discovery и
   read-only GitHub/GitLab PR/MR через `gh`/`glab`.
 - `Sources/NotchApp/AISessionsPanel.swift` — Agent Inbox, связанные Jira-задачи

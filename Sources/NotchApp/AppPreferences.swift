@@ -1,5 +1,67 @@
 import Foundation
 
+enum QuotaPanelEdge: String, CaseIterable, Identifiable {
+    case left
+    case right
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .left: "Слева"
+        case .right: "Справа"
+        }
+    }
+}
+
+enum CompactQuotaDisplayMode: String, CaseIterable, Identifiable {
+    case top
+    case wave
+    case stack
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .top: "В челке"
+        case .wave: "Волна"
+        case .stack: "Стек"
+        }
+    }
+}
+
+enum QuotaStackCorner: String, CaseIterable, Identifiable {
+    case topLeft
+    case topRight
+    case bottomLeft
+    case bottomRight
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .topLeft: "Сверху слева"
+        case .topRight: "Сверху справа"
+        case .bottomLeft: "Снизу слева"
+        case .bottomRight: "Снизу справа"
+        }
+    }
+
+    var edge: QuotaPanelEdge {
+        switch self {
+        case .topLeft, .bottomLeft: .left
+        case .topRight, .bottomRight: .right
+        }
+    }
+
+    var isTop: Bool {
+        switch self {
+        case .topLeft, .topRight: true
+        case .bottomLeft, .bottomRight: false
+        }
+    }
+}
+
 @MainActor
 protocol AppPreferencesStoring: AnyObject {
     var hoverExpansionDelay: TimeInterval { get set }
@@ -12,6 +74,9 @@ protocol AppPreferencesStoring: AnyObject {
     var quotaProviderOrder: [String] { get set }
     var hiddenQuotaProviderIDs: Set<String> { get set }
     var compactQuotaProviderID: String { get set }
+    var compactQuotaDisplayMode: CompactQuotaDisplayMode { get set }
+    var quotaPanelEdge: QuotaPanelEdge { get set }
+    var quotaStackCorner: QuotaStackCorner { get set }
     var jiraBaseURLString: String? { get set }
     var jiraSelectedProjectKeys: Set<String> { get set }
     var jiraPinnedContainers: [JiraPinnedContainer] { get set }
@@ -36,6 +101,9 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
     static let quotaProviderOrderKey = "limits.providerOrder"
     static let hiddenQuotaProviderIDsKey = "limits.hiddenProviderIDs"
     static let compactQuotaProviderIDKey = "limits.compactProviderID"
+    static let compactQuotaDisplayModeKey = "limits.compactDisplayMode"
+    static let quotaPanelEdgeKey = "limits.waveEdge"
+    static let quotaStackCornerKey = "limits.stackCorner"
     static let jiraBaseURLKey = "jira.baseURL"
     static let jiraSelectedProjectKeysKey = "jira.selectedProjectKeys"
     static let jiraPinnedContainersKey = "jira.pinnedContainers"
@@ -172,6 +240,41 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
                 ?? Self.defaultQuotaProviderOrder[0]
         }
         set { defaults.set(newValue, forKey: Self.compactQuotaProviderIDKey) }
+    }
+
+    var compactQuotaDisplayMode: CompactQuotaDisplayMode {
+        get {
+            guard let rawValue = defaults.string(forKey: Self.compactQuotaDisplayModeKey) else {
+                return .top
+            }
+            if rawValue == "inline" { return .top }
+            if ["left", "right", "hoverSidebar"].contains(rawValue) { return .wave }
+            return CompactQuotaDisplayMode(rawValue: rawValue) ?? .top
+        }
+        set { defaults.set(newValue.rawValue, forKey: Self.compactQuotaDisplayModeKey) }
+    }
+
+    var quotaPanelEdge: QuotaPanelEdge {
+        get {
+            if let rawValue = defaults.string(forKey: Self.quotaPanelEdgeKey),
+               let edge = QuotaPanelEdge(rawValue: rawValue) {
+                return edge
+            }
+            return defaults.string(forKey: Self.compactQuotaDisplayModeKey) == "left"
+                ? .left
+                : .right
+        }
+        set { defaults.set(newValue.rawValue, forKey: Self.quotaPanelEdgeKey) }
+    }
+
+    var quotaStackCorner: QuotaStackCorner {
+        get {
+            guard let rawValue = defaults.string(forKey: Self.quotaStackCornerKey) else {
+                return .bottomRight
+            }
+            return QuotaStackCorner(rawValue: rawValue) ?? .bottomRight
+        }
+        set { defaults.set(newValue.rawValue, forKey: Self.quotaStackCornerKey) }
     }
 
     var jiraBaseURLString: String? {

@@ -80,7 +80,9 @@ struct JiraPanel: View {
                 LazyVStack(spacing: 5) {
                     JiraProjectListRow(
                         title: "Все",
-                        subtitle: "Мои задачи",
+                        subtitle: model.jiraState.issueScope == .mine
+                            ? "Мои задачи"
+                            : "Все доступные",
                         isSelected: model.jiraState.selectedProjectKeys.isEmpty
                     ) {
                         model.setJiraSelectedProjectKeys([])
@@ -166,12 +168,12 @@ struct JiraPanel: View {
                     Image(systemName: "line.3.horizontal.decrease")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(
-                            quickFilters.isEmpty ? Color.white.opacity(0.76) : Color.signalMint
+                            activeFilterCount == 0 ? Color.white.opacity(0.76) : Color.signalMint
                         )
                         .frame(width: 40, height: 40)
 
-                    if quickFilters.isEmpty == false {
-                        Text("\(quickFilters.count)")
+                    if activeFilterCount > 0 {
+                        Text("\(activeFilterCount)")
                             .font(.system(size: 8, weight: .black, design: .monospaced))
                             .foregroundStyle(.black.opacity(0.82))
                             .frame(width: 13, height: 13)
@@ -185,20 +187,24 @@ struct JiraPanel: View {
                     }
                 }
                 .background(
-                    Color.white.opacity(quickFilters.isEmpty ? 0.08 : 0.12),
+                    Color.white.opacity(activeFilterCount == 0 ? 0.08 : 0.12),
                     in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                 )
             }
             .buttonStyle(NotchButtonStyle())
             .popover(isPresented: $isShowingFilters, arrowEdge: .bottom) {
-                JiraFilterPopover(activeFilters: $quickFilters)
+                JiraFilterPopover(
+                    activeFilters: $quickFilters,
+                    issueScope: model.jiraState.issueScope,
+                    onIssueScopeChange: model.setJiraIssueScope
+                )
                     .onDisappear {
                         model.transientSurfaceDidDisappear(.jiraFilters)
                     }
             }
             .accessibilityLabel("Фильтры задач Jira")
             .accessibilityValue(
-                quickFilters.isEmpty ? "Не выбраны" : "Выбрано: \(quickFilters.count)"
+                activeFilterCount == 0 ? "Не выбраны" : "Выбрано: \(activeFilterCount)"
             )
 
             Button {
@@ -253,6 +259,10 @@ struct JiraPanel: View {
         }
         if case .loading = model.jiraState.list { return true }
         return false
+    }
+
+    private var activeFilterCount: Int {
+        quickFilters.count + (model.jiraState.issueScope == .mine ? 1 : 0)
     }
 
     private func refreshSelectedMode() {
@@ -345,7 +355,7 @@ enum JiraPanelMode: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .mine: "Мои"
+        case .mine: "Задачи"
         case .pinned: "Закреп."
         }
     }
@@ -460,53 +470,49 @@ enum JiraIssuePresentation {
 
 private struct JiraFilterPopover: View {
     @Binding var activeFilters: Set<JiraIssueQuickFilter>
+    let issueScope: JiraIssueScope
+    let onIssueScopeChange: (JiraIssueScope) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Фильтры задач")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
 
+            filterButton(
+                title: "Только мои",
+                systemImage: "person.crop.circle",
+                isActive: issueScope == .mine
+            ) {
+                onIssueScopeChange(issueScope == .mine ? .allAccessible : .mine)
+            }
+
+            Divider()
+
             ForEach(JiraIssueQuickFilter.allCases) { filter in
-                Button {
+                filterButton(
+                    title: filter.title,
+                    systemImage: filter.systemImage,
+                    isActive: activeFilters.contains(filter)
+                ) {
                     toggle(filter)
-                } label: {
-                    HStack(spacing: 9) {
-                        Image(
-                            systemName: activeFilters.contains(filter)
-                                ? "checkmark.square.fill"
-                                : "square"
-                        )
-                        .foregroundStyle(
-                            activeFilters.contains(filter) ? Color.signalMint : .secondary
-                        )
-
-                        Text(filter.title)
-                            .foregroundStyle(.primary)
-
-                        Spacer(minLength: 8)
-
-                        Image(systemName: filter.systemImage)
-                            .foregroundStyle(.secondary)
-                    }
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .frame(minHeight: 40)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(filter.title)
-                .accessibilityValue(activeFilters.contains(filter) ? "Включен" : "Выключен")
             }
 
             Divider()
 
             Button("Сбросить") {
                 activeFilters.removeAll()
+                onIssueScopeChange(.allAccessible)
             }
             .buttonStyle(.plain)
             .font(.system(size: 11, weight: .semibold, design: .rounded))
-            .foregroundStyle(activeFilters.isEmpty ? .secondary : Color.signalCoral)
+            .foregroundStyle(
+                activeFilters.isEmpty && issueScope == .allAccessible
+                    ? .secondary
+                    : Color.signalCoral
+            )
             .frame(minHeight: 40, alignment: .leading)
-            .disabled(activeFilters.isEmpty)
+            .disabled(activeFilters.isEmpty && issueScope == .allAccessible)
         }
         .padding(14)
         .frame(width: 250)
@@ -521,6 +527,34 @@ private struct JiraFilterPopover: View {
         } else {
             activeFilters.insert(filter)
         }
+    }
+
+    private func filterButton(
+        title: String,
+        systemImage: String,
+        isActive: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Image(systemName: isActive ? "checkmark.square.fill" : "square")
+                    .foregroundStyle(isActive ? Color.signalMint : .secondary)
+
+                Text(title)
+                    .foregroundStyle(.primary)
+
+                Spacer(minLength: 8)
+
+                Image(systemName: systemImage)
+                    .foregroundStyle(.secondary)
+            }
+            .font(.system(size: 11, weight: .medium, design: .rounded))
+            .frame(minHeight: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue(isActive ? "Включен" : "Выключен")
     }
 }
 
@@ -840,8 +874,42 @@ struct JiraListContent: View {
                     ForEach(issues) { issue in
                         JiraIssueRow(model: model, issue: issue)
                     }
+
+                    paginationFooter
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var paginationFooter: some View {
+        if model.jiraState.isLoadingMoreIssues {
+            HStack(spacing: 7) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Загружаю ещё задачи…")
+            }
+            .font(.system(size: 9, weight: .medium, design: .rounded))
+            .foregroundStyle(.white.opacity(0.56))
+            .frame(minHeight: 32)
+        } else if let error = model.jiraState.loadMoreIssuesError {
+            Button {
+                model.loadMoreJiraIssues()
+            } label: {
+                Label("Не удалось загрузить ещё: \(error.safeRussianMessage)", systemImage: "arrow.clockwise")
+                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color.signalAmber)
+                    .lineLimit(1)
+                    .frame(minHeight: 32)
+            }
+            .buttonStyle(NotchButtonStyle())
+            .accessibilityLabel("Повторить загрузку следующей страницы задач Jira")
+        } else if model.jiraState.canLoadMoreIssues {
+            Color.clear
+                .frame(height: 1)
+                .onAppear {
+                    model.loadMoreJiraIssues()
+                }
         }
     }
 

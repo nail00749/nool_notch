@@ -14,7 +14,13 @@ enum NotchTransientSurface: Hashable {
 
 @MainActor
 final class NotchViewModel: ObservableObject {
-    @Published var isCompactHovered = false
+    @Published var isCompactHovered = false {
+        didSet {
+            if isCompactHovered, oldValue == false {
+                refreshQuotaProviders(ifOlderThan: 10)
+            }
+        }
+    }
     @Published private(set) var activeUtility: NotchUtilityPanel?
     @Published var isFileDropTargeted = false
     @Published private(set) var isChoosingShelfFiles = false
@@ -24,6 +30,7 @@ final class NotchViewModel: ObservableObject {
             if isExpanded == false { activeUtility = nil }
             updateProviderActivity()
             if isExpanded, oldValue == false {
+                refreshQuotaProviders(ifOlderThan: 10)
                 refreshPanelBadges()
             }
         }
@@ -60,6 +67,9 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var quotaProviderOrder: [String]
     @Published private(set) var hiddenQuotaProviderIDs: Set<String>
     @Published private(set) var compactQuotaProviderID: String
+    @Published private(set) var compactQuotaDisplayMode: CompactQuotaDisplayMode
+    @Published private(set) var quotaPanelEdge: QuotaPanelEdge
+    @Published private(set) var quotaStackCorner: QuotaStackCorner
     @Published private(set) var calendarState: CalendarLoadState = .idle
     @Published private(set) var upcomingMeetingReminder: MeetingReminder?
     private var reminderEvents: [CalendarEvent] = []
@@ -91,11 +101,14 @@ final class NotchViewModel: ObservableObject {
     private var codeReviewGenerations: [AISessionID: UUID] = [:]
     private var codeReviewWorkspacePaths: [AISessionID: String] = [:]
     private var codeReviewPollingTask: Task<Void, Never>?
+    private var quotaRefreshTasks: [String: Task<Void, Never>] = [:]
+    private var quotaRefreshedAt: [String: Date] = [:]
     private var reviewActivityBaselines: [AISessionID: (requestID: String, ids: Set<String>)] = [:]
     private var hasLoadedCalendar = false
     private var linkedJiraGeneration: UInt = 0
     private var cancellables = Set<AnyCancellable>()
     private let compactAgentSignalController: CompactAgentSignalController
+    private let now: @MainActor () -> Date
     let aiSourceNames: [String: String]
 
     init(
@@ -110,13 +123,15 @@ final class NotchViewModel: ObservableObject {
         jiraProvider: (any JiraProviding)? = nil,
         aiSessionStore: AISessionStore = AISessionStore(sources: []),
         codeReviewProvider: any CodeReviewProviding = LocalCodeReviewProvider(),
-        preferences: any AppPreferencesStoring = UserDefaultsAppPreferences()
+        preferences: any AppPreferencesStoring = UserDefaultsAppPreferences(),
+        now: @escaping @MainActor () -> Date = Date.init
     ) {
         self.providers = providers
         self.calendarProvider = calendarProvider
         self.nowPlayingProvider = nowPlayingProvider
         self.liveActivityCenter = liveActivityCenter
         self.preferences = preferences
+        self.now = now
         self.aiSessionStore = aiSessionStore
         self.codeReviewProvider = codeReviewProvider
         self.aiSourceNames = aiSessionStore.sourceNames
@@ -159,6 +174,9 @@ final class NotchViewModel: ObservableObject {
         self.compactQuotaProviderID = visibleQuotaProviderIDs.contains(preferredCompactProviderID)
             ? preferredCompactProviderID
             : visibleQuotaProviderIDs.first ?? ""
+        self.compactQuotaDisplayMode = preferences.compactQuotaDisplayMode
+        self.quotaPanelEdge = preferences.quotaPanelEdge
+        self.quotaStackCorner = preferences.quotaStackCorner
         self.snapshots = Dictionary(uniqueKeysWithValues: providers.map { provider in
             (
                 provider.id,
@@ -173,6 +191,9 @@ final class NotchViewModel: ObservableObject {
         preferences.quotaProviderOrder = quotaProviderOrder
         preferences.hiddenQuotaProviderIDs = hiddenQuotaProviderIDs
         preferences.compactQuotaProviderID = compactQuotaProviderID
+        preferences.compactQuotaDisplayMode = compactQuotaDisplayMode
+        preferences.quotaPanelEdge = quotaPanelEdge
+        preferences.quotaStackCorner = quotaStackCorner
         compactAgentSignalController.onChange = { [weak self] signal in
             self?.compactAgentSignal = signal
             self?.refreshCompactMascot()
@@ -344,6 +365,16 @@ final class NotchViewModel: ObservableObject {
         weeklyQuotaWindow(for: compactQuotaProviderID)?.remainingRatio
     }
 
+    var shouldEnableQuotaEdgePanel: Bool {
+        compactQuotaDisplayMode == .wave
+            && visibleQuotaProviders.isEmpty == false
+    }
+
+    var shouldEnableQuotaCornerStack: Bool {
+        compactQuotaDisplayMode == .stack
+            && visibleQuotaProviders.isEmpty == false
+    }
+
     func canHideQuotaProvider(_ providerID: String) -> Bool {
         hiddenQuotaProviderIDs.contains(providerID) == false
             && visibleQuotaProviders.count > 1
@@ -380,12 +411,40 @@ final class NotchViewModel: ObservableObject {
         preferences.compactQuotaProviderID = providerID
     }
 
+    func setCompactQuotaDisplayMode(_ mode: CompactQuotaDisplayMode) {
+        compactQuotaDisplayMode = mode
+        preferences.compactQuotaDisplayMode = mode
+    }
+
+    func setQuotaPanelEdge(_ edge: QuotaPanelEdge) {
+        quotaPanelEdge = edge
+        preferences.quotaPanelEdge = edge
+    }
+
+    func setQuotaStackCorner(_ corner: QuotaStackCorner) {
+        quotaStackCorner = corner
+        preferences.quotaStackCorner = corner
+    }
+
+    func openQuotaLimits() {
+        if hiddenPanelIDs.contains(.ai) {
+            setPanelVisible(.ai, isVisible: true)
+        }
+        selectPanel(.ai)
+        selectAISection(.limits)
+        isExpanded = true
+    }
+
     func canBeginAuthentication(for providerID: String) -> Bool {
         providers.first(where: { $0.id == providerID }) is any QuotaProviderAuthenticating
     }
 
     func refreshAllQuotaProviders() {
         refresh()
+    }
+
+    func refreshQuotaProvidersIfStale() {
+        refreshQuotaProviders(ifOlderThan: 10)
     }
 
     func selectPanel(_ panel: PanelID) {
@@ -917,6 +976,14 @@ final class NotchViewModel: ObservableObject {
         jiraProvider.setSelectedProjectKeys(keys)
     }
 
+    func setJiraIssueScope(_ scope: JiraIssueScope) {
+        jiraProvider.setIssueScope(scope)
+    }
+
+    func loadMoreJiraIssues() {
+        jiraProvider.loadMoreIssues()
+    }
+
     func refreshJiraPinnedCatalog() {
         jiraProvider.refreshPinnedCatalog()
     }
@@ -1023,9 +1090,24 @@ final class NotchViewModel: ObservableObject {
     }
 
     private func refresh(provider: any QuotaProvider) {
-        Task { @MainActor [weak self] in
+        guard quotaRefreshTasks[provider.id] == nil else { return }
+        quotaRefreshTasks[provider.id] = Task { @MainActor [weak self] in
             let snapshot = await provider.loadSnapshot()
-            self?.snapshots[provider.id] = snapshot
+            guard let self else { return }
+            self.snapshots[provider.id] = snapshot
+            self.quotaRefreshedAt[provider.id] = self.now()
+            self.quotaRefreshTasks[provider.id] = nil
+        }
+    }
+
+    private func refreshQuotaProviders(ifOlderThan maximumAge: TimeInterval) {
+        let currentDate = now()
+        for provider in visibleQuotaProviders {
+            if let refreshedAt = quotaRefreshedAt[provider.id],
+               currentDate.timeIntervalSince(refreshedAt) < maximumAge {
+                continue
+            }
+            refresh(provider: provider)
         }
     }
 
@@ -1259,7 +1341,7 @@ final class NotchViewModel: ObservableObject {
     }
 
     private func refreshPanelBadges() {
-        refresh()
+        refreshQuotaProviders(ifOlderThan: 10)
         if visiblePanels.contains(.calendar) {
             refreshCalendar()
         }

@@ -28,6 +28,8 @@ protocol JiraProviding: AnyObject {
     ) async -> Result<JiraUser, JiraAPIError>
     func disconnect()
     func setSelectedProjectKeys(_ keys: Set<String>)
+    func setIssueScope(_ scope: JiraIssueScope)
+    func loadMoreIssues()
     func refreshPinnedCatalog()
     func togglePinnedContainer(_ container: JiraPinnedContainer)
     func movePinnedContainer(_ container: JiraPinnedContainer, by offset: Int)

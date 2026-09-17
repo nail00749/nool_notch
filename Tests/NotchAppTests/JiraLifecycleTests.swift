@@ -206,7 +206,10 @@ private final class LifecycleJiraClient: JiraClientProtocol {
     func issues(
         baseURL: URL,
         token: String,
-        projectKeys: Set<String>
+        projectKeys: Set<String>,
+        scope: JiraIssueScope,
+        startAt: Int,
+        maxResults: Int
     ) async throws -> JiraSearchPage {
         JiraSearchPage(issues: [], total: 0)
     }
