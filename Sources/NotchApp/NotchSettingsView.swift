@@ -4,6 +4,7 @@ import SwiftUI
 
 enum NotchSettingsSection: String, CaseIterable, Identifiable {
     case general
+    case launcher
     case displays
     case updates
     case limits
@@ -16,6 +17,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: "Основные"
+        case .launcher: "Launcher"
         case .displays: "Дисплеи"
         case .updates: "Обновления"
         case .limits: "Лимиты"
@@ -28,6 +30,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .general: "Поведение и оформление"
+        case .launcher: "Поиск и буфер обмена"
         case .displays: "Экран и отдельные размеры"
         case .updates: "Версия и Homebrew"
         case .limits: "Источники и компактный индикатор"
@@ -40,6 +43,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
     var iconName: String {
         switch self {
         case .general: "slider.horizontal.3"
+        case .launcher: "magnifyingglass"
         case .displays: "display.2"
         case .updates: "arrow.triangle.2.circlepath"
         case .limits: "gauge.with.dots.needle.67percent"
@@ -55,6 +59,7 @@ struct NotchSettingsView: View {
     @ObservedObject var settings: NotchVisualSettings
     @ObservedObject var displaySettings: NotchDisplaySettings
     @ObservedObject var launchAtLogin: LaunchAtLoginManager
+    let launcher: LauncherWindowCoordinator
 
     @State private var selectedSection: NotchSettingsSection
     @State private var swipeTranslation: CGFloat = 0
@@ -76,12 +81,14 @@ struct NotchSettingsView: View {
         settings: NotchVisualSettings,
         displaySettings: NotchDisplaySettings,
         launchAtLogin: LaunchAtLoginManager,
+        launcher: LauncherWindowCoordinator,
         initialSection: NotchSettingsSection = .general
     ) {
         self.model = model
         self.settings = settings
         self.displaySettings = displaySettings
         self.launchAtLogin = launchAtLogin
+        self.launcher = launcher
         _selectedSection = State(initialValue: initialSection)
     }
 
@@ -113,6 +120,7 @@ struct NotchSettingsView: View {
             )
         }
         .preferredColorScheme(.dark)
+        .onChange(of: selectedSection) { _, _ in launcher.settings.isRecordingShortcut = false }
         .onAppear {
             launchAtLogin.refresh()
             model.refreshAllQuotaProviders()
@@ -262,6 +270,9 @@ struct NotchSettingsView: View {
         switch section {
         case .general:
             generalPage
+        case .launcher:
+            LauncherSettingsView(settings: launcher.settings, clipboard: launcher.model.clipboard,
+                                 aiChat: launcher.model.aiChat, open: launcher.show)
         case .displays:
             displaysPage
         case .updates:
@@ -765,58 +776,159 @@ struct NotchSettingsView: View {
     private var limitsPage: some View {
         VStack(spacing: 12) {
             SettingsCard(
-                title: "Компактная челка",
+                title: "Панель лимитов",
                 icon: "rectangle.topthird.inset.filled"
             ) {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 10) {
-                        Text("Источник справа")
-                            .font(.system(size: 11, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.58))
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Режим")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.46))
 
-                        Spacer()
-
-                        Picker("", selection: compactQuotaProviderBinding) {
-                            ForEach(model.visibleQuotaProviders, id: \.id) { provider in
-                                Text(provider.displayName).tag(provider.id)
-                            }
+                    HStack(spacing: 8) {
+                        ForEach(CompactQuotaDisplayMode.allCases) { mode in
+                            quotaDisplayModeButton(mode)
                         }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .fixedSize()
                     }
 
-                    HStack(spacing: 9) {
-                        Image(systemName: quotaProviderIcon(model.compactQuotaProviderID))
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(Color.signalMint)
+                    if model.compactQuotaDisplayMode == .top {
+                        HStack(spacing: 10) {
+                            Text("Источник справа")
+                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.58))
+
+                            Spacer()
+
+                            Picker("", selection: compactQuotaProviderBinding) {
+                                ForEach(model.visibleQuotaProviders, id: \.id) { provider in
+                                    Text(provider.displayName).tag(provider.id)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .fixedSize()
+                        }
+
+                        HStack(spacing: 9) {
+                            QuotaProviderBrandIcon(
+                                providerID: model.compactQuotaProviderID,
+                                size: 14,
+                                color: .white.opacity(0.88)
+                            )
                             .frame(width: 24, height: 24)
                             .background(
                                 Color.signalMint.opacity(0.12),
                                 in: RoundedRectangle(cornerRadius: 7, style: .continuous)
                             )
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(model.compactQuotaProviderName)
-                                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.82))
-                            Text("Недельный лимит")
-                                .font(.system(size: 9, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.38))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(model.compactQuotaProviderName)
+                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.82))
+                                Text("Недельный лимит")
+                                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.38))
+                            }
+
+                            Spacer()
+
+                            Text(compactQuotaPreviewText)
+                                .font(.system(size: 15, weight: .bold, design: .monospaced))
+                                .monospacedDigit()
+                                .foregroundStyle(compactQuotaPreviewColor)
+                        }
+                        .padding(10)
+                        .background(
+                            Color.black.opacity(0.34),
+                            in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        )
+                    } else if model.compactQuotaDisplayMode == .wave {
+                        HStack(spacing: 10) {
+                            Text("Сторона")
+                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.58))
+
+                            Spacer()
+
+                            Picker("", selection: quotaPanelEdgeBinding) {
+                                ForEach(QuotaPanelEdge.allCases) { edge in
+                                    Text(edge.title).tag(edge)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+                            .fixedSize()
                         }
 
-                        Spacer()
+                        HStack(spacing: 9) {
+                            Image(systemName: model.quotaPanelEdge == .left
+                                ? "sidebar.left"
+                                : "sidebar.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Color.signalMint)
+                                .frame(width: 24, height: 24)
+                                .background(
+                                    Color.signalMint.opacity(0.12),
+                                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                )
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(model.quotaPanelEdge == .left
+                                    ? "Панель у левого края"
+                                    : "Панель у правого края")
+                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.82))
+                                Text("Черная метка у края раскрывает панель. Детали появляются при наведении на кольцо")
+                                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.38))
+                            }
+                            Spacer()
+                        }
+                        .padding(10)
+                        .background(
+                            Color.black.opacity(0.34),
+                            in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        )
+                    } else {
+                        Text("Угол появления")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.46))
 
-                        Text(compactQuotaPreviewText)
-                            .font(.system(size: 15, weight: .bold, design: .monospaced))
-                            .monospacedDigit()
-                            .foregroundStyle(compactQuotaPreviewColor)
+                        LazyVGrid(
+                            columns: [
+                                GridItem(.flexible(), spacing: 8),
+                                GridItem(.flexible(), spacing: 8)
+                            ],
+                            spacing: 8
+                        ) {
+                            ForEach(QuotaStackCorner.allCases) { corner in
+                                quotaStackCornerButton(corner)
+                            }
+                        }
+
+                        HStack(spacing: 9) {
+                            Image(systemName: "square.stack.3d.up.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Color.signalMint)
+                                .frame(width: 24, height: 24)
+                                .background(
+                                    Color.signalMint.opacity(0.12),
+                                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                )
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(model.quotaStackCorner.title)
+                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.82))
+                                Text("Наведите на метку в углу — лимиты раскроются каскадом")
+                                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.38))
+                            }
+                            Spacer()
+                        }
+                        .padding(10)
+                        .background(
+                            Color.black.opacity(0.34),
+                            in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        )
                     }
-                    .padding(10)
-                    .background(
-                        Color.black.opacity(0.34),
-                        in: RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    )
                 }
             }
 
@@ -854,10 +966,12 @@ struct NotchSettingsView: View {
                     .fill(quotaStatusColor(snapshot?.connection))
                     .frame(width: 6, height: 6)
 
-                Image(systemName: quotaProviderIcon(provider.id))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(isVisible ? .white.opacity(0.68) : .white.opacity(0.26))
-                    .frame(width: 17)
+                QuotaProviderBrandIcon(
+                    providerID: provider.id,
+                    size: 13,
+                    color: isVisible ? .white.opacity(0.68) : .white.opacity(0.26)
+                )
+                .frame(width: 17)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(provider.displayName)
@@ -937,6 +1051,97 @@ struct NotchSettingsView: View {
         )
     }
 
+    private var quotaPanelEdgeBinding: Binding<QuotaPanelEdge> {
+        Binding(
+            get: { model.quotaPanelEdge },
+            set: model.setQuotaPanelEdge
+        )
+    }
+
+    private func quotaDisplayModeButton(_ mode: CompactQuotaDisplayMode) -> some View {
+        let isSelected = model.compactQuotaDisplayMode == mode
+        return Button {
+            model.setCompactQuotaDisplayMode(mode)
+        } label: {
+            VStack(spacing: 6) {
+                Image(systemName: quotaDisplayModeIcon(mode))
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(isSelected ? Color.signalMint : .white.opacity(0.58))
+                    .frame(height: 20)
+                Text(mode.title)
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(isSelected ? .white.opacity(0.92) : .white.opacity(0.54))
+            }
+            .frame(maxWidth: .infinity, minHeight: 54)
+            .background(
+                isSelected ? Color.signalMint.opacity(0.12) : Color.black.opacity(0.26),
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(
+                        isSelected ? Color.signalMint.opacity(0.42) : .white.opacity(0.06),
+                        lineWidth: 0.75
+                    )
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Режим лимитов: \(mode.title)")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private func quotaStackCornerButton(_ corner: QuotaStackCorner) -> some View {
+        let isSelected = model.quotaStackCorner == corner
+        return Button {
+            model.setQuotaStackCorner(corner)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: quotaStackCornerIcon(corner))
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(isSelected ? Color.signalMint : .white.opacity(0.48))
+                Text(corner.title)
+                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .foregroundStyle(isSelected ? .white.opacity(0.88) : .white.opacity(0.48))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 40)
+            .background(
+                isSelected ? Color.signalMint.opacity(0.10) : Color.black.opacity(0.24),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(
+                        isSelected ? Color.signalMint.opacity(0.36) : .white.opacity(0.05),
+                        lineWidth: 0.75
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(corner.title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private func quotaDisplayModeIcon(_ mode: CompactQuotaDisplayMode) -> String {
+        switch mode {
+        case .top: "rectangle.topthird.inset.filled"
+        case .wave: "sidebar.right"
+        case .stack: "square.stack.3d.up.fill"
+        }
+    }
+
+    private func quotaStackCornerIcon(_ corner: QuotaStackCorner) -> String {
+        switch corner {
+        case .topLeft: "arrow.down.right"
+        case .topRight: "arrow.down.left"
+        case .bottomLeft: "arrow.up.right"
+        case .bottomRight: "arrow.up.left"
+        }
+    }
+
     private var compactQuotaPreviewText: String {
         model.compactWeeklyRemainingRatio.map {
             "\(Int((min(max($0, 0), 1) * 100).rounded()))%"
@@ -958,15 +1163,6 @@ struct NotchSettingsView: View {
             Color.signalAmber
         case .unavailable, nil:
             .white.opacity(0.28)
-        }
-    }
-
-    private func quotaProviderIcon(_ providerID: String) -> String {
-        switch providerID {
-        case "chatgpt-subscription": "bubble.left.and.text.bubble.right"
-        case "claude-code-subscription": "sparkles"
-        case "ollama-cloud": "cloud"
-        default: "gauge.with.dots.needle.67percent"
         }
     }
 

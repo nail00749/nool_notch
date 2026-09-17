@@ -14,6 +14,9 @@ final class MemoryAppPreferences: AppPreferencesStoring {
     var quotaProviderOrder: [String]
     var hiddenQuotaProviderIDs: Set<String>
     var compactQuotaProviderID: String
+    var compactQuotaDisplayMode: CompactQuotaDisplayMode
+    var quotaPanelEdge: QuotaPanelEdge
+    var quotaStackCorner: QuotaStackCorner
     var jiraBaseURLString: String?
     var jiraSelectedProjectKeys: Set<String>
     var jiraPinnedContainers: [JiraPinnedContainer]
@@ -30,6 +33,9 @@ final class MemoryAppPreferences: AppPreferencesStoring {
         quotaProviderOrder: [String] = UserDefaultsAppPreferences.defaultQuotaProviderOrder,
         hiddenQuotaProviderIDs: Set<String> = [],
         compactQuotaProviderID: String = UserDefaultsAppPreferences.defaultQuotaProviderOrder[0],
+        compactQuotaDisplayMode: CompactQuotaDisplayMode = .top,
+        quotaPanelEdge: QuotaPanelEdge = .right,
+        quotaStackCorner: QuotaStackCorner = .bottomRight,
         jiraBaseURLString: String? = nil,
         jiraSelectedProjectKeys: Set<String> = [],
         jiraPinnedContainers: [JiraPinnedContainer] = [],
@@ -45,6 +51,9 @@ final class MemoryAppPreferences: AppPreferencesStoring {
         self.quotaProviderOrder = quotaProviderOrder
         self.hiddenQuotaProviderIDs = hiddenQuotaProviderIDs
         self.compactQuotaProviderID = compactQuotaProviderID
+        self.compactQuotaDisplayMode = compactQuotaDisplayMode
+        self.quotaPanelEdge = quotaPanelEdge
+        self.quotaStackCorner = quotaStackCorner
         self.jiraBaseURLString = jiraBaseURLString
         self.jiraSelectedProjectKeys = jiraSelectedProjectKeys
         self.jiraPinnedContainers = jiraPinnedContainers
@@ -150,6 +159,9 @@ final class FakeJiraClient: JiraClientProtocol {
     private(set) var assignCallCount = 0
     private(set) var addWorklogCallCount = 0
     private(set) var issueRequests: [Set<String>] = []
+    private(set) var issueScopes: [JiraIssueScope] = []
+    private(set) var issueStartOffsets: [Int] = []
+    private(set) var issuePageSizes: [Int] = []
     private(set) var transitionIssueKeys: [String] = []
     private(set) var performedTransitions: [(issueKey: String, transitionID: String)] = []
     private(set) var assigneeSearches: [(projectKey: String, query: String)] = []
@@ -186,11 +198,17 @@ final class FakeJiraClient: JiraClientProtocol {
     func issues(
         baseURL: URL,
         token: String,
-        projectKeys: Set<String>
+        projectKeys: Set<String>,
+        scope: JiraIssueScope,
+        startAt: Int,
+        maxResults: Int
     ) async throws -> JiraSearchPage {
         issueCallCount += 1
         let call = issueCallCount
         issueRequests.append(projectKeys)
+        issueScopes.append(scope)
+        issueStartOffsets.append(startAt)
+        issuePageSizes.append(maxResults)
 
         if controlledIssueCalls.contains(call) {
             return try await withCheckedThrowingContinuation { continuation in
@@ -472,6 +490,8 @@ final class FakeJiraProvider: JiraProviding {
     private(set) var connectedCredentials: [(baseURLText: String, token: String)] = []
     private(set) var disconnectCallCount = 0
     private(set) var selectedProjectKeySets: [Set<String>] = []
+    private(set) var selectedIssueScopes: [JiraIssueScope] = []
+    private(set) var loadMoreIssuesCallCount = 0
     private(set) var loadedTransitionIssueKeys: [String] = []
     private(set) var submittedTransitions: [(issueKey: String, transition: JiraTransition)] = []
     private(set) var assigneeSearches: [(issueKey: String, projectKey: String, query: String)] = []
@@ -512,6 +532,14 @@ final class FakeJiraProvider: JiraProviding {
 
     func setSelectedProjectKeys(_ keys: Set<String>) {
         selectedProjectKeySets.append(keys)
+    }
+
+    func setIssueScope(_ scope: JiraIssueScope) {
+        selectedIssueScopes.append(scope)
+    }
+
+    func loadMoreIssues() {
+        loadMoreIssuesCallCount += 1
     }
 
     func refreshPinnedCatalog() {}

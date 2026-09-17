@@ -105,6 +105,11 @@ struct JiraSearchPage: Equatable, Sendable {
     let total: Int
 }
 
+enum JiraIssueScope: String, Equatable, Sendable {
+    case mine
+    case allAccessible
+}
+
 struct JiraWorklogDraft: Equatable, Sendable {
     static let hourRange = 0...24
     static let minuteRange = 0...59
@@ -184,7 +189,11 @@ struct JiraProviderState: Equatable, Sendable {
     var connection: JiraConnectionState
     var projects: [JiraProject]
     var selectedProjectKeys: Set<String>
+    var issueScope: JiraIssueScope
     var list: JiraListState
+    var canLoadMoreIssues: Bool
+    var isLoadingMoreIssues: Bool
+    var loadMoreIssuesError: JiraAPIError?
     var transitionsByIssueKey: [String: JiraTransitionState]
     var assigneesByIssueKey: [String: JiraAssigneeState]
     var pinned: JiraPinnedState
@@ -193,7 +202,11 @@ struct JiraProviderState: Equatable, Sendable {
         connection: JiraConnectionState = .notConfigured,
         projects: [JiraProject] = [],
         selectedProjectKeys: Set<String> = [],
+        issueScope: JiraIssueScope = .mine,
         list: JiraListState = .idle,
+        canLoadMoreIssues: Bool = false,
+        isLoadingMoreIssues: Bool = false,
+        loadMoreIssuesError: JiraAPIError? = nil,
         transitionsByIssueKey: [String: JiraTransitionState] = [:],
         assigneesByIssueKey: [String: JiraAssigneeState] = [:],
         pinned: JiraPinnedState = JiraPinnedState()
@@ -201,7 +214,11 @@ struct JiraProviderState: Equatable, Sendable {
         self.connection = connection
         self.projects = projects
         self.selectedProjectKeys = selectedProjectKeys
+        self.issueScope = issueScope
         self.list = list
+        self.canLoadMoreIssues = canLoadMoreIssues
+        self.isLoadingMoreIssues = isLoadingMoreIssues
+        self.loadMoreIssuesError = loadMoreIssuesError
         self.transitionsByIssueKey = transitionsByIssueKey
         self.assigneesByIssueKey = assigneesByIssueKey
         self.pinned = pinned

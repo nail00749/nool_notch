@@ -15,6 +15,9 @@ final class JiraProviderTests: XCTestCase {
         XCTAssertEqual(loadedIssues(in: recorder.latest), [.fixture()])
         XCTAssertEqual(client.projectCallCount, 1)
         XCTAssertEqual(client.issueCallCount, 1)
+        XCTAssertEqual(client.issueScopes, [.mine])
+        XCTAssertEqual(client.issueStartOffsets, [0])
+        XCTAssertEqual(client.issuePageSizes, [50])
     }
 
     @MainActor
@@ -58,6 +61,116 @@ final class JiraProviderTests: XCTestCase {
 
         XCTAssertEqual(preferences.jiraSelectedProjectKeys, ["APP", "WEB"])
         XCTAssertEqual(client.issueRequests.last, ["APP", "WEB"])
+    }
+
+    @MainActor
+    func testDisablingOnlyMyIssuesRefreshesAllAccessibleScope() async {
+        let (provider, client, _, _, recorder) = makeConfiguredProvider()
+        provider.start()
+        provider.setVisible(true)
+        await waitUntil { client.issueCallCount == 1 }
+
+        provider.setIssueScope(.allAccessible)
+        await waitUntil { client.issueCallCount == 2 }
+
+        XCTAssertEqual(recorder.latest?.issueScope, .allAccessible)
+        XCTAssertTrue(recorder.states.contains {
+            $0.issueScope == .allAccessible && $0.list == .idle
+        })
+        XCTAssertEqual(client.issueScopes, [.mine, .allAccessible])
+        XCTAssertEqual(client.issueStartOffsets, [0, 0])
+    }
+
+    @MainActor
+    func testLoadMoreIssuesAppendsNextPageAndStopsAtTotal() async {
+        let (provider, client, _, _, recorder) = makeConfiguredProvider()
+        let firstPage = [
+            JiraIssue.fixture(id: "1", key: "APP-1"),
+            JiraIssue.fixture(id: "2", key: "APP-2")
+        ]
+        let secondPage = [
+            JiraIssue.fixture(id: "3", key: "APP-3"),
+            JiraIssue.fixture(id: "4", key: "APP-4")
+        ]
+        client.issueResultsByCall[1] = .success(JiraSearchPage(issues: firstPage, total: 4))
+        client.issueResultsByCall[2] = .success(JiraSearchPage(issues: secondPage, total: 4))
+        provider.start()
+        provider.setVisible(true)
+        await waitUntil { loadedIssues(in: recorder.latest) == firstPage }
+
+        XCTAssertTrue(recorder.latest?.canLoadMoreIssues == true)
+        provider.loadMoreIssues()
+        await waitUntil { loadedIssues(in: recorder.latest)?.count == 4 }
+
+        XCTAssertEqual(
+            loadedIssues(in: recorder.latest)?.map(\.key),
+            ["APP-1", "APP-2", "APP-3", "APP-4"]
+        )
+        XCTAssertEqual(client.issueStartOffsets, [0, 2])
+        XCTAssertEqual(client.issuePageSizes, [50, 50])
+        XCTAssertFalse(recorder.latest?.canLoadMoreIssues == true)
+
+        provider.loadMoreIssues()
+        await settle()
+        XCTAssertEqual(client.issueCallCount, 2)
+    }
+
+    @MainActor
+    func testLoadMoreFailurePreservesIssuesAndCanBeRetried() async {
+        let (provider, client, _, _, recorder) = makeConfiguredProvider()
+        let firstPage = [JiraIssue.fixture(id: "1", key: "APP-1")]
+        let secondPage = [JiraIssue.fixture(id: "2", key: "APP-2")]
+        client.issueResultsByCall[1] = .success(JiraSearchPage(issues: firstPage, total: 2))
+        client.issueResultsByCall[2] = .failure(JiraAPIError.rateLimited)
+        client.issueResultsByCall[3] = .success(JiraSearchPage(issues: secondPage, total: 2))
+        provider.start()
+        provider.setVisible(true)
+        await waitUntil { loadedIssues(in: recorder.latest) == firstPage }
+
+        provider.loadMoreIssues()
+        await waitUntil { recorder.latest?.loadMoreIssuesError == .rateLimited }
+
+        XCTAssertEqual(loadedIssues(in: recorder.latest), firstPage)
+        XCTAssertTrue(recorder.latest?.canLoadMoreIssues == true)
+        XCTAssertFalse(recorder.latest?.isLoadingMoreIssues == true)
+
+        provider.loadMoreIssues()
+        await waitUntil { loadedIssues(in: recorder.latest)?.count == 2 }
+
+        XCTAssertEqual(loadedIssues(in: recorder.latest), firstPage + secondPage)
+        XCTAssertNil(recorder.latest?.loadMoreIssuesError)
+        XCTAssertEqual(client.issueStartOffsets, [0, 1, 1])
+    }
+
+    @MainActor
+    func testScopeChangeRejectsLatePreviousPage() async {
+        let (provider, client, _, _, recorder) = makeConfiguredProvider()
+        let mine = JiraIssue.fixture(id: "1", key: "APP-1")
+        let lateMine = JiraIssue.fixture(id: "2", key: "APP-2")
+        let allAccessible = JiraIssue.fixture(id: "3", key: "WEB-3")
+        client.issueResultsByCall[1] = .success(JiraSearchPage(issues: [mine], total: 2))
+        client.controlledIssueCalls = [2]
+        client.issueResultsByCall[3] = .success(
+            JiraSearchPage(issues: [allAccessible], total: 1)
+        )
+        provider.start()
+        provider.setVisible(true)
+        await waitUntil { loadedIssues(in: recorder.latest) == [mine] }
+
+        provider.loadMoreIssues()
+        await waitUntil { client.issueCallCount == 2 }
+        provider.setIssueScope(.allAccessible)
+        await waitUntil { loadedIssues(in: recorder.latest) == [allAccessible] }
+
+        client.resumeIssueCall(
+            2,
+            with: .success(JiraSearchPage(issues: [lateMine], total: 2))
+        )
+        await settle()
+
+        XCTAssertEqual(loadedIssues(in: recorder.latest), [allAccessible])
+        XCTAssertEqual(client.issueScopes, [.mine, .mine, .allAccessible])
+        XCTAssertEqual(client.issueStartOffsets, [0, 1, 0])
     }
 
     @MainActor

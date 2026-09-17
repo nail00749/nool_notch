@@ -28,7 +28,7 @@ final class JiraClientTests: XCTestCase {
         let body = try jsonObject(from: request)
         XCTAssertEqual(
             body["jql"] as? String,
-            "assignee = currentUser() AND resolution IS EMPTY AND statusCategory != Done AND project IN (\"APP\", \"WEB\") ORDER BY priority DESC, updated DESC"
+            "assignee = currentUser() AND resolution IS EMPTY AND statusCategory != Done AND project IN (\"APP\", \"WEB\") ORDER BY priority DESC, updated DESC, key DESC"
         )
         XCTAssertEqual(body["maxResults"] as? Int, 50)
         XCTAssertEqual(
@@ -48,7 +48,7 @@ final class JiraClientTests: XCTestCase {
         let body = try jsonObject(from: request)
         XCTAssertEqual(
             body["jql"] as? String,
-            "assignee = currentUser() AND resolution IS EMPTY AND statusCategory != Done ORDER BY priority DESC, updated DESC"
+            "assignee = currentUser() AND resolution IS EMPTY AND statusCategory != Done ORDER BY priority DESC, updated DESC, key DESC"
         )
         assertTokenOnlyInAuthorization(request)
     }
@@ -67,9 +67,54 @@ final class JiraClientTests: XCTestCase {
         let body = try jsonObject(from: request)
         XCTAssertEqual(
             body["jql"] as? String,
-            #"assignee = currentUser() AND resolution IS EMPTY AND statusCategory != Done AND project IN ("APP\\CORE", "WEB\"OPS") ORDER BY priority DESC, updated DESC"#
+            #"assignee = currentUser() AND resolution IS EMPTY AND statusCategory != Done AND project IN ("APP\\CORE", "WEB\"OPS") ORDER BY priority DESC, updated DESC, key DESC"#
         )
         assertTokenOnlyInAuthorization(request)
+    }
+
+    func testAllAccessibleSearchRemovesAssigneeAndStatusRestrictionsAndUsesRequestedPage() async throws {
+        let transport = RecordingJiraTransport(data: Fixtures.searchPage)
+        let client = JiraClient(transport: transport)
+
+        _ = try await client.issues(
+            baseURL: baseURL,
+            token: token,
+            projectKeys: ["APP"],
+            scope: .allAccessible,
+            startAt: 50,
+            maxResults: 25
+        )
+
+        let request = try XCTUnwrap(transport.requests.first)
+        let body = try jsonObject(from: request)
+        XCTAssertEqual(
+            body["jql"] as? String,
+            "project IN (\"APP\") ORDER BY priority DESC, updated DESC, key DESC"
+        )
+        XCTAssertEqual(body["startAt"] as? Int, 50)
+        XCTAssertEqual(body["maxResults"] as? Int, 25)
+        assertTokenOnlyInAuthorization(request)
+    }
+
+    func testAllAccessibleSearchWithoutProjectsUsesOnlyStableOrdering() async throws {
+        let transport = RecordingJiraTransport(data: Fixtures.searchPage)
+        let client = JiraClient(transport: transport)
+
+        _ = try await client.issues(
+            baseURL: baseURL,
+            token: token,
+            projectKeys: [],
+            scope: .allAccessible,
+            startAt: 0,
+            maxResults: 50
+        )
+
+        let request = try XCTUnwrap(transport.requests.first)
+        let body = try jsonObject(from: request)
+        XCTAssertEqual(
+            body["jql"] as? String,
+            "ORDER BY priority DESC, updated DESC, key DESC"
+        )
     }
 
     func testCurrentUserPreservesBasePath() async throws {

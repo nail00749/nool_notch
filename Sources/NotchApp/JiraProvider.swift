@@ -24,6 +24,7 @@ final class JiraProvider: JiraProviding {
     private var transitionGenerations: [String: UInt] = [:]
     private var assigneeGenerations: [String: UInt] = [:]
     private var refreshTask: Task<Void, Never>?
+    private var loadMoreIssuesTask: Task<Void, Never>?
     private var pollingTask: Task<Void, Never>?
     private var transitionTasks: [String: Task<Void, Never>] = [:]
     private var worklogTasks: [String: InFlightWorklog] = [:]
@@ -32,6 +33,9 @@ final class JiraProvider: JiraProviding {
     private var pinnedCatalogGeneration: UInt = 0
     private var pinnedSourceGeneration: UInt = 0
     private var pendingPinIssueKeys: Set<String> = []
+    private var nextIssueStartAt = 0
+
+    private static let issuePageSize = 50
 
     init(
         client: JiraClientProtocol,
@@ -113,13 +117,16 @@ final class JiraProvider: JiraProviding {
         }
 
         refreshTask?.cancel()
+        cancelLoadMoreIssues()
         refreshGeneration &+= 1
         let generation = refreshGeneration
         let previous = currentIssues
         state.list = .loading(previous: previous)
+        state.canLoadMoreIssues = false
         publish()
 
         let selectedKeys = state.selectedProjectKeys
+        let scope = state.issueScope
         refreshTask = Task { [weak self, client] in
             do {
                 let projects = try await client.projects(
@@ -129,7 +136,10 @@ final class JiraProvider: JiraProviding {
                 let page = try await client.issues(
                     baseURL: configuration.baseURL,
                     token: configuration.token,
-                    projectKeys: selectedKeys
+                    projectKeys: selectedKeys,
+                    scope: scope,
+                    startAt: 0,
+                    maxResults: Self.issuePageSize
                 )
                 guard let self,
                       self.isStarted,
@@ -137,12 +147,17 @@ final class JiraProvider: JiraProviding {
                       self.refreshGeneration == generation else { return }
                 self.state.projects = projects
                 self.state.list = .loaded(issues: page.issues, total: page.total)
+                self.nextIssueStartAt = page.issues.count
+                self.state.canLoadMoreIssues = page.issues.isEmpty == false
+                    && self.nextIssueStartAt < page.total
+                self.refreshTask = nil
                 self.publish()
             } catch {
                 guard let self,
                       self.isStarted,
                       self.isVisible,
                       self.refreshGeneration == generation else { return }
+                self.refreshTask = nil
                 self.publishListFailure(Self.normalizedError(error), previous: previous)
             }
         }
@@ -233,6 +248,87 @@ final class JiraProvider: JiraProviding {
         publish()
         if isStarted, isVisible, isConfigured {
             refresh()
+        }
+    }
+
+    func setIssueScope(_ scope: JiraIssueScope) {
+        guard state.issueScope != scope else { return }
+        state.issueScope = scope
+        state.list = .idle
+        state.canLoadMoreIssues = false
+        state.isLoadingMoreIssues = false
+        state.loadMoreIssuesError = nil
+        publish()
+        if isStarted, isVisible, isConfigured {
+            refresh()
+        }
+    }
+
+    func loadMoreIssues() {
+        guard isStarted,
+              isVisible,
+              isConfigured,
+              loadMoreIssuesTask == nil,
+              state.canLoadMoreIssues,
+              case .loaded = state.list else { return }
+
+        let configuration: (baseURL: URL, token: String)
+        do {
+            guard let resolved = try configuredCredentials() else { return }
+            configuration = resolved
+        } catch {
+            state.loadMoreIssuesError = Self.normalizedError(error)
+            publish()
+            return
+        }
+
+        let generation = refreshGeneration
+        let startAt = nextIssueStartAt
+        let selectedKeys = state.selectedProjectKeys
+        let scope = state.issueScope
+        state.isLoadingMoreIssues = true
+        state.loadMoreIssuesError = nil
+        publish()
+
+        loadMoreIssuesTask = Task { [weak self, client] in
+            do {
+                let page = try await client.issues(
+                    baseURL: configuration.baseURL,
+                    token: configuration.token,
+                    projectKeys: selectedKeys,
+                    scope: scope,
+                    startAt: startAt,
+                    maxResults: Self.issuePageSize
+                )
+                guard let self,
+                      self.isStarted,
+                      self.isVisible,
+                      self.refreshGeneration == generation,
+                      case let .loaded(currentIssues, _) = self.state.list else { return }
+                let issues = Self.appendingUniqueIssues(
+                    page.issues,
+                    to: currentIssues
+                )
+                self.nextIssueStartAt = startAt + page.issues.count
+                self.state.list = .loaded(issues: issues, total: page.total)
+                self.state.canLoadMoreIssues = page.issues.isEmpty == false
+                    && self.nextIssueStartAt < page.total
+                self.state.isLoadingMoreIssues = false
+                self.state.loadMoreIssuesError = nil
+                self.loadMoreIssuesTask = nil
+                self.publish()
+            } catch {
+                guard let self,
+                      self.isStarted,
+                      self.isVisible,
+                      self.refreshGeneration == generation else { return }
+                let error = Self.normalizedError(error)
+                self.state.isLoadingMoreIssues = false
+                self.state.loadMoreIssuesError = error
+                self.loadMoreIssuesTask = nil
+                self.invalidateAuthorizationIfNeeded(error)
+                self.publish()
+            }
         }
     }
 
@@ -905,10 +1001,20 @@ final class JiraProvider: JiraProviding {
     private func cancelRefreshAndPolling() {
         refreshTask?.cancel()
         refreshTask = nil
+        cancelLoadMoreIssues()
         pollingTask?.cancel()
         pollingTask = nil
         refreshGeneration &+= 1
         pollingGeneration &+= 1
+    }
+
+    private func cancelLoadMoreIssues() {
+        loadMoreIssuesTask?.cancel()
+        loadMoreIssuesTask = nil
+        nextIssueStartAt = 0
+        state.canLoadMoreIssues = false
+        state.isLoadingMoreIssues = false
+        state.loadMoreIssuesError = nil
     }
 
     private func cancelPinnedTasks() {
@@ -1114,6 +1220,14 @@ final class JiraProvider: JiraProviding {
 
     private func publish() {
         onChange?(state)
+    }
+
+    private static func appendingUniqueIssues(
+        _ newIssues: [JiraIssue],
+        to existingIssues: [JiraIssue]
+    ) -> [JiraIssue] {
+        var seen = Set(existingIssues.map(\.key))
+        return existingIssues + newIssues.filter { seen.insert($0.key).inserted }
     }
 
     private static func normalizedError(_ error: Error) -> JiraAPIError {

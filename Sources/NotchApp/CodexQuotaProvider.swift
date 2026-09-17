@@ -73,7 +73,7 @@ private struct CodexAccountResponse: Decodable, Sendable {
     let account: Account?
 }
 
-private struct CodexRateLimitsResponse: Decodable, Sendable {
+struct CodexRateLimitsResponse: Decodable, Sendable {
     struct Window: Decodable, Sendable {
         let usedPercent: Int
         let windowDurationMins: Int?
@@ -91,7 +91,7 @@ private struct CodexRateLimitsResponse: Decodable, Sendable {
     let rateLimitsByLimitId: [String: Snapshot]?
 }
 
-private enum CodexQuotaSnapshotMapper {
+enum CodexQuotaSnapshotMapper {
     static func windows(
         from response: CodexRateLimitsResponse,
         planType: String?
@@ -100,14 +100,25 @@ private enum CodexQuotaSnapshotMapper {
         let primaryID = primary.limitId
         let normalizedPlanType = planType?.lowercased()
         let hidesFiveHourWindows = normalizedPlanType == "pro" || normalizedPlanType == "prolite"
-        var buckets: [(key: String, snapshot: CodexRateLimitsResponse.Snapshot)] = [
-            (primaryID ?? "codex", primary)
-        ]
+        let primaryKey = primaryID ?? "codex"
+        var buckets: [(key: String, snapshot: CodexRateLimitsResponse.Snapshot)] = []
+        if isGPT53SparkLimit(
+            key: primaryKey,
+            limitID: primary.limitId,
+            limitName: primary.limitName
+        ) == false {
+            buckets.append((primaryKey, primary))
+        }
 
         for (key, snapshot) in (response.rateLimitsByLimitId ?? [:]).sorted(by: { $0.key < $1.key }) {
             let duplicatesPrimary = key == "codex"
                 || (primaryID.map { $0 == key || $0 == snapshot.limitId } ?? false)
-            if !duplicatesPrimary {
+            if !duplicatesPrimary,
+               isGPT53SparkLimit(
+                   key: key,
+                   limitID: snapshot.limitId,
+                   limitName: snapshot.limitName
+               ) == false {
                 buckets.append((key, snapshot))
             }
         }
@@ -176,6 +187,26 @@ private enum CodexQuotaSnapshotMapper {
         let value = Double(value)
         let expected = Double(expected)
         return value >= expected * 0.95 && value <= expected * 1.05
+    }
+
+    static func isGPT53SparkLimit(
+        key: String,
+        limitID: String?,
+        limitName: String?
+    ) -> Bool {
+        let excludedNames: Set<String> = [
+            "codexspark",
+            "gpt53spark",
+            "gpt53codexspark"
+        ]
+        return [key, limitID, limitName]
+            .compactMap { $0 }
+            .map {
+                $0.lowercased().filter { character in
+                    character.isLetter || character.isNumber
+                }
+            }
+            .contains { excludedNames.contains($0) }
     }
 }
 

@@ -86,6 +86,61 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(UserDefaultsAppPreferences(defaults: defaults).selectedAISection, .sessions)
     }
 
+    func testCompactQuotaPresentationDefaultsAndRoundTrips() {
+        let suiteName = "NotchAppTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let preferences = UserDefaultsAppPreferences(defaults: defaults)
+
+        XCTAssertEqual(preferences.compactQuotaDisplayMode, .top)
+        XCTAssertEqual(preferences.quotaPanelEdge, .right)
+        XCTAssertEqual(preferences.quotaStackCorner, .bottomRight)
+        preferences.compactQuotaDisplayMode = .stack
+        preferences.quotaPanelEdge = .left
+        preferences.quotaStackCorner = .topLeft
+
+        XCTAssertEqual(
+            UserDefaultsAppPreferences(defaults: defaults).compactQuotaDisplayMode,
+            .stack
+        )
+        XCTAssertEqual(UserDefaultsAppPreferences(defaults: defaults).quotaPanelEdge, .left)
+        XCTAssertEqual(UserDefaultsAppPreferences(defaults: defaults).quotaStackCorner, .topLeft)
+
+        defaults.set("inline", forKey: UserDefaultsAppPreferences.compactQuotaDisplayModeKey)
+        XCTAssertEqual(
+            UserDefaultsAppPreferences(defaults: defaults).compactQuotaDisplayMode,
+            .top
+        )
+
+        defaults.set("hoverSidebar", forKey: UserDefaultsAppPreferences.compactQuotaDisplayModeKey)
+        XCTAssertEqual(
+            UserDefaultsAppPreferences(defaults: defaults).compactQuotaDisplayMode,
+            .wave
+        )
+
+        defaults.set("unknown", forKey: UserDefaultsAppPreferences.compactQuotaDisplayModeKey)
+        XCTAssertEqual(
+            UserDefaultsAppPreferences(defaults: defaults).compactQuotaDisplayMode,
+            .top
+        )
+    }
+
+    func testCompactQuotaLegacyEdgesMigrateIntoWaveModeAndPlacement() {
+        let suiteName = "NotchAppTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("left", forKey: UserDefaultsAppPreferences.compactQuotaDisplayModeKey)
+        var preferences = UserDefaultsAppPreferences(defaults: defaults)
+        XCTAssertEqual(preferences.compactQuotaDisplayMode, .wave)
+        XCTAssertEqual(preferences.quotaPanelEdge, .left)
+
+        defaults.set("right", forKey: UserDefaultsAppPreferences.compactQuotaDisplayModeKey)
+        preferences = UserDefaultsAppPreferences(defaults: defaults)
+        XCTAssertEqual(preferences.compactQuotaDisplayMode, .wave)
+        XCTAssertEqual(preferences.quotaPanelEdge, .right)
+    }
+
     func testNonFiniteHoverDelayFallsBackSafely() {
         let suiteName = "NotchAppTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

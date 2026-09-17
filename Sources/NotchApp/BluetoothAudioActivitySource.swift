@@ -253,27 +253,37 @@ final class BluetoothAudioActivitySource: NSObject, LiveActivitySource {
         }
     }
 
-    @objc private func deviceDidConnect(
-        _ notification: IOBluetoothUserNotification,
+    @objc nonisolated func deviceDidConnect(
+        _ notification: IOBluetoothUserNotification?,
         device: IOBluetoothDevice
     ) {
-        registerDisconnectNotification(for: device)
-        scheduleRefresh(after: .milliseconds(700))
+        let address = device.addressString
+        Task { @MainActor [weak self] in
+            guard let self, self.isStarted else { return }
+            if let address, let localDevice = IOBluetoothDevice(addressString: address) {
+                self.registerDisconnectNotification(for: localDevice)
+            }
+            self.scheduleRefresh(after: .milliseconds(700))
+        }
     }
 
-    @objc private func deviceDidDisconnect(
-        _ notification: IOBluetoothUserNotification,
+    @objc nonisolated func deviceDidDisconnect(
+        _ notification: IOBluetoothUserNotification?,
         device: IOBluetoothDevice
     ) {
-        if let id = device.addressString {
-            disconnectNotifications[id]?.unregister()
-            disconnectNotifications[id] = nil
-            currentDevices[id] = nil
-            let now = Date.now
-            onChange?(tracker.consume(Array(currentDevices.values), now: now))
-            scheduleExpiry(after: now)
+        let address = device.addressString
+        Task { @MainActor [weak self] in
+            guard let self, self.isStarted else { return }
+            if let id = address {
+                self.disconnectNotifications[id]?.unregister()
+                self.disconnectNotifications[id] = nil
+                self.currentDevices[id] = nil
+                let now = Date.now
+                self.onChange?(self.tracker.consume(Array(self.currentDevices.values), now: now))
+                self.scheduleExpiry(after: now)
+            }
+            self.scheduleRefresh(after: .seconds(1))
         }
-        scheduleRefresh(after: .seconds(1))
     }
 
     private func scheduleExpiry(after now: Date) {

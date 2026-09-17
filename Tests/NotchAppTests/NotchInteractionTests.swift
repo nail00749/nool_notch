@@ -420,6 +420,319 @@ final class NotchInteractionTests: XCTestCase {
         )
     }
 
+    func testQuotaEdgeRailPinsToSelectedScreenSideNearTop() {
+        let screen = CGRect(x: 100, y: 50, width: 1_800, height: 1_100)
+        let expectedSize = QuotaEdgePanelLayout.railSize(providerCount: 3)
+
+        let left = QuotaEdgePanelLayout.railFrame(
+            in: screen,
+            edge: .left,
+            providerCount: 3
+        )
+        let right = QuotaEdgePanelLayout.railFrame(
+            in: screen,
+            edge: .right,
+            providerCount: 3
+        )
+
+        XCTAssertEqual(left.size, expectedSize)
+        XCTAssertEqual(left.minX, screen.minX)
+        XCTAssertEqual(right.maxX, screen.maxX)
+        XCTAssertEqual(left.maxY, screen.maxY - QuotaEdgePanelLayout.screenTopInset)
+        XCTAssertEqual(right.maxY, left.maxY)
+    }
+
+    func testQuotaEdgeTriggerKeepsTwoPointMarkerInsideEightPointHitArea() {
+        let screen = CGRect(x: 100, y: 50, width: 1_800, height: 1_100)
+        let left = QuotaEdgePanelLayout.triggerFrame(
+            in: screen,
+            edge: .left,
+            providerCount: 3
+        )
+        let right = QuotaEdgePanelLayout.triggerFrame(
+            in: screen,
+            edge: .right,
+            providerCount: 3
+        )
+
+        XCTAssertEqual(QuotaEdgePanelLayout.triggerIndicatorWidth, 2)
+        XCTAssertEqual(left.width, 8)
+        XCTAssertEqual(left.minX, screen.minX)
+        XCTAssertEqual(right.maxX, screen.maxX)
+        XCTAssertEqual(left.height, QuotaEdgePanelLayout.railSize(providerCount: 3).height)
+    }
+
+    func testQuotaEdgeTriggerStaysAboveRailDuringStationaryPointerHandoff() {
+        XCTAssertGreaterThan(
+            QuotaEdgeWindowLevel.trigger.rawValue,
+            QuotaEdgeWindowLevel.rail.rawValue
+        )
+    }
+
+    func testQuotaEdgePanelMotionOffsetsOutwardFromEitherScreenEdge() {
+        let frame = NSRect(x: 100, y: 200, width: 70, height: 260)
+        let leftReveal = QuotaEdgePanelMotion.frame(
+            offsetOutwardFrom: frame,
+            edge: .left,
+            distance: QuotaEdgePanelMotion.revealOffset
+        )
+        let rightReveal = QuotaEdgePanelMotion.frame(
+            offsetOutwardFrom: frame,
+            edge: .right,
+            distance: QuotaEdgePanelMotion.revealOffset
+        )
+
+        XCTAssertEqual(leftReveal.origin.x, frame.origin.x - 56)
+        XCTAssertEqual(rightReveal.origin.x, frame.origin.x + 56)
+        XCTAssertEqual(leftReveal.size, frame.size)
+        XCTAssertEqual(rightReveal.size, frame.size)
+        XCTAssertEqual(QuotaEdgePanelMotion.revealInitialAlpha, 0.16)
+        XCTAssertEqual(QuotaEdgePanelMotion.revealDuration, 0.30)
+        XCTAssertGreaterThan(QuotaEdgePanelMotion.revealDuration, QuotaEdgePanelMotion.hideDuration)
+    }
+
+    func testQuotaEdgeRailVisibilityDependsOnlyOnItsOwnHoverSurfaces() {
+        XCTAssertFalse(QuotaEdgeVisibilityPolicy.showsRail(
+            triggerHovered: false,
+            railHovered: false
+        ))
+        XCTAssertTrue(QuotaEdgeVisibilityPolicy.showsRail(
+            triggerHovered: true,
+            railHovered: false
+        ))
+        XCTAssertTrue(QuotaEdgeVisibilityPolicy.showsRail(
+            triggerHovered: false,
+            railHovered: true
+        ))
+    }
+
+    func testQuotaEdgeVisibilityWaitsForHoverGraceAcrossModelUpdates() {
+        XCTAssertEqual(
+            QuotaEdgeVisibilityPolicy.decision(
+                triggerHovered: false,
+                railHovered: false,
+                hideScheduled: true
+            ),
+            .waitForGracePeriod
+        )
+        XCTAssertEqual(
+            QuotaEdgeVisibilityPolicy.decision(
+                triggerHovered: false,
+                railHovered: true,
+                hideScheduled: true
+            ),
+            .show
+        )
+        XCTAssertEqual(
+            QuotaEdgeVisibilityPolicy.decision(
+                triggerHovered: false,
+                railHovered: false,
+                hideScheduled: false
+            ),
+            .hide
+        )
+    }
+
+    func testQuotaCornerStackFansInwardFromEveryCorner() {
+        let screen = CGRect(x: -1_920, y: 40, width: 1_920, height: 1_080)
+        let topLeftFirst = QuotaCornerStackLayout.itemFrame(
+            in: screen,
+            corner: .topLeft,
+            index: 0
+        )
+        let topLeftSecond = QuotaCornerStackLayout.itemFrame(
+            in: screen,
+            corner: .topLeft,
+            index: 1
+        )
+        let topRightFirst = QuotaCornerStackLayout.itemFrame(
+            in: screen,
+            corner: .topRight,
+            index: 0
+        )
+        let bottomLeftFirst = QuotaCornerStackLayout.itemFrame(
+            in: screen,
+            corner: .bottomLeft,
+            index: 0
+        )
+        let bottomLeftSecond = QuotaCornerStackLayout.itemFrame(
+            in: screen,
+            corner: .bottomLeft,
+            index: 1
+        )
+        let bottomRightFirst = QuotaCornerStackLayout.itemFrame(
+            in: screen,
+            corner: .bottomRight,
+            index: 0
+        )
+
+        XCTAssertGreaterThan(topLeftSecond.minX, topLeftFirst.minX)
+        XCTAssertLessThan(topLeftSecond.midY, topLeftFirst.midY)
+        XCTAssertLessThan(bottomLeftFirst.midY, bottomLeftSecond.midY)
+        XCTAssertEqual(topLeftFirst.minX, bottomLeftFirst.minX)
+        XCTAssertEqual(topRightFirst.maxX, bottomRightFirst.maxX)
+        for frame in [topLeftFirst, topLeftSecond, topRightFirst, bottomLeftFirst, bottomLeftSecond, bottomRightFirst] {
+            XCTAssertTrue(screen.contains(frame))
+        }
+    }
+
+    func testQuotaCornerStackTriggerTouchesPhysicalCorner() {
+        let screen = CGRect(x: 100, y: 50, width: 1_800, height: 1_100)
+        let topLeft = QuotaCornerStackLayout.triggerFrame(in: screen, corner: .topLeft)
+        let bottomRight = QuotaCornerStackLayout.triggerFrame(in: screen, corner: .bottomRight)
+
+        XCTAssertEqual(QuotaCornerStackLayout.triggerIndicatorWidth, 2)
+        XCTAssertEqual(topLeft.minX, screen.minX)
+        XCTAssertEqual(topLeft.maxY, screen.maxY)
+        XCTAssertEqual(bottomRight.maxX, screen.maxX)
+        XCTAssertEqual(bottomRight.minY, screen.minY)
+    }
+
+    func testQuotaCornerStackRevealInsetsItemsWhileAnchorStaysAtPhysicalCorner() {
+        let screen = CGRect(x: -1_920, y: 40, width: 1_920, height: 1_080)
+
+        for corner in QuotaStackCorner.allCases {
+            let trigger = QuotaCornerStackLayout.triggerFrame(in: screen, corner: corner)
+            let firstItem = QuotaCornerStackLayout.itemFrame(
+                in: screen,
+                corner: corner,
+                index: 0
+            )
+            let collapsedItem = QuotaCornerStackLayout.collapsedFrame(
+                in: screen,
+                corner: corner
+            )
+
+            XCTAssertTrue(screen.contains(trigger))
+            XCTAssertTrue(screen.contains(firstItem))
+            XCTAssertTrue(screen.contains(collapsedItem))
+
+            if corner.edge == .left {
+                XCTAssertEqual(trigger.minX, screen.minX)
+                XCTAssertEqual(firstItem.minX, screen.minX + QuotaCornerStackLayout.revealedMargin)
+                XCTAssertEqual(collapsedItem.minX, screen.minX)
+            } else {
+                XCTAssertEqual(trigger.maxX, screen.maxX)
+                XCTAssertEqual(firstItem.maxX, screen.maxX - QuotaCornerStackLayout.revealedMargin)
+                XCTAssertEqual(collapsedItem.maxX, screen.maxX)
+            }
+
+            if corner.isTop {
+                XCTAssertEqual(trigger.maxY, screen.maxY)
+                XCTAssertEqual(firstItem.maxY, screen.maxY - QuotaCornerStackLayout.revealedMargin)
+                XCTAssertEqual(collapsedItem.maxY, screen.maxY)
+            } else {
+                XCTAssertEqual(trigger.minY, screen.minY)
+                XCTAssertEqual(firstItem.minY, screen.minY + QuotaCornerStackLayout.revealedMargin)
+                XCTAssertEqual(collapsedItem.minY, screen.minY)
+            }
+        }
+    }
+
+    func testQuotaCornerStackVisibilityUsesTriggerAndAllItemWindows() {
+        XCTAssertEqual(
+            QuotaCornerStackVisibilityPolicy.decision(
+                triggerHovered: true,
+                hoveredProviderIDs: [],
+                hideScheduled: false
+            ),
+            .show
+        )
+        XCTAssertEqual(
+            QuotaCornerStackVisibilityPolicy.decision(
+                triggerHovered: false,
+                hoveredProviderIDs: ["claude"],
+                hideScheduled: true
+            ),
+            .show
+        )
+        XCTAssertEqual(
+            QuotaCornerStackVisibilityPolicy.decision(
+                triggerHovered: false,
+                hoveredProviderIDs: [],
+                hideScheduled: true
+            ),
+            .waitForGracePeriod
+        )
+        XCTAssertEqual(
+            QuotaCornerStackVisibilityPolicy.decision(
+                triggerHovered: false,
+                hoveredProviderIDs: [],
+                hideScheduled: false
+            ),
+            .hide
+        )
+    }
+
+    func testQuotaCornerStackMotionUsesStaggeredSofterExit() {
+        XCTAssertEqual(QuotaCornerStackMotion.revealDuration, 0.32)
+        XCTAssertEqual(QuotaCornerStackMotion.revealStagger, 0.035)
+        XCTAssertEqual(QuotaCornerStackMotion.hideDuration, 0.22)
+        XCTAssertLessThan(
+            QuotaCornerStackMotion.hideDuration,
+            QuotaCornerStackMotion.revealDuration
+        )
+        XCTAssertGreaterThan(QuotaCornerStackLayout.itemHeight, 44)
+        XCTAssertGreaterThanOrEqual(QuotaCornerStackLayout.ringSize, 44)
+        XCTAssertEqual(
+            QuotaCornerStackLayout.restingRotation(index: 0, corner: .bottomRight),
+            0
+        )
+    }
+
+    func testQuotaProviderVisualsUseBrandedAssetsWithOpticalSizing() {
+        let chatGPT = QuotaProviderVisuals(providerID: "chatgpt-subscription")
+        let claude = QuotaProviderVisuals(providerID: "claude-code-subscription")
+        let ollama = QuotaProviderVisuals(providerID: "ollama-cloud")
+        let fallback = QuotaProviderVisuals(providerID: "unknown")
+
+        XCTAssertEqual(chatGPT.icon, .asset("QuotaChatGPT"))
+        XCTAssertEqual(chatGPT.accent, .chatGPT)
+        XCTAssertEqual(chatGPT.opticalScale, 1)
+        XCTAssertEqual(claude.icon, .asset("QuotaClaude"))
+        XCTAssertEqual(claude.accent, .claude)
+        XCTAssertEqual(claude.opticalScale, 0.92)
+        XCTAssertEqual(ollama.icon, .asset("QuotaOllama"))
+        XCTAssertEqual(ollama.accent, .ollama)
+        XCTAssertEqual(ollama.opticalScale, 0.86)
+        XCTAssertEqual(fallback.icon, .system("gauge.with.dots.needle.67percent"))
+        XCTAssertEqual(fallback.accent, .fallback)
+        XCTAssertEqual(QuotaProviderRingStyle.activeLineWidth, 3.5)
+        XCTAssertEqual(QuotaProviderRingStyle.glowRadius, 3)
+    }
+
+    func testQuotaEdgeDetailOpensInwardAndStaysOnScreen() {
+        let screen = CGRect(x: 100, y: 50, width: 1_800, height: 1_100)
+        let leftRail = QuotaEdgePanelLayout.railFrame(
+            in: screen,
+            edge: .left,
+            providerCount: 3
+        )
+        let rightRail = QuotaEdgePanelLayout.railFrame(
+            in: screen,
+            edge: .right,
+            providerCount: 3
+        )
+
+        let leftDetail = QuotaEdgePanelLayout.detailFrame(
+            in: screen,
+            railFrame: leftRail,
+            edge: .left,
+            providerIndex: 0
+        )
+        let rightDetail = QuotaEdgePanelLayout.detailFrame(
+            in: screen,
+            railFrame: rightRail,
+            edge: .right,
+            providerIndex: 2
+        )
+
+        XCTAssertEqual(leftDetail.minX, leftRail.maxX + QuotaEdgePanelLayout.detailGap)
+        XCTAssertEqual(rightDetail.maxX, rightRail.minX - QuotaEdgePanelLayout.detailGap)
+        XCTAssertGreaterThanOrEqual(leftDetail.minY, screen.minY)
+        XCTAssertLessThanOrEqual(rightDetail.maxY, screen.maxY)
+    }
+
     func testJiraDisconnectIsEnabledOnlyWhenConfiguredAndNoAsyncIntentIsBusy() {
         XCTAssertFalse(
             JiraConnectionInteractionPolicy.canDisconnect(

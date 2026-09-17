@@ -1,9 +1,76 @@
 import Foundation
+import NotchCore
 import XCTest
 @testable import NotchApp
 
 @MainActor
 final class NotchViewModelProviderTests: XCTestCase {
+    func testQuotaRefreshIsPrefetchedAndHoverRefreshesOnlyWhenStale() async {
+        let provider = RecordingQuotaProvider()
+        var currentDate = Date(timeIntervalSince1970: 1_000)
+        let model = makeModel(providers: [provider], now: { currentDate })
+        await settleMainActorTasks()
+
+        let initialCallCount = await provider.callCount
+        XCTAssertEqual(initialCallCount, 1)
+
+        model.isCompactHovered = true
+        await settleMainActorTasks()
+        let freshHoverCallCount = await provider.callCount
+        XCTAssertEqual(freshHoverCallCount, 1)
+
+        model.isCompactHovered = false
+        currentDate = currentDate.addingTimeInterval(11)
+        model.isCompactHovered = true
+        await settleMainActorTasks()
+        let staleHoverCallCount = await provider.callCount
+        XCTAssertEqual(staleHoverCallCount, 2)
+    }
+
+    func testOpeningNotchRefreshesStaleQuotaWithoutWaitingForLimitsPanel() async {
+        let provider = RecordingQuotaProvider()
+        var currentDate = Date(timeIntervalSince1970: 1_000)
+        let model = makeModel(providers: [provider], now: { currentDate })
+        await settleMainActorTasks()
+        let initialCallCount = await provider.callCount
+        XCTAssertEqual(initialCallCount, 1)
+
+        currentDate = currentDate.addingTimeInterval(11)
+        model.isExpanded = true
+        await settleMainActorTasks()
+
+        let expandedCallCount = await provider.callCount
+        XCTAssertEqual(expandedCallCount, 2)
+    }
+
+    func testSideModeKeepsEdgeTriggerIndependentFromNotchHoverAndExpansion() async {
+        let providers = [RecordingQuotaProvider(id: "first"), RecordingQuotaProvider(id: "second")]
+        let preferences = MemoryAppPreferences(
+            quotaProviderOrder: ["first", "second"],
+            compactQuotaProviderID: "first",
+            compactQuotaDisplayMode: .wave,
+            quotaPanelEdge: .right
+        )
+        let model = makeModel(providers: providers, preferences: preferences)
+        await settleMainActorTasks()
+
+        XCTAssertTrue(model.shouldEnableQuotaEdgePanel)
+        XCTAssertFalse(model.shouldEnableQuotaCornerStack)
+        model.isCompactHovered = true
+        XCTAssertTrue(model.shouldEnableQuotaEdgePanel)
+        model.isExpanded = true
+        XCTAssertTrue(model.shouldEnableQuotaEdgePanel)
+        model.setCompactQuotaDisplayMode(.top)
+        XCTAssertFalse(model.shouldEnableQuotaEdgePanel)
+        model.setQuotaPanelEdge(.left)
+        model.setQuotaStackCorner(.topRight)
+        model.setCompactQuotaDisplayMode(.stack)
+        XCTAssertFalse(model.shouldEnableQuotaEdgePanel)
+        XCTAssertTrue(model.shouldEnableQuotaCornerStack)
+        XCTAssertEqual(preferences.quotaPanelEdge, .left)
+        XCTAssertEqual(preferences.quotaStackCorner, .topRight)
+    }
+
     func testRunningAndPausedTimerAppearInCompactAndCancelClearsIt() {
         let model = makeModel()
         model.timerSource.create(duration: 300)
@@ -295,11 +362,15 @@ final class NotchViewModelProviderTests: XCTestCase {
 
         model.refreshJira()
         model.setJiraSelectedProjectKeys(["APP", "WEB"])
+        model.setJiraIssueScope(.allAccessible)
+        model.loadMoreJiraIssues()
         await model.loadJiraTransitions(for: "APP-184")
         await model.submitJiraTransition(issueKey: "APP-184", transition: transition)
 
         XCTAssertEqual(jira.refreshCallCount, 1)
         XCTAssertEqual(jira.selectedProjectKeySets, [Set(["APP", "WEB"])])
+        XCTAssertEqual(jira.selectedIssueScopes, [.allAccessible])
+        XCTAssertEqual(jira.loadMoreIssuesCallCount, 1)
         XCTAssertEqual(jira.loadedTransitionIssueKeys, ["APP-184"])
         XCTAssertEqual(jira.submittedTransitions.count, 1)
         XCTAssertEqual(jira.submittedTransitions.first?.issueKey, "APP-184")
@@ -490,21 +561,24 @@ final class NotchViewModelProviderTests: XCTestCase {
     }
 
     private func makeModel(
+        providers: [any QuotaProvider] = [],
         calendarProvider: FakeCalendarProvider = FakeCalendarProvider(),
         nowPlayingProvider: FakeNowPlayingProvider = FakeNowPlayingProvider(),
         jiraProvider: FakeJiraProvider = FakeJiraProvider(),
         aiSessionStore: AISessionStore = AISessionStore(sources: []),
         codeReviewProvider: any CodeReviewProviding = LocalCodeReviewProvider(),
-        preferences: MemoryAppPreferences = MemoryAppPreferences()
+        preferences: MemoryAppPreferences = MemoryAppPreferences(),
+        now: @escaping @MainActor () -> Date = Date.init
     ) -> NotchViewModel {
         NotchViewModel(
-            providers: [],
+            providers: providers,
             calendarProvider: calendarProvider,
             nowPlayingProvider: nowPlayingProvider,
             jiraProvider: jiraProvider,
             aiSessionStore: aiSessionStore,
             codeReviewProvider: codeReviewProvider,
-            preferences: preferences
+            preferences: preferences,
+            now: now
         )
     }
 
@@ -529,6 +603,40 @@ final class NotchViewModelProviderTests: XCTestCase {
         for _ in 0..<4 {
             await Task.yield()
         }
+    }
+}
+
+private actor RecordingQuotaProvider: QuotaProvider {
+    nonisolated let id: String
+    nonisolated let displayName: String
+    nonisolated let sourceURL: URL? = nil
+    private(set) var callCount = 0
+
+    init(id: String = "quota") {
+        self.id = id
+        self.displayName = id
+    }
+
+    func loadSnapshot() async -> QuotaSnapshot {
+        callCount += 1
+        return QuotaSnapshot(
+            providerID: id,
+            providerName: displayName,
+            windows: [
+                QuotaWindow(
+                    id: "weekly",
+                    label: "7d",
+                    limit: 100,
+                    remaining: 75,
+                    resetAt: nil,
+                    unit: .percentage
+                )
+            ],
+            connection: .live,
+            updatedAt: .now,
+            sourceURL: nil,
+            message: nil
+        )
     }
 }
 

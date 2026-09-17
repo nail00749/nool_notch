@@ -176,7 +176,9 @@ struct CompactNotch: View {
             )
             .overlay {
                 CompactQuotaBorder(
-                    remainingRatio: model.compactWeeklyRemainingRatio,
+                    remainingRatio: model.compactQuotaDisplayMode == .top
+                        ? model.compactWeeklyRemainingRatio
+                        : nil,
                     lineColor: visualSettings.lineColor,
                     lineGradientColor: visualSettings.lineGradientColor,
                     lineMode: visualSettings.lineMode,
@@ -273,11 +275,15 @@ struct CompactNotch: View {
                     PhysicalNotchSafeZone(size: physicalNotchSize)
                         .frame(width: physicalNotchSize.width)
 
-                    CompactWeeklyQuotaIndicator(
-                        remainingRatio: model.compactWeeklyRemainingRatio,
-                        providerName: model.compactQuotaProviderName
-                    )
-                    .frame(width: NotchLayout.compactWingWidth)
+                    if model.compactQuotaDisplayMode == .top {
+                        CompactWeeklyQuotaIndicator(
+                            remainingRatio: model.compactWeeklyRemainingRatio,
+                            providerName: model.compactQuotaProviderName
+                        )
+                        .frame(width: NotchLayout.compactWingWidth)
+                    } else {
+                        Color.clear.frame(width: NotchLayout.compactWingWidth)
+                    }
                 }
             } else {
                 PhysicalNotchSafeZone(size: physicalNotchSize)
@@ -292,7 +298,7 @@ struct CompactNotch: View {
 
                 Spacer(minLength: 0)
 
-                if isPlaying {
+                if isPlaying, model.compactQuotaDisplayMode == .top {
                     CompactWeeklyQuotaIndicator(
                         remainingRatio: model.compactWeeklyRemainingRatio,
                         providerName: model.compactQuotaProviderName

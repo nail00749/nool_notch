@@ -4,7 +4,14 @@ import Foundation
 protocol JiraClientProtocol: AnyObject {
     func currentUser(baseURL: URL, token: String) async throws -> JiraUser
     func projects(baseURL: URL, token: String) async throws -> [JiraProject]
-    func issues(baseURL: URL, token: String, projectKeys: Set<String>) async throws -> JiraSearchPage
+    func issues(
+        baseURL: URL,
+        token: String,
+        projectKeys: Set<String>,
+        scope: JiraIssueScope,
+        startAt: Int,
+        maxResults: Int
+    ) async throws -> JiraSearchPage
     func boards(baseURL: URL, token: String) async throws -> [JiraBoard]
     func boardIssues(baseURL: URL, token: String, boardID: String) async throws -> JiraSearchPage
     func projectIssues(baseURL: URL, token: String, projectKey: String) async throws -> JiraSearchPage
@@ -30,6 +37,23 @@ protocol JiraClientProtocol: AnyObject {
         timeSpentSeconds: Int,
         comment: String
     ) async throws
+}
+
+extension JiraClientProtocol {
+    func issues(
+        baseURL: URL,
+        token: String,
+        projectKeys: Set<String>
+    ) async throws -> JiraSearchPage {
+        try await issues(
+            baseURL: baseURL,
+            token: token,
+            projectKeys: projectKeys,
+            scope: .mine,
+            startAt: 0,
+            maxResults: 50
+        )
+    }
 }
 
 @MainActor
@@ -140,14 +164,17 @@ final class JiraClient: JiraClientProtocol {
     func issues(
         baseURL: URL,
         token: String,
-        projectKeys: Set<String>
+        projectKeys: Set<String>,
+        scope: JiraIssueScope,
+        startAt: Int,
+        maxResults: Int
     ) async throws -> JiraSearchPage {
         let response = try await searchPage(
             baseURL: baseURL,
             token: token,
-            jql: Self.searchJQL(projectKeys: projectKeys),
-            startAt: 0,
-            maxResults: 50
+            jql: Self.searchJQL(projectKeys: projectKeys, scope: scope),
+            startAt: startAt,
+            maxResults: maxResults
         )
         return JiraSearchPage(
             issues: try response.issues.map { try Self.makeIssue($0) },
@@ -493,17 +520,24 @@ final class JiraClient: JiraClientProtocol {
         }
     }
 
-    private static func searchJQL(projectKeys: Set<String>) -> String {
-        var clauses = [
-            "assignee = currentUser()",
-            "resolution IS EMPTY",
-            "statusCategory != Done"
-        ]
+    private static func searchJQL(
+        projectKeys: Set<String>,
+        scope: JiraIssueScope
+    ) -> String {
+        var clauses: [String] = []
+        if scope == .mine {
+            clauses += [
+                "assignee = currentUser()",
+                "resolution IS EMPTY",
+                "statusCategory != Done"
+            ]
+        }
         if !projectKeys.isEmpty {
             let keys = projectKeys.sorted().map { "\"\(escapedJQLString($0))\"" }
             clauses.append("project IN (\(keys.joined(separator: ", ")))")
         }
-        return clauses.joined(separator: " AND ") + " ORDER BY priority DESC, updated DESC"
+        let filters = clauses.isEmpty ? "" : clauses.joined(separator: " AND ") + " "
+        return filters + "ORDER BY priority DESC, updated DESC, key DESC"
     }
 
     private static func escapedJQLString(_ value: String) -> String {
