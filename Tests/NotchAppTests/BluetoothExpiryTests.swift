@@ -1,8 +1,24 @@
 import Foundation
+import IOBluetooth
 import XCTest
 @testable import NotchApp
 
 final class BluetoothExpiryTests: XCTestCase {
+    @MainActor
+    func testBluetoothCallbacksAcceptBackgroundDeliveryAfterStop() async throws {
+        let source = BluetoothAudioActivitySource()
+        var published = false
+        source.onChange = { _ in published = true }
+        source.stop()
+        try await Task.detached {
+            let device = try XCTUnwrap(IOBluetoothDevice(addressString: "00-00-00-00-00-01"))
+            source.deviceDidConnect(nil, device: device)
+            source.deviceDidDisconnect(nil, device: device)
+        }.value
+        await Task.yield()
+        XCTAssertFalse(published, "Late system notifications must not restart a stopped source")
+    }
+
     func testActiveConnectionLosesCompactEligibilityWhenExpiryIsRepublished() {
         var tracker = BluetoothActivityTracker()
         let start = Date(timeIntervalSince1970: 10_000)
