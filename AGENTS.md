@@ -29,22 +29,45 @@ Ad-hoc переподпись может сбросить Accessibility trust. �
 
 ## Карта проекта
 
+Текущая структура — `App / Features / Shared`; подробные границы и правила
+выделения общего кода описаны в `docs/ARCHITECTURE.md`. Это папки одного SwiftPM
+target, не отдельные Swift-модули. Shared не зависит от функциональных типов.
+
+- `Sources/NotchApp/Shared` — палитра, UI/AppKit-компоненты и файловый доступ.
+- `Sources/NotchApp/Features/FileShelf/Actions` — обработка файлов вне main actor;
+  отдельный coordinator владеет окном и ждёт завершения отмены при выходе.
+- `Sources/NotchApp/Features/WindowLayouts` — геометрия, сохранение и AX-управление
+  окнами; Accessibility запрашивается только явным действием пользователя.
+- `Sources/NotchApp/Features/Dock` — дополнительная панель Nool Dock.
+- `Sources/NotchApp/Features/TextRecognition` — локальный OCR изображений и
+  PDF через Vision, ограниченное чтение вне main actor, отмена запроса при
+  закрытии окна; AI получает только явно подготовленный черновик.
+
 - `Package.swift` — SwiftPM targets `NotchCore`, `NotchApp`, `NotchAppTests`.
 - `Sources/NotchCore` — общие модели квот без UI.
-- `Sources/NotchApp/NotchApp.swift` — вход в приложение.
-- `Sources/NotchApp/Launcher` — отдельная панель поиска: coordinator окна,
+- `Sources/NotchApp/App/NotchApp.swift` — вход в приложение.
+- `Sources/NotchApp/Features/Launcher` — отдельная панель поиска: coordinator окна,
   глобальная горячая клавиша, источники приложений/Spotlight, калькулятор и
   включаемая локальная история буфера. Обычный выход из приложения должен
   дождаться фоновой записи или удаления истории через `waitForPersistence()`.
-- `Sources/NotchApp/NotchWindowCoordinator.swift` — создание, позиционирование
+- `Sources/NotchApp/App/Notch/NotchWindowCoordinator.swift` — создание, позиционирование
   и внешняя геометрия `NSPanel`.
-- `Sources/NotchApp/NotchRootView.swift` — compact/expanded transition,
+- `Sources/NotchApp/App/Notch/NotchRootView.swift` — compact/expanded transition,
   hover-policy и запуск сворачивания.
-- `Sources/NotchApp/NotchViewModel.swift` — UI orchestration и состояние
-  панелей.
-- `Sources/NotchApp/AISessionStore.swift` — общий inbox и маршрутизация действий
+- `Sources/NotchApp/App/NotchViewModel.swift` — UI orchestration и состояние
+  панелей; делегирует состояние квот, календаря и PR/CI отдельным владельцам.
+- `Sources/NotchApp/Features/Quotas/QuotaFeatureModel.swift` — снимки квот,
+  настройки отображения и lifecycle запросов провайдеров.
+- `Sources/NotchApp/Features/Calendar/CalendarFeatureModel.swift` — календарь,
+  кэш месяцев, напоминания и подписки на изменения.
+- `Sources/NotchApp/Features/CodeReview/CodeReviewStore.swift` — запросы PR/CI,
+  polling, дедупликация и счётчики новой активности.
+- `Sources/NotchApp/Features/Quotas/Presentation` — отдельные владельцы окон
+  боковой панели и углового стека квот, их hover и анимаций.
+- `Sources/NotchApp/App/Settings/SettingsWindowCoordinator.swift` — окно настроек.
+- `Sources/NotchApp/Features/AgentInbox/AISessionStore.swift` — общий inbox и маршрутизация действий
   к источникам Codex Desktop и локальных CLI agents.
-- `Sources/NotchApp/Launcher/AI` — отдельный текстовый чат Launcher: общий store,
+- `Sources/NotchApp/Features/AIChat` — отдельный текстовый чат Launcher: общий store,
   FoundationModels и subprocess-адаптеры Codex/Claude. Облачные подключения
   opt-in; история локально в Application Support, инструменты CLI отключены.
   Ollama подключается только к loopback и установленным локальным моделям.
@@ -54,27 +77,27 @@ Ad-hoc переподпись может сбросить Accessibility trust. �
   отправку. Не включай CLI tools для чтения вложений и не передавай пути файлов.
   Выделенный текст читается через Accessibility, отправляется только после
   проверки черновика; вставка повторно проверяет выделение и фокус приложения.
-- `Sources/NotchApp/CodeReviewProvider.swift` — Git remote discovery и
+- `Sources/NotchApp/Features/CodeReview/CodeReviewProvider.swift` — Git remote discovery и
   read-only GitHub/GitLab PR/MR через `gh`/`glab`.
-- `Sources/NotchApp/AISessionsPanel.swift` — Agent Inbox, связанные Jira-задачи
+- `Sources/NotchApp/Features/AgentInbox/AISessionsPanel.swift` — Agent Inbox, связанные Jira-задачи
   и inline PR/CI-действия для каждой AI-сессии.
-- `Sources/NotchApp/CodexCLIHookServer.swift` и
+- `Sources/NotchApp/Features/AgentInbox/Bridge/CodexCLIHookServer.swift` и
   `CodexCLIHookInstaller.swift` — локальный Unix socket и безопасное подключение
   Codex CLI/Claude Code hooks.
 - `Sources/NoolAgentBridge` — минимальный blocking hook executable, который
   возвращает решение ожидающему CLI-процессу.
-- `Sources/NotchApp/JiraClient.swift` — HTTP-контракт Jira REST/Agile API.
-- `Sources/NotchApp/JiraProvider.swift` — lifecycle, загрузка, кэш и mutations.
-- `Sources/NotchApp/JiraPanel.swift` — режим `Мои` и основной список задач.
-- `Sources/NotchApp/JiraPinnedPanel.swift` — закреплённые Jira-источники.
-- `Sources/NotchApp/JiraPinnedSettingsView.swift` — управление закреплениями.
-- `Sources/NotchApp/AppPreferences.swift` — несекретные настройки UserDefaults.
-- `Sources/NotchApp/JiraCredentialStore.swift` — Jira-токен в Keychain.
-- `Sources/NotchApp/NowPlayingProvider.swift` и
+- `Sources/NotchApp/Features/Jira/JiraClient.swift` — HTTP-контракт Jira REST/Agile API.
+- `Sources/NotchApp/Features/Jira/JiraProvider.swift` — lifecycle, загрузка, кэш и mutations.
+- `Sources/NotchApp/Features/Jira/JiraPanel.swift` — режим `Мои` и основной список задач.
+- `Sources/NotchApp/Features/Jira/JiraPinnedPanel.swift` — закреплённые Jira-источники.
+- `Sources/NotchApp/Features/Jira/JiraPinnedSettingsView.swift` — управление закреплениями.
+- `Sources/NotchApp/App/Settings/AppPreferences.swift` — несекретные настройки UserDefaults.
+- `Sources/NotchApp/Features/Jira/JiraCredentialStore.swift` — Jira-токен в Keychain.
+- `Sources/NotchApp/Features/Music/NowPlayingProvider.swift` и
   `AccessibilityNowPlayingSource.swift` — метаданные и fallback плеера.
-- `Sources/NotchApp/LiveActivityCenter.swift` и `LiveActivityModels.swift` —
+- `Sources/NotchApp/Features/LiveActivities/LiveActivityCenter.swift` и `LiveActivityModels.swift` —
   source-neutral агрегация Live Activities и приоритет compact-индикатора.
-- `Sources/NotchApp/SystemBatteryActivitySource.swift` — публичный системный
+- `Sources/NotchApp/Features/LiveActivities/Sources/SystemBatteryActivitySource.swift` — публичный системный
   источник состояния батареи Mac.
 - `BluetoothAudioActivitySource.swift`, `SystemCallActivitySource.swift` и
   `SystemDownloadActivitySource.swift` — системные источники Bluetooth-аудио,
