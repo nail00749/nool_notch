@@ -25,6 +25,7 @@ for RESOURCE_BUNDLE in "${RESOURCE_BUNDLES[@]}"; do
   /bin/rm -rf "$APP_PATH/Contents/Resources/$BUNDLE_NAME"
   /bin/cp -R "$RESOURCE_BUNDLE" "$APP_PATH/Contents/Resources/$BUNDLE_NAME"
 done
+"$PROJECT_ROOT/scripts/embed-widget.sh" "$APP_PATH"
 "$PROJECT_ROOT/scripts/sign-app.sh" "$APP_PATH"
 
 # Replace the running instance so the app cannot keep an older binary in memory.

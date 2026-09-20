@@ -791,6 +791,7 @@ struct NotchSettingsView: View {
 
     private var limitsPage: some View {
         VStack(spacing: 12) {
+            QuotaWidgetSettingsCard()
             SettingsCard(
                 title: "Панель лимитов",
                 icon: "rectangle.topthird.inset.filled"
@@ -1551,14 +1552,6 @@ private struct CodeReviewIntegrationRow: View {
             )
         }
         .buttonStyle(NotchButtonStyle())
-    }
-}
-
-private extension View {
-    func settingsHintStyle() -> some View {
-        font(.system(size: 10, weight: .medium, design: .rounded))
-            .foregroundStyle(NotchPalette.secondary)
-            .fixedSize(horizontal: false, vertical: true)
     }
 }
 

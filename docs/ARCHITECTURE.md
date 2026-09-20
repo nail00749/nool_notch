@@ -4,6 +4,12 @@
 `NotchApp` и `NoolAgentBridge`. Папки внутри `NotchApp` обозначают ответственность,
 а не отдельные Swift-модули: доступность типов и API приложения не меняется.
 
+`NoolWidgets.xcodeproj` — отдельный WidgetKit extension target, встраиваемый
+в подписанный app bundle. Он компилирует общие DTO из `NotchCore` и читает
+ограниченный снимок через App Group. Providers, авторизация и обновление
+остаются у `QuotaFeatureModel`; `QuotaWidgetPublisher` владеет фоновой записью
+и запросами reload WidgetKit. Подробности: [виджет лимитов](QUOTA_WIDGET.md).
+
 ```text
 Sources/
   NotchCore/                 Модели квот без UI

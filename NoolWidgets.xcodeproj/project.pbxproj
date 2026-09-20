@@ -1,0 +1,312 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		10A000000000000000000001 /* NoolQuotaWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10B000000000000000000001 /* NoolQuotaWidget.swift */; };
+		10A000000000000000000002 /* NoolQuotaWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10B000000000000000000002 /* NoolQuotaWidgetView.swift */; };
+		10A000000000000000000003 /* QuotaModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10B000000000000000000005 /* QuotaModels.swift */; };
+		10A000000000000000000004 /* QuotaWidgetData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10B000000000000000000006 /* QuotaWidgetData.swift */; };
+		10A000000000000000000005 /* QuotaProviderIcons.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 10B000000000000000000007 /* QuotaProviderIcons.xcassets */; };
+		10A000000000000000000006 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 10B000000000000000000008 /* WidgetKit.framework */; };
+		10A000000000000000000007 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 10B000000000000000000009 /* SwiftUI.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		10B000000000000000000001 /* NoolQuotaWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Widgets/NoolQuotaWidget/NoolQuotaWidget.swift; sourceTree = SOURCE_ROOT; };
+		10B000000000000000000002 /* NoolQuotaWidgetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Widgets/NoolQuotaWidget/NoolQuotaWidgetView.swift; sourceTree = SOURCE_ROOT; };
+		10B000000000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Widgets/NoolQuotaWidget/Info.plist; sourceTree = SOURCE_ROOT; };
+		10B000000000000000000004 /* NoolQuotaWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Widgets/NoolQuotaWidget/NoolQuotaWidget.entitlements; sourceTree = SOURCE_ROOT; };
+		10B000000000000000000005 /* QuotaModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/NotchCore/QuotaModels.swift; sourceTree = SOURCE_ROOT; };
+		10B000000000000000000006 /* QuotaWidgetData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/NotchCore/QuotaWidgetData.swift; sourceTree = SOURCE_ROOT; };
+		10B000000000000000000007 /* QuotaProviderIcons.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Sources/NotchApp/Resources/QuotaProviderIcons.xcassets; sourceTree = SOURCE_ROOT; };
+		10B000000000000000000008 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		10B000000000000000000009 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		10B00000000000000000000A /* NoolQuotaWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NoolQuotaWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		10C000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10A000000000000000000006 /* WidgetKit.framework in Frameworks */,
+				10A000000000000000000007 /* SwiftUI.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		10D000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				10D000000000000000000002 /* NoolQuotaWidget */,
+				10D000000000000000000003 /* Shared Core */,
+				10D000000000000000000004 /* Resources */,
+				10D000000000000000000005 /* Frameworks */,
+				10D000000000000000000006 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		10D000000000000000000002 /* NoolQuotaWidget */ = {
+			isa = PBXGroup;
+			children = (
+				10B000000000000000000001 /* NoolQuotaWidget.swift */,
+				10B000000000000000000002 /* NoolQuotaWidgetView.swift */,
+				10B000000000000000000003 /* Info.plist */,
+				10B000000000000000000004 /* NoolQuotaWidget.entitlements */,
+			);
+			name = NoolQuotaWidget;
+			sourceTree = "<group>";
+		};
+		10D000000000000000000003 /* Shared Core */ = {
+			isa = PBXGroup;
+			children = (
+				10B000000000000000000005 /* QuotaModels.swift */,
+				10B000000000000000000006 /* QuotaWidgetData.swift */,
+			);
+			name = "Shared Core";
+			sourceTree = "<group>";
+		};
+		10D000000000000000000004 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				10B000000000000000000007 /* QuotaProviderIcons.xcassets */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+		};
+		10D000000000000000000005 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				10B000000000000000000008 /* WidgetKit.framework */,
+				10B000000000000000000009 /* SwiftUI.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		10D000000000000000000006 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				10B00000000000000000000A /* NoolQuotaWidget.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		10E000000000000000000001 /* NoolQuotaWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 10F000000000000000000002 /* Build configuration list for PBXNativeTarget "NoolQuotaWidget" */;
+			buildPhases = (
+				10C000000000000000000002 /* Sources */,
+				10C000000000000000000001 /* Frameworks */,
+				10C000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NoolQuotaWidget;
+			packageProductDependencies = (
+			);
+			productName = NoolQuotaWidget;
+			productReference = 10B00000000000000000000A /* NoolQuotaWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		10E000000000000000000002 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					10E000000000000000000001 = {
+						CreatedOnToolsVersion = 26.6;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 10F000000000000000000001 /* Build configuration list for PBXProject "NoolWidgets" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 10D000000000000000000001;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 10D000000000000000000006 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				10E000000000000000000001 /* NoolQuotaWidget */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		10C000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10A000000000000000000005 /* QuotaProviderIcons.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		10C000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10A000000000000000000001 /* NoolQuotaWidget.swift in Sources */,
+				10A000000000000000000002 /* NoolQuotaWidgetView.swift in Sources */,
+				10A000000000000000000003 /* QuotaModels.swift in Sources */,
+				10A000000000000000000004 /* QuotaWidgetData.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		110000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		110000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		110000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = NO;
+				CODE_SIGN_ENTITLEMENTS = Widgets/NoolQuotaWidget/NoolQuotaWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "$(NOOL_DEVELOPMENT_TEAM)";
+				ENABLE_APP_SANDBOX = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Widgets/NoolQuotaWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 0.7.0;
+				NOOL_DEVELOPMENT_TEAM = "";
+				NOOL_WIDGET_APP_GROUP = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.nailuyltyev.NotchApp.NoolQuotaWidget;
+				ENABLE_DEBUG_DYLIB = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		110000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = NO;
+				CODE_SIGN_ENTITLEMENTS = Widgets/NoolQuotaWidget/NoolQuotaWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "$(NOOL_DEVELOPMENT_TEAM)";
+				ENABLE_APP_SANDBOX = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Widgets/NoolQuotaWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 0.7.0;
+				NOOL_DEVELOPMENT_TEAM = "";
+				NOOL_WIDGET_APP_GROUP = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.nailuyltyev.NotchApp.NoolQuotaWidget;
+				ENABLE_DEBUG_DYLIB = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		10F000000000000000000001 /* Build configuration list for PBXProject "NoolWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				110000000000000000000001 /* Debug */,
+				110000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		10F000000000000000000002 /* Build configuration list for PBXNativeTarget "NoolQuotaWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				110000000000000000000003 /* Debug */,
+				110000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 10E000000000000000000002 /* Project object */;
+}

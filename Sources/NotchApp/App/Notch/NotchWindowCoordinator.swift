@@ -60,7 +60,8 @@ final class NotchWindowCoordinator: NSObject {
                     CodexDesktopSessionSource(),
                     LocalAgentSessionSource()
                 ]
-            )
+            ),
+            widgetPublisher: QuotaWidgetPublisher.makeIfAvailable()
         )
         visualSettings = NotchVisualSettings()
         displaySettings = NotchDisplaySettings()
@@ -236,6 +237,12 @@ final class NotchWindowCoordinator: NSObject {
     }
 
     func waitForFileActions() async { await fileActions.waitForCompletion() }
+
+    func waitForQuotaWidgetPersistence() async { await model.waitForQuotaWidgetPersistence() }
+
+    func openWidgetLimits() {
+        model.openQuotaLimits()
+    }
 
     func reposition() {
         guard isStarted else { return }

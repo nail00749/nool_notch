@@ -5,6 +5,7 @@ final class NotchAppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: NotchWindowCoordinator!
     private var launcher: LauncherWindowCoordinator!
     private var screenParametersObserver: NSObjectProtocol?
+    private var pendingWidgetOpen = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -12,6 +13,10 @@ final class NotchAppDelegate: NSObject, NSApplicationDelegate {
         coordinator = NotchWindowCoordinator(launcher: launcher)
         launcher.onOpenSettings = { [weak self] in self?.coordinator.showSettingsWindow(section: .launcher) }
         coordinator.show()
+        if pendingWidgetOpen {
+            coordinator.openWidgetLimits()
+            pendingWidgetOpen = false
+        }
 
         screenParametersObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
@@ -28,6 +33,15 @@ final class NotchAppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard urls.contains(where: QuotaWidgetLink.opensLimits) else { return }
+        guard let coordinator else {
+            pendingWidgetOpen = true
+            return
+        }
+        coordinator.openWidgetLimits()
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         coordinator?.stop()
         launcher?.stop()
@@ -39,6 +53,7 @@ final class NotchAppDelegate: NSObject, NSApplicationDelegate {
         launcher.stop()
         Task { @MainActor in
             await coordinator.waitForFileActions()
+            await coordinator.waitForQuotaWidgetPersistence()
             await launcher.model.clipboard.waitForPersistence()
             await launcher.model.snippets.waitForPersistence()
             await launcher.model.aiChat.waitForPersistence()

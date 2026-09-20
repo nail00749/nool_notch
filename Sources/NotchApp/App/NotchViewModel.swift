@@ -123,9 +123,10 @@ final class NotchViewModel: ObservableObject {
         aiSessionStore: AISessionStore = AISessionStore(sources: []),
         codeReviewProvider: any CodeReviewProviding = LocalCodeReviewProvider(),
         preferences: any AppPreferencesStoring = UserDefaultsAppPreferences(),
-        now: @escaping @MainActor () -> Date = Date.init
+        now: @escaping @MainActor () -> Date = Date.init,
+        widgetPublisher: QuotaWidgetPublisher? = nil
     ) {
-        self.quotas = QuotaFeatureModel(providers: providers, preferences: preferences, now: now)
+        self.quotas = QuotaFeatureModel(providers: providers, preferences: preferences, now: now, widgetPublisher: widgetPublisher)
         self.calendar = CalendarFeatureModel(provider: calendarProvider)
         self.nowPlayingProvider = nowPlayingProvider
         self.liveActivityCenter = liveActivityCenter
@@ -229,6 +230,8 @@ final class NotchViewModel: ObservableObject {
         refresh()
         calendar.start(enabled: visiblePanels.contains(.calendar) || dockCalendarEnabled)
     }
+
+    func waitForQuotaWidgetPersistence() async { await quotas.waitForWidgetPersistence() }
 
     /// Terminal shutdown: feature owners cancel their work before provider teardown.
     func stop() {

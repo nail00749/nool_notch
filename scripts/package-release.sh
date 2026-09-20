@@ -49,6 +49,9 @@ done
 # notarization are configured. The sentinel identity forces sign-app.sh into
 # its explicit ad-hoc path even on a developer machine with a local certificate.
 NOTCHAPP_SIGNING_IDENTITY="Nool Notch Release Ad-Hoc" \
+  "$PROJECT_ROOT/scripts/embed-widget.sh" "$APP_PATH" Release "$ARCH"
+
+NOTCHAPP_SIGNING_IDENTITY="Nool Notch Release Ad-Hoc" \
 NOTCHAPP_ALLOW_ADHOC=1 \
   "$PROJECT_ROOT/scripts/sign-app.sh" "$APP_PATH"
 

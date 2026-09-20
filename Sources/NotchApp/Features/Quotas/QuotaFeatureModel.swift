@@ -17,12 +17,15 @@ final class QuotaFeatureModel: ObservableObject {
     private var quotaRefreshTasks: [String: Task<Void, Never>] = [:]
     private var quotaRefreshedAt: [String: Date] = [:]
     private var isStopped = false
+    private let widgetPublisher: QuotaWidgetPublisher?
 
     init(providers: [any QuotaProvider], preferences: any AppPreferencesStoring,
-         now: @escaping @MainActor () -> Date = Date.init) {
+         now: @escaping @MainActor () -> Date = Date.init,
+         widgetPublisher: QuotaWidgetPublisher? = nil) {
         self.providers = providers
         self.preferences = preferences
         self.now = now
+        self.widgetPublisher = widgetPublisher
         let providerIDs = providers.map(\.id)
         let quotaProviderOrder = Self.normalizedQuotaProviderOrder(
             preferences.quotaProviderOrder,
@@ -70,7 +73,9 @@ final class QuotaFeatureModel: ObservableObject {
                 self?.refresh(providerID: providerID)
             }
         }
-
+        widgetPublisher?.start { [weak self] in
+            self?.refreshQuotaProviders(ifOlderThan: 5 * 60)
+        }
     }
 
     func refresh() {
@@ -79,11 +84,20 @@ final class QuotaFeatureModel: ObservableObject {
 
     func stop() {
         isStopped = true
+        widgetPublisher?.stop()
         quotaRefreshTasks.values.forEach { $0.cancel() }
         quotaRefreshTasks.removeAll()
     }
 
     deinit { quotaRefreshTasks.values.forEach { $0.cancel() } }
+
+    func waitForWidgetPersistence() async { await widgetPublisher?.waitForPersistence() }
+
+    private func publishWidget() {
+        widgetPublisher?.publish(visibleQuotaProviders.compactMap { provider in
+            snapshots[provider.id].map(QuotaWidgetProvider.init(snapshot:))
+        })
+    }
 
     func snapshot(for providerID: String) -> QuotaSnapshot? {
         snapshots[providerID]
@@ -137,6 +151,7 @@ final class QuotaFeatureModel: ObservableObject {
             }
         }
         preferences.hiddenQuotaProviderIDs = hiddenQuotaProviderIDs
+        publishWidget()
     }
 
     func moveQuotaProvider(_ providerID: String, by offset: Int) {
@@ -145,6 +160,7 @@ final class QuotaFeatureModel: ObservableObject {
         guard quotaProviderOrder.indices.contains(destinationIndex) else { return }
         quotaProviderOrder.swapAt(sourceIndex, destinationIndex)
         preferences.quotaProviderOrder = quotaProviderOrder
+        publishWidget()
     }
 
     func setCompactQuotaProvider(_ providerID: String) {
@@ -211,6 +227,7 @@ final class QuotaFeatureModel: ObservableObject {
             self.snapshots[provider.id] = snapshot
             self.quotaRefreshedAt[provider.id] = self.now()
             self.quotaRefreshTasks[provider.id] = nil
+            self.publishWidget()
         }
     }
 
