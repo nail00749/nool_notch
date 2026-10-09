@@ -136,14 +136,14 @@ enum CodexResetForecastVisibility {
     static func shouldLoad(
         isExpanded: Bool,
         selectedPanel: PanelID,
-        selectedAISection: AISection,
+        isForecastExpanded: Bool,
         isShowingSettings: Bool,
         isUtilityPresented: Bool,
         isChatGPTProviderVisible: Bool
     ) -> Bool {
         isExpanded
             && selectedPanel == .ai
-            && selectedAISection == .limits
+            && isForecastExpanded
             && isShowingSettings == false
             && isUtilityPresented == false
             && isChatGPTProviderVisible

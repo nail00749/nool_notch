@@ -15,6 +15,7 @@ final class LocalAgentSessionSource: AISessionSource {
     private var pollingTask: Task<Void, Never>?
     private var scanGeneration = 0
     private var isStarted = false
+    private var streamGeneration: UInt = 0
     private var databaseSessions: [AISession] = []
     private var hookSessions: [String: AISession] = [:]
     private var pendingResponders: [String: CodexCLIHookResponder] = [:]
@@ -35,10 +36,15 @@ final class LocalAgentSessionSource: AISessionSource {
     }
 
     func snapshots() -> AsyncStream<AISessionSourceSnapshot> {
-        AsyncStream { continuation in
+        streamGeneration &+= 1
+        let generation = streamGeneration
+        return AsyncStream { continuation in
             self.continuation = continuation
             continuation.onTermination = { @Sendable [weak self] _ in
-                Task { @MainActor in self?.stop() }
+                Task { @MainActor in
+                    guard let self, self.streamGeneration == generation else { return }
+                    self.stop()
+                }
             }
             start()
         }
@@ -123,8 +129,11 @@ final class LocalAgentSessionSource: AISessionSource {
         }
     }
 
-    private func stop() {
+    func stop() {
+        guard isStarted else { return }
         isStarted = false
+        streamGeneration &+= 1
+        scanGeneration &+= 1
         pollingTask?.cancel()
         pollingTask = nil
         for responder in pendingResponders.values {

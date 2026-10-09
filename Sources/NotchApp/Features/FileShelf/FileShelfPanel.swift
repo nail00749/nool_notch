@@ -45,7 +45,7 @@ struct FileShelfPanel: View {
 
             if store.isImporting {
                 Label("Добавляю файлы…", systemImage: "arrow.down.doc")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(NotchPalette.accent.opacity(0.85))
             }
 
@@ -62,11 +62,11 @@ struct FileShelfPanel: View {
                             .frame(width: 22, height: 22)
                     }
                     .buttonStyle(NotchButtonStyle())
-                    .foregroundStyle(.white.opacity(0.52))
+                    .foregroundStyle(NotchPalette.text.opacity(0.52))
                     .accessibilityLabel("Закрыть ошибку")
                 }
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.7))
+                .font(.system(size: 10, weight: .medium, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.7))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .background(Color.signalAmber.opacity(0.09), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
@@ -85,12 +85,12 @@ struct FileShelfPanel: View {
                 .foregroundStyle(NotchPalette.accent)
 
             Text("Файлы")
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.88))
+                .font(.system(size: 12, weight: .bold, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.88))
 
             Text("\(store.items.count)/\(FileShelfStore.maximumItemCount)")
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.42))
+                .font(.system(size: 10, weight: .semibold, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.42))
 
             Spacer(minLength: 8)
 
@@ -112,7 +112,7 @@ struct FileShelfPanel: View {
                     onProcessFiles(items.map(\.url))
                 } label: {
                     Label(selectedIDs.isEmpty ? "Действия" : "Действия (\(selectedIDs.count))", systemImage: "wand.and.stars")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .font(.system(size: 10, weight: .bold, design: .default))
                         .frame(minHeight: 28)
                 }
                 .buttonStyle(NotchButtonStyle())
@@ -123,7 +123,7 @@ struct FileShelfPanel: View {
             if let onChooseFiles {
                 Button(action: onChooseFiles) {
                     Label("Выбрать", systemImage: "plus")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .font(.system(size: 10, weight: .bold, design: .default))
                         .padding(.horizontal, 10)
                         .frame(minHeight: 28)
                 }
@@ -135,7 +135,7 @@ struct FileShelfPanel: View {
         }
         .padding(.horizontal, 12)
         .frame(minHeight: 46)
-        .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(NotchPalette.text.opacity(0.055), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var emptyState: some View {
@@ -144,11 +144,11 @@ struct FileShelfPanel: View {
                 .font(.system(size: 25, weight: .light))
                 .foregroundStyle(NotchPalette.accent)
             Text("Временная полка пуста")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.78))
+                .font(.system(size: 13, weight: .semibold, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.78))
             Text("Перетащите файлы на чёлку или выберите их здесь")
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.38))
+                .font(.system(size: 10, weight: .medium, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.38))
                 .multilineTextAlignment(.center)
         }
     }
@@ -174,12 +174,12 @@ private struct FileShelfRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.url.lastPathComponent)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .font(.system(size: 12, weight: .semibold, design: .default))
+                    .foregroundStyle(NotchPalette.text.opacity(0.9))
                     .lineLimit(1)
                 Text(item.url.deletingLastPathComponent().path)
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.38))
+                    .font(.system(size: 9, weight: .medium, design: .default))
+                    .foregroundStyle(NotchPalette.text.opacity(0.38))
                     .lineLimit(1)
             }
 
@@ -193,7 +193,7 @@ private struct FileShelfRow: View {
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(NotchButtonStyle())
-            .foregroundStyle(.white.opacity(0.6))
+            .foregroundStyle(NotchPalette.text.opacity(0.6))
             .accessibilityLabel("Показать в Finder")
 
             Button(action: onRemove) {
@@ -202,12 +202,12 @@ private struct FileShelfRow: View {
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(NotchButtonStyle())
-            .foregroundStyle(.white.opacity(0.45))
+            .foregroundStyle(NotchPalette.text.opacity(0.45))
             .accessibilityLabel("Убрать с полки")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
-        .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(NotchPalette.text.opacity(0.055), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(NotchPalette.accent.opacity(0.10), lineWidth: 0.5)

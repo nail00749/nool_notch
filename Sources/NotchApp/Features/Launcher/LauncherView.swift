@@ -12,6 +12,9 @@ struct LauncherView: View {
     let pasteAIResponse: (String) -> Void
     let chooseAttachments: () -> Void
     let openWindowLayouts: () -> Void
+    let openWorkspaces: () -> Void
+    let captureScreenText: () -> Void
+    let openSpeedTest: () -> Void
     let performAction: (LauncherResultAction, LauncherResult) -> Void
 
     var body: some View {
@@ -19,30 +22,45 @@ struct LauncherView: View {
             HStack(spacing: 14) {
                 Image(systemName: model.category == .ai ? "sparkles" : "magnifyingglass")
                     .font(.system(size: model.category == .ai ? 19 : 24, weight: .light))
-                    .foregroundStyle(NotchPalette.accent)
+                    .foregroundStyle(.secondary)
                 if model.category == .ai {
-                    Text("Nool AI").font(.system(size: 18, weight: .medium, design: .rounded))
+                    Text("NooL AI").font(.system(size: 18, weight: .medium))
                     Spacer()
                 } else {
                     LauncherSearchField(text: $model.query, move: model.move, submit: submit,
-                                        cancel: cancel, cycle: model.cycleCategory)
+                                        cancel: cancel, cycle: model.cycleCategory,
+                                        invalidatePreviewSelection: model.clearPreviewKeyboardSelection)
                         .frame(height: 38)
                 }
                 if model.isSearching {
                     ProgressView().controlSize(.small).accessibilityLabel("Поиск")
                 }
-                Button(action: openWindowLayouts) {
-                    Image(systemName: "rectangle.split.2x1").frame(width: 32, height: 40)
+                if model.modules.isEnabled(.windowManagement) {
+                    Button(action: openWindowLayouts) {
+                        Image(systemName: "rectangle.split.2x1").frame(width: 32, height: 40)
+                    }
+                    .buttonStyle(LauncherToolbarButtonStyle())
+                    .help("Окна и раскладки")
+                    .accessibilityLabel("Окна и раскладки")
+                    Button(action: openWorkspaces) {
+                        Image(systemName: "square.grid.2x2").frame(width: 32, height: 40)
+                    }
+                    .buttonStyle(LauncherToolbarButtonStyle())
+                    .help("Рабочие пространства")
+                    .accessibilityLabel("Рабочие пространства")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(NotchPalette.secondary)
-                .help("Окна и раскладки")
-                .accessibilityLabel("Окна и раскладки")
+                if model.modules.isEnabled(.textRecognition) {
+                    Button(action: captureScreenText) {
+                        Image(systemName: "text.viewfinder").frame(width: 32, height: 40)
+                    }
+                    .buttonStyle(LauncherToolbarButtonStyle())
+                    .help("Текст с экрана")
+                    .accessibilityLabel("Текст с экрана")
+                }
                 Button(action: openSettings) {
                     Image(systemName: "slider.horizontal.3").frame(width: 40, height: 40)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(NotchPalette.secondary)
+                .buttonStyle(LauncherToolbarButtonStyle())
                 .help("Настройки Launcher")
                 .accessibilityLabel("Настройки Launcher")
             }
@@ -50,29 +68,37 @@ struct LauncherView: View {
             .padding(.vertical, model.category == .ai ? 7 : 14)
 
             HStack(spacing: 6) {
-                ForEach(LauncherCategory.allCases) { category in
+                ForEach(model.availableCategories) { category in
                     Button { model.category = category } label: {
                         Text(category.title)
                             .font(.system(size: 12, weight: .medium))
                             .padding(.horizontal, 12)
                             .frame(height: 34)
-                            .background(model.category == category ? NotchPalette.raised : .clear,
+                            .background(model.category == category ? LauncherSelectionStyle.background : .clear,
                                         in: RoundedRectangle(cornerRadius: 9))
-                            .foregroundStyle(model.category == category ? NotchPalette.accent : NotchPalette.secondary)
+                            .foregroundStyle(model.category == category ? LauncherSelectionStyle.text : NotchPalette.secondary)
                     }
                     .buttonStyle(.plain)
                     .help("\(category.title) — \(category.keyboardShortcutHint)")
                     .accessibilityAddTraits(model.category == category ? [.isSelected] : [])
                 }
                 Spacer()
-                Text("⌘1–5 · ⌃⇥").font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(NotchPalette.secondary).padding(.trailing, 8)
-                    .help("⌘1–⌘5 — выбрать вкладку; Ctrl+Tab / Ctrl+Shift+Tab — следующая / предыдущая")
+                if model.modules.isEnabled(.networkTools) {
+                    Button(action: openSpeedTest) {
+                        Label("Speedtest", systemImage: "speedometer")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .fixedSize()
+                    .help("Проверить скорость интернета до Москвы и Франкфурта")
+                    .accessibilityLabel("Speedtest — проверка скорости интернета")
+                }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 10)
 
-            Divider().overlay(NotchPalette.text.opacity(0.04))
+            Divider()
 
             if model.category == .ai {
                 AIChatView(store: model.aiChat, selection: model.textSelection, close: close, cycle: model.cycleCategory,
@@ -103,7 +129,7 @@ struct LauncherView: View {
                                                   icons: model.icons, clipboardData: clipboardData(for: result))
                                     .contentShape(Rectangle())
                                     .onTapGesture(count: 2) { activate(result, false) }
-                                    .onTapGesture { model.selectedID = result.id }
+                                    .onTapGesture { model.selectResult(result.id) }
                                     .accessibilityElement(children: .combine)
                                     .accessibilityAddTraits(model.selectedID == result.id ? [.isSelected] : [])
                                     .accessibilityAction { activate(result, false) }
@@ -126,17 +152,17 @@ struct LauncherView: View {
             if model.category != .ai, !model.showsQuickAI, let message = model.message ?? model.sourceError {
                 Text(message)
                     .font(.system(size: 12))
-                    .foregroundStyle(NotchPalette.accent)
+                    .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 22).padding(.vertical, 8)
                     .accessibilityLabel(message)
             }
 
             if model.category != .ai {
-            Divider().overlay(NotchPalette.text.opacity(0.04))
+            Divider()
             HStack(spacing: 8) {
-                Text("NOOL").font(.system(size: 10, weight: .bold, design: .rounded)).tracking(2)
-                    .foregroundStyle(NotchPalette.accent.opacity(0.8))
+                Text("NOOL").font(.system(size: 10, weight: .bold)).tracking(2)
+                    .foregroundStyle(NotchPalette.secondary)
                 Text(model.showsQuickAI ? "Быстрый ответ AI" : (model.results.isEmpty ? "Launcher" : "\(model.results.count) результатов"))
                     .font(.system(size: 11)).foregroundStyle(NotchPalette.secondary).monospacedDigit()
                 Spacer()
@@ -165,7 +191,8 @@ struct LauncherView: View {
                         }.font(.system(size: 12, weight: .medium)).frame(minHeight: 36)
                     }.buttonStyle(.plain)
                 }
-                if model.category == .all, model.selectedNoolEvent == nil, model.actionResult == nil, model.jiraActionDestination == nil {
+                if model.modules.isEnabled(.aiChat), model.category == .all, model.selectedNoolEvent == nil,
+                   model.actionResult == nil, model.jiraActionDestination == nil {
                     LauncherQuickAIButton(model: model, store: model.aiChat)
                 }
             }
@@ -174,10 +201,9 @@ struct LauncherView: View {
         }
         .foregroundStyle(NotchPalette.text)
         .tint(NotchPalette.accent)
-        .background(NotchPalette.surface)
+        .background(NativePanelBackground())
         .clipShape(RoundedRectangle(cornerRadius: 22))
         .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(NotchPalette.separator, lineWidth: 1))
-        .preferredColorScheme(.dark)
         .onChange(of: model.category) { _, _ in focusInput() }
     }
 
@@ -207,8 +233,9 @@ struct LauncherView: View {
 
     private func primaryTitle(_ result: LauncherResult) -> String {
         switch result.payload {
-        case .application, .file, .nool, .windowLayoutManager: "Открыть"
+        case .application, .file, .nool, .windowLayoutManager, .workspaceManager, .speedTest, .networkDiagnostics, .screenTextCapture: "Открыть"
         case .windowAction, .windowLayout: "Применить"
+        case .workspace: "Запустить"
         case .clipboard, .snippet, .calculation: "Скопировать"
         }
     }
@@ -255,24 +282,32 @@ private struct LauncherResultRow: View {
                     Image(nsImage: icon).resizable().scaledToFit().padding(3)
                 } else {
                     Image(systemName: symbol).font(.system(size: 21, weight: .regular))
-                        .foregroundStyle(selected ? NotchPalette.accent : NotchPalette.text.opacity(0.7))
+                        .foregroundStyle(selected ? LauncherSelectionStyle.text : NotchPalette.secondary)
                 }
             }
             .frame(width: 38, height: 38)
-            .background(NotchPalette.text.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.75), in: RoundedRectangle(cornerRadius: 10))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
-                Text(result.title).font(.system(size: 14, weight: .medium)).lineLimit(1)
-                Text(result.subtitle).font(.system(size: 11)).foregroundStyle(NotchPalette.secondary).lineLimit(1)
+                Text(result.title).font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(selected ? LauncherSelectionStyle.text : NotchPalette.text)
+                    .lineLimit(1)
+                Text(result.subtitle).font(.system(size: 11))
+                    .foregroundStyle(selected ? LauncherSelectionStyle.text.opacity(0.75) : NotchPalette.secondary)
+                    .lineLimit(1)
                     .truncationMode(.middle)
             }
             Spacer(minLength: 8)
-            Text(kind).font(.system(size: 10, weight: .medium)).foregroundStyle(NotchPalette.secondary)
-            if selected { Image(systemName: "return").font(.system(size: 12)).foregroundStyle(NotchPalette.text.opacity(0.6)) }
+            Text(kind).font(.system(size: 10, weight: .medium))
+                .foregroundStyle(selected ? LauncherSelectionStyle.text.opacity(0.75) : NotchPalette.secondary)
+            if selected {
+                Image(systemName: "return").font(.system(size: 12))
+                    .foregroundStyle(LauncherSelectionStyle.text.opacity(0.75))
+            }
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
-        .background(selected ? NotchPalette.raised : .clear, in: RoundedRectangle(cornerRadius: 12))
+        .background(selected ? LauncherSelectionStyle.background : .clear, in: RoundedRectangle(cornerRadius: 10))
         .task(id: result.id) { icon = await icons.image(for: result, clipboardData: clipboardData) }
     }
 
@@ -286,6 +321,10 @@ private struct LauncherResultRow: View {
         case .nool(_, let kind): kind.symbol
         case .windowAction(let action): action.systemImage
         case .windowLayout, .windowLayoutManager: "rectangle.split.2x1"
+        case .workspace, .workspaceManager: "square.grid.2x2"
+        case .speedTest: "speedometer"
+        case .networkDiagnostics: "network"
+        case .screenTextCapture: "text.viewfinder"
         }
     }
     private var kind: String {
@@ -298,7 +337,33 @@ private struct LauncherResultRow: View {
         case .nool(_, let kind): kind.title
         case .windowAction, .windowLayoutManager: "Окна"
         case .windowLayout: "Раскладка"
+        case .workspace: "Пространство"
+        case .workspaceManager: "Настройка"
+        case .speedTest: "Сеть"
+        case .networkDiagnostics: "Сеть"
+        case .screenTextCapture: "Текст"
         }
+    }
+}
+
+private enum LauncherSelectionStyle {
+    static let background = Color(nsColor: .unemphasizedSelectedContentBackgroundColor)
+    static let text = Color(nsColor: .unemphasizedSelectedTextColor)
+}
+
+private struct LauncherToolbarButtonStyle: ButtonStyle {
+    @State private var hovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(hovered ? NotchPalette.text : NotchPalette.secondary)
+            .background(
+                Color(nsColor: .controlBackgroundColor)
+                    .opacity(configuration.isPressed ? 1 : (hovered ? 0.7 : 0)),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .onHover { hovered = $0 }
     }
 }
 
@@ -308,6 +373,7 @@ private struct LauncherSearchField: NSViewRepresentable {
     let submit: (Bool) -> Void
     let cancel: () -> Void
     let cycle: (Bool) -> Void
+    let invalidatePreviewSelection: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> NSTextField {
@@ -321,15 +387,15 @@ private struct LauncherSearchField: NSViewRepresentable {
         field.cell?.isScrollable = true
         field.focusRingType = .none
         field.font = .systemFont(ofSize: 23, weight: .regular)
-        field.textColor = NSColor(NotchPalette.text)
+        field.textColor = .labelColor
         field.placeholderAttributedString = NSAttributedString(
-            string: "Поиск в Nool…",
+            string: "Поиск в NooL App…",
             attributes: [
                 .font: NSFont.systemFont(ofSize: 23, weight: .regular),
-                .foregroundColor: NSColor(NotchPalette.secondary)
+                .foregroundColor: NSColor.placeholderTextColor
             ]
         )
-        field.setAccessibilityLabel("Поиск в Nool Launcher")
+        field.setAccessibilityLabel("Поиск в NooL Launcher")
         field.identifier = NSUserInterfaceItemIdentifier("nool.launcher.search")
         field.delegate = context.coordinator
         return field
@@ -337,6 +403,14 @@ private struct LauncherSearchField: NSViewRepresentable {
     func updateNSView(_ field: NSTextField, context: Context) {
         context.coordinator.parent = self
         if field.stringValue != text { field.stringValue = text }
+        field.textColor = .labelColor
+        field.placeholderAttributedString = NSAttributedString(
+            string: "Поиск в NooL App…",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 23, weight: .regular),
+                .foregroundColor: NSColor.placeholderTextColor
+            ]
+        )
     }
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
@@ -344,18 +418,31 @@ private struct LauncherSearchField: NSViewRepresentable {
         init(_ parent: LauncherSearchField) { self.parent = parent }
         func controlTextDidChange(_ notification: Notification) {
             guard let field = notification.object as? NSTextField else { return }
+            parent.invalidatePreviewSelection()
             parent.text = field.stringValue
+        }
+        func textViewDidChangeSelection(_ notification: Notification) {
+            parent.invalidatePreviewSelection()
         }
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             if textView.hasMarkedText() { return false }
-            switch NSStringFromSelector(selector) {
+            let command = NSStringFromSelector(selector)
+            switch command {
             case "moveUp:": parent.move(-1)
             case "moveDown:": parent.move(1)
             case "insertNewline:": parent.submit(NSApp.currentEvent?.modifierFlags.contains(.command) == true)
             case "cancelOperation:": parent.cancel()
             case "insertTab:": parent.cycle(false)
             case "insertBacktab:": parent.cycle(true)
-            default: return false
+            case "moveLeft:", "moveRight:", "moveToBeginningOfLine:", "moveToEndOfLine:",
+                 "moveToBeginningOfDocument:", "moveToEndOfDocument:", "selectAll:":
+                parent.invalidatePreviewSelection()
+                return false
+            default:
+                if command.hasPrefix("move") || command.hasPrefix("select") {
+                    parent.invalidatePreviewSelection()
+                }
+                return false
             }
             return true
         }

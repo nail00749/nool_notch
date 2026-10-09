@@ -131,6 +131,29 @@ final class SystemLiveActivityTests: XCTestCase {
         XCTAssertTrue(tracker.consume([], now: start.addingTimeInterval(75)).isEmpty)
     }
 
+    func testDownloadTrackerHidesStalledFilesAndResumesOnWrites() {
+        var tracker = DownloadActivityTracker()
+        let now = Date(timeIntervalSince1970: 6_000)
+        var partial = DownloadSnapshot(
+            id: "/Downloads/video.part", title: "video", byteCount: 100,
+            finalFileExists: false, modifiedAt: now.addingTimeInterval(-3_600)
+        )
+        XCTAssertTrue(tracker.consume([partial], now: now).isEmpty)
+
+        // Preallocated torrents can keep the same size while writing pieces.
+        partial.modifiedAt = now.addingTimeInterval(2)
+        XCTAssertEqual(tracker.consume([partial], now: now.addingTimeInterval(2)).first?.state, .active)
+        XCTAssertTrue(tracker.consume([partial], now: now.addingTimeInterval(122)).isEmpty)
+
+        partial = DownloadSnapshot(id: partial.id, title: partial.title, byteCount: 200,
+                                   finalFileExists: false, modifiedAt: partial.modifiedAt)
+        XCTAssertEqual(tracker.consume([partial], now: now.addingTimeInterval(124)).first?.state, .active)
+        partial = DownloadSnapshot(id: partial.id, title: partial.title, byteCount: 200,
+                                   finalFileExists: true, modifiedAt: partial.modifiedAt)
+        XCTAssertEqual(tracker.consume([partial], now: now.addingTimeInterval(125)).first?.state, .notification)
+        XCTAssertTrue(tracker.consume([], now: now.addingTimeInterval(138)).isEmpty)
+    }
+
     func testExternalBridgeAcceptsDeliveryAndTimerWithoutPrivateSystemAccess() throws {
         let now = Date(timeIntervalSince1970: 5_000)
         let data = Data(

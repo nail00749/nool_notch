@@ -24,6 +24,9 @@ struct OllamaQuotaProvider: QuotaProvider, QuotaProviderAuthenticating, Sendable
     }
 
     @MainActor
+    func suspend() { OllamaWebSession.shared.suspend() }
+
+    @MainActor
     func beginAuthentication(onUpdate: @escaping @MainActor () -> Void) {
         OllamaWebSession.shared.beginAuthentication(onUpdate: onUpdate)
     }
@@ -39,22 +42,37 @@ protocol OllamaUsagePage: AnyObject {
 final class OllamaUsageReader {
     private var lastSuccessfulSnapshot: QuotaSnapshot?
     private var refreshTask: Task<QuotaSnapshot, Never>?
+    private var generation: UInt = 0
 
     func loadSnapshot(from page: any OllamaUsagePage) async -> QuotaSnapshot {
         if let refreshTask { return await refreshTask.value }
+        let generation = self.generation
         let task = Task { @MainActor in
             do {
                 try await page.reloadUsage()
+                try Task.checkCancellation()
+                guard self.generation == generation else { throw CancellationError() }
                 let body = try await page.bodyText()
+                try Task.checkCancellation()
+                guard self.generation == generation else { throw CancellationError() }
                 return try self.recordLoadedBody(body)
             } catch {
+                if Task.isCancelled || self.generation != generation {
+                    return self.failureSnapshot(for: CancellationError())
+                }
                 return self.failureSnapshot(for: error)
             }
         }
         refreshTask = task
         let snapshot = await task.value
-        refreshTask = nil
+        if generation == self.generation { refreshTask = nil }
         return snapshot
+    }
+
+    func cancel() {
+        generation &+= 1
+        refreshTask?.cancel()
+        refreshTask = nil
     }
 
     func recordLoadedBody(_ body: String) throws -> QuotaSnapshot {
@@ -107,6 +125,7 @@ final class OllamaWebSession: NSObject, WKNavigationDelegate, NSWindowDelegate, 
     private var awaitedNavigation: WKNavigation?
     private var navigationTimeoutTask: Task<Void, Never>?
     private var navigationGeneration = 0
+    private var isActive = false
 
     init(
         webView: WKWebView? = nil,
@@ -114,12 +133,13 @@ final class OllamaWebSession: NSObject, WKNavigationDelegate, NSWindowDelegate, 
     ) {
         self.webView = webView
         self.settingsURL = settingsURL
+        self.isActive = webView != nil
         super.init()
         webView?.navigationDelegate = self
     }
 
     func loadSnapshot() async -> QuotaSnapshot {
-        guard webView != nil, isAuthenticating == false else {
+        guard isActive, webView != nil, isAuthenticating == false else {
             return .requiresAuthentication(
                 providerID: "ollama-cloud",
                 providerName: "Ollama Cloud",
@@ -132,7 +152,7 @@ final class OllamaWebSession: NSObject, WKNavigationDelegate, NSWindowDelegate, 
     }
 
     func reloadUsage() async throws {
-        guard let webView, isAuthenticating == false else {
+        guard isActive, let webView, isAuthenticating == false else {
             throw OllamaUsageError.authenticationRequired
         }
         try await withCheckedThrowingContinuation { continuation in
@@ -152,7 +172,7 @@ final class OllamaWebSession: NSObject, WKNavigationDelegate, NSWindowDelegate, 
     }
 
     func bodyText() async throws -> String {
-        guard let webView,
+        guard isActive, let webView,
               webView.url?.host == "ollama.com",
               ["/settings", "/settings/"].contains(webView.url?.path ?? "") else {
             throw OllamaUsageError.authenticationRequired
@@ -181,6 +201,7 @@ final class OllamaWebSession: NSObject, WKNavigationDelegate, NSWindowDelegate, 
     }
 
     func prepare(onUpdate: @escaping @MainActor () -> Void) {
+        isActive = true
         self.onUpdate = onUpdate
         ensureWebView()
         isAuthenticating = false
@@ -194,6 +215,7 @@ final class OllamaWebSession: NSObject, WKNavigationDelegate, NSWindowDelegate, 
     }
 
     func beginAuthentication(onUpdate: @escaping @MainActor () -> Void) {
+        guard isActive else { return }
         self.onUpdate = onUpdate
         ensureWebView()
         let wasAuthenticating = isAuthenticating
@@ -208,6 +230,18 @@ final class OllamaWebSession: NSObject, WKNavigationDelegate, NSWindowDelegate, 
         if wasAuthenticating == false {
             webView?.load(settingsRequest)
         }
+    }
+
+    func suspend() {
+        guard isActive else { return }
+        isActive = false
+        onUpdate = nil
+        isAuthenticating = false
+        navigationGeneration &+= 1
+        usageReader.cancel()
+        finishNavigation(throwing: URLError(.cancelled))
+        detachWebView()
+        webView?.stopLoading()
     }
 
     private func ensureWebView() {
@@ -262,11 +296,12 @@ final class OllamaWebSession: NSObject, WKNavigationDelegate, NSWindowDelegate, 
     }
 
     private func recordFinishedNavigation() {
+        guard isActive else { return }
         let generation = navigationGeneration
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard let body = try? await bodyText(),
-                  generation == navigationGeneration,
+                  isActive, generation == navigationGeneration,
                   (try? usageReader.recordLoadedBody(body)) != nil else { return }
             if isAuthenticating {
                 isAuthenticating = false

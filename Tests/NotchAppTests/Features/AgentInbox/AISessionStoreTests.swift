@@ -4,6 +4,25 @@ import XCTest
 
 @MainActor
 final class AISessionStoreTests: XCTestCase {
+    func testImmediateStopAndRestartStopsSourceSynchronously() async {
+        let source = FakeAISessionSource(id: "toggle")
+        let store = AISessionStore(sources: [source])
+
+        store.start()
+        XCTAssertTrue(source.isActive)
+        store.stop()
+        XCTAssertFalse(source.isActive)
+        XCTAssertEqual(source.stopCount, 1)
+        store.start()
+        XCTAssertTrue(source.isActive)
+        XCTAssertEqual(source.startCount, 2)
+
+        source.send([session("after-restart", sourceID: source.id, status: .running)])
+        await settle()
+        XCTAssertEqual(store.sessions.map(\.id.sessionID), ["after-restart"])
+        store.stop()
+    }
+
     func testPresentationKeepsAllActiveAndOnlyTenInactive() {
         let now = Date(timeIntervalSinceReferenceDate: 10_000)
         let active = [
@@ -148,6 +167,9 @@ private final class FakeAISessionSource: AISessionSource {
     private var continuation: AsyncStream<AISessionSourceSnapshot>.Continuation?
     private(set) var openedSessionIDs: [String] = []
     private(set) var responses: [(String, String, AISessionResponse)] = []
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+    private(set) var isActive = false
 
     init(id: String) {
         self.id = id
@@ -155,9 +177,17 @@ private final class FakeAISessionSource: AISessionSource {
     }
 
     func snapshots() -> AsyncStream<AISessionSourceSnapshot> {
-        AsyncStream { continuation in
+        startCount += 1
+        isActive = true
+        return AsyncStream { continuation in
             self.continuation = continuation
         }
+    }
+
+    func stop() {
+        stopCount += 1
+        isActive = false
+        continuation = nil
     }
 
     func open(sessionID: String) async -> Bool {

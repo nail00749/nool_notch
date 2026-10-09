@@ -6,7 +6,7 @@ import XCTest
 final class TextRecognitionStoreTests: XCTestCase {
     func testCancelledRecognitionCannotPublishStaleText() async throws {
         let store = TextRecognitionStore(
-            urls: [], onSendToAI: { _ in false }, onClose: {},
+            urls: [], onSendToAI: { _, _ in false }, onClose: {},
             recognizer: { _, _ in
                 try? await Task.sleep(for: .milliseconds(80))
                 return "stale result"
@@ -48,7 +48,7 @@ final class TextRecognitionStoreTests: XCTestCase {
         var closeCount = 0
         let store = TextRecognitionStore(
             urls: [],
-            onSendToAI: { received.append($0); return false },
+            onSendToAI: { text, _ in received.append(text); return false },
             onClose: { closeCount += 1 },
             recognizer: { _, _ in "uncorrected" }
         )
@@ -67,7 +67,7 @@ final class TextRecognitionStoreTests: XCTestCase {
     func testOversizedAIDraftIsRejectedWithoutCallingHandoff() async throws {
         var called = false
         let store = TextRecognitionStore(
-            urls: [], onSendToAI: { _ in called = true; return true }, onClose: {},
+            urls: [], onSendToAI: { _, _ in called = true; return true }, onClose: {},
             recognizer: { _, _ in "ready" }
         )
         store.start()
@@ -81,8 +81,33 @@ final class TextRecognitionStoreTests: XCTestCase {
     }
 
     private func readyStore() -> TextRecognitionStore {
-        TextRecognitionStore(urls: [], onSendToAI: { _ in false }, onClose: {},
+        TextRecognitionStore(urls: [], onSendToAI: { _, _ in false }, onClose: {},
                              recognizer: { _, _ in "ready" })
+    }
+
+    func testTranslationPreparesEditedTextOnlyOnExplicitActionAndBoundsWholePrompt() async throws {
+        var drafts: [String] = []
+        var prompts: [String] = []
+        var closes = 0
+        let store = TextRecognitionStore(urls: [], sourceTitle: "Область экрана",
+                                         onSendToAI: { text, prompt in drafts.append(text); prompts.append(prompt); return true },
+                                         onClose: { closes += 1 }, recognizer: { _, _ in "original" })
+        store.start()
+        try await waitUntilReady(store)
+        XCTAssertTrue(drafts.isEmpty)
+        XCTAssertEqual(store.sourceTitle, "Область экрана")
+        store.text = "  Edited capture  "
+        store.prepareTranslationDraft()
+        XCTAssertEqual(drafts.count, 1)
+        XCTAssertEqual(drafts[0], "Edited capture")
+        XCTAssertTrue(prompts[0].hasPrefix("Переведи прикреплённый текст"))
+        XCTAssertEqual(closes, 1)
+
+        store.text = String(repeating: "x", count: TextRecognitionStore.maximumAIDraftCharacters)
+        store.prepareTranslationDraft()
+        XCTAssertEqual(drafts.count, 1, "The instruction prefix also counts against the AI limit")
+        XCTAssertEqual(closes, 1)
+        XCTAssertNotNil(store.actionMessage)
     }
 
     private func waitUntilReady(_ store: TextRecognitionStore) async throws {

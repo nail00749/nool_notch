@@ -25,4 +25,44 @@ final class NotchSurfaceShapeTests: XCTestCase {
         XCTAssertEqual(shape.surfaceRect(in: CGRect(x: 0, y: 0, width: 500, height: 400)),
                        CGRect(x: 0, y: 0, width: 500, height: 400))
     }
+
+    func testSideControlsKeepExpandedSurfaceCenteredInsideWiderWindow() {
+        let shape = NotchSurfaceShape(
+            compactWindowSize: CGSize(width: 300, height: 60),
+            compactSurfaceHeight: 44,
+            expandedHeight: 400,
+            expandedSurfaceWidth: 500
+        )
+
+        XCTAssertEqual(
+            shape.surfaceRect(in: CGRect(x: 0, y: 0, width: 620, height: 400)),
+            CGRect(x: 60, y: 0, width: 500, height: 400)
+        )
+    }
+
+    func testExpandedInteractionRegionIncludesSurfaceAndButtonsButExcludesEmptyLanes() {
+        let surfaceShape = NotchSurfaceShape(
+            compactWindowSize: CGSize(width: 300, height: 60),
+            compactSurfaceHeight: 44,
+            expandedHeight: 400,
+            expandedSurfaceWidth: 500,
+            holdsExpandedShape: true
+        )
+        let interactionShape = NotchRootInteractionShape(
+            isExpanded: true,
+            expandedSurfaceShape: surfaceShape,
+            sideControlsTop: 56,
+            leadingButtonCount: 2,
+            trailingButtonCount: 2,
+            excludesLeadingMascotLane: false
+        )
+        let panelBounds = CGRect(x: 0, y: 0, width: 620, height: 400)
+        let path = interactionShape.path(in: panelBounds)
+
+        XCTAssertTrue(path.contains(CGPoint(x: 70, y: 200)))
+        XCTAssertTrue(path.contains(CGPoint(x: 21, y: 77)))
+        XCTAssertTrue(path.contains(CGPoint(x: 599, y: 129)))
+        XCTAssertFalse(path.contains(CGPoint(x: 21, y: 103)))
+        XCTAssertFalse(path.contains(CGPoint(x: 599, y: 103)))
+    }
 }

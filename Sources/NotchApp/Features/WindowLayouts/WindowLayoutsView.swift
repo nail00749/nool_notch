@@ -40,7 +40,6 @@ struct WindowLayoutsView: View {
         .background(NotchPalette.surface)
         .foregroundStyle(NotchPalette.text)
         .tint(NotchPalette.accent)
-        .preferredColorScheme(.dark)
         .onAppear(perform: manager.refreshAccessibilityAccess)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             manager.refreshAccessibilityAccess()
@@ -57,7 +56,7 @@ struct WindowLayoutsView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Раскладки окон")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .font(.system(size: 18, weight: .bold, design: .default))
                 Text(targetPID == nil
                      ? "Расположите активное окно на экране."
                      : "Расположите окно выбранного приложения.")
@@ -74,7 +73,7 @@ struct WindowLayoutsView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(NotchPalette.text)
 
-            Text("Для этой функции Nool нужен доступ к положению и размеру окон. Разрешите приложение в разделе «Универсальный доступ» настроек macOS.")
+            Text("Для этой функции NooL App нужен доступ к положению и размеру окон. Разрешите приложение в разделе «Универсальный доступ» настроек macOS.")
                 .font(.system(size: 12))
                 .foregroundStyle(NotchPalette.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -158,7 +157,7 @@ struct WindowLayoutsView: View {
                     .font(.system(size: 13, weight: .semibold))
                 Spacer()
                 Text("\(manager.layouts.count)")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .font(.system(size: 11, weight: .medium, design: .default))
                     .foregroundStyle(NotchPalette.secondary)
             }
 

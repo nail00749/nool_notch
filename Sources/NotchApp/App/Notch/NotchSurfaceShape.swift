@@ -1,20 +1,28 @@
 import SwiftUI
 
-/// One surface follows the hosting view's actual bounds during NSPanel resizing.
-/// It must not animate toward a second, independently timed SwiftUI frame.
+/// Follows the animated SwiftUI viewport inside the stationary AppKit canvas.
 struct NotchSurfaceShape: Shape {
     let compactWindowSize: CGSize
     let compactSurfaceHeight: CGFloat
     let expandedHeight: CGFloat
+    var expandedSurfaceWidth: CGFloat? = nil
     var holdsExpandedShape = false
 
     func surfaceRect(in rect: CGRect) -> CGRect {
         let progress = expansionProgress(in: rect)
         let sideInset = NotchLayout.compactHoverHorizontalPadding * (1 - progress)
         let bottomInset = max(0, compactWindowSize.height - compactSurfaceHeight) * (1 - progress)
+        let surfaceWidth: CGFloat
+        if let expandedSurfaceWidth {
+            let compactSurfaceWidth = max(0, compactWindowSize.width - sideInset * 2)
+            let targetWidth = max(0, expandedSurfaceWidth)
+            surfaceWidth = compactSurfaceWidth + (targetWidth - compactSurfaceWidth) * progress
+        } else {
+            surfaceWidth = max(0, rect.width - sideInset * 2)
+        }
         return CGRect(
-            x: rect.minX + sideInset, y: rect.minY,
-            width: max(0, rect.width - sideInset * 2),
+            x: rect.midX - surfaceWidth / 2, y: rect.minY,
+            width: max(0, surfaceWidth),
             height: max(0, rect.height - bottomInset)
         )
     }

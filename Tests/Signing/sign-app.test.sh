@@ -5,7 +5,7 @@ PROJECT_ROOT="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
 SIGN_SCRIPT="$PROJECT_ROOT/scripts/sign-app.sh"
 SIGNING_IDENTITY="${NOTCHAPP_SIGNING_IDENTITY:-Apple Development: Nail Ultyev (8SY5RA8Q5F)}"
 TEST_ROOT="$(mktemp -d /private/tmp/notchapp-signing.XXXXXX)"
-APP_PATH="$TEST_ROOT/NotchApp.app"
+APP_PATH="$TEST_ROOT/NooL App.app"
 
 cleanup() {
   chmod -R u+w "$TEST_ROOT" 2>/dev/null || true

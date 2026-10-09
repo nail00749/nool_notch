@@ -23,7 +23,7 @@ struct CalendarPanel: View {
                 CalendarMessagePanel(
                     icon: "calendar.badge.exclamationmark",
                     title: "Нет доступа к календарю",
-                    detail: "Разрешите NotchApp доступ к календарям в системных настройках.",
+                    detail: "Разрешите NooL App доступ к календарям в системных настройках.",
                     actionTitle: "Повторить",
                     action: model.refreshCalendar
                 )
@@ -63,12 +63,16 @@ private struct CalendarPanelContent: View {
                     onJoin: model.openMeetingURL
                 )
             case .month:
-                CalendarMonthView(
-                    model: model,
-                    displayedMonth: $displayedMonth,
-                    selectedDate: $selectedDate,
-                    viewMode: $model.calendarViewMode
-                )
+                ScrollView(.vertical) {
+                    CalendarMonthView(
+                        model: model,
+                        displayedMonth: $displayedMonth,
+                        selectedDate: $selectedDate,
+                        viewMode: $model.calendarViewMode
+                    )
+                    .frame(minHeight: 320)
+                }
+                .scrollIndicators(.visible)
             }
         }
         .onAppear {
@@ -108,10 +112,10 @@ private struct CalendarViewModePicker: View {
                 } label: {
                     Image(systemName: mode.iconName)
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(selection == mode ? .white : .white.opacity(0.46))
+                        .foregroundStyle(selection == mode ? NotchPalette.text : NotchPalette.text.opacity(0.46))
                         .frame(width: 40, height: 40)
                         .background(
-                            selection == mode ? Color.white.opacity(0.14) : .clear,
+                            selection == mode ? NotchPalette.text.opacity(0.14) : .clear,
                             in: RoundedRectangle(cornerRadius: 10, style: .continuous)
                         )
                 }
@@ -121,7 +125,7 @@ private struct CalendarViewModePicker: View {
             }
         }
         .padding(2)
-        .background(.black.opacity(0.2), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(NotchPalette.text.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -197,12 +201,12 @@ private struct CalendarMonthView: View {
                         .frame(width: 40, height: 40)
                 }
                 .buttonStyle(NotchButtonStyle())
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(NotchPalette.text.opacity(0.7))
                 .accessibilityLabel("Предыдущий месяц")
 
                 Text(monthTitle)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 13, weight: .semibold, design: .default))
+                    .foregroundStyle(NotchPalette.text)
                     .lineLimit(1)
                     .frame(minWidth: 108, alignment: .center)
 
@@ -214,7 +218,7 @@ private struct CalendarMonthView: View {
                         .frame(width: 40, height: 40)
                 }
                 .buttonStyle(NotchButtonStyle())
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(NotchPalette.text.opacity(0.7))
                 .accessibilityLabel("Следующий месяц")
             }
 
@@ -223,8 +227,8 @@ private struct CalendarMonthView: View {
                     HStack(spacing: 2) {
                         ForEach(weekdayTitles, id: \.self) { weekday in
                             Text(weekday)
-                                .font(.system(size: 9, weight: .semibold, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.36))
+                                .font(.system(size: 9, weight: .semibold, design: .default))
+                                .foregroundStyle(NotchPalette.text.opacity(0.36))
                                 .frame(maxWidth: .infinity)
                         }
                     }
@@ -298,10 +302,10 @@ private struct CalendarDayCell: View {
         Button(action: onSelect) {
             VStack(spacing: 2) {
                 Text("\(calendar.component(.day, from: date))")
-                    .font(.system(size: 11, weight: isToday ? .bold : .medium, design: .rounded))
+                    .font(.system(size: 11, weight: isToday ? .bold : .medium, design: .default))
                     .monospacedDigit()
                     .foregroundStyle(
-                        isToday ? NotchPalette.accent : (isSelected ? .white : .white.opacity(0.72))
+                        isToday ? NotchPalette.accent : (isSelected ? NotchPalette.text : NotchPalette.text.opacity(0.72))
                     )
 
                 Circle()
@@ -311,7 +315,7 @@ private struct CalendarDayCell: View {
             .frame(maxWidth: .infinity)
             .frame(height: 40)
             .background(
-                isSelected ? Color.white.opacity(0.15) : .clear,
+                isSelected ? NotchPalette.text.opacity(0.15) : .clear,
                 in: RoundedRectangle(cornerRadius: 9, style: .continuous)
             )
         }
@@ -340,8 +344,8 @@ private struct CalendarDayDetails: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(dateTitle)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
+                .font(.system(size: 12, weight: .semibold, design: .default))
+                .foregroundStyle(NotchPalette.text)
                 .lineLimit(2)
 
             if isLoading {
@@ -351,12 +355,12 @@ private struct CalendarDayDetails: View {
                         .tint(NotchPalette.accent)
                     Text("Загружаю…")
                 }
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.42))
+                .font(.system(size: 10, weight: .medium, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.42))
             } else if events.isEmpty {
                 Text("Нет событий")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.36))
+                    .font(.system(size: 10, weight: .medium, design: .default))
+                    .foregroundStyle(NotchPalette.text.opacity(0.36))
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 7) {
@@ -373,7 +377,7 @@ private struct CalendarDayDetails: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.white.opacity(0.06))
+                .fill(NotchPalette.text.opacity(0.06))
         )
     }
 }
@@ -396,17 +400,17 @@ private struct CalendarDayEventRow: View {
                     Text(event.endDate, style: .time)
                 }
             }
-            .font(.system(size: 9, weight: .semibold, design: .rounded))
-            .foregroundStyle(.white.opacity(0.52))
+            .font(.system(size: 9, weight: .semibold, design: .default))
+            .foregroundStyle(NotchPalette.text.opacity(0.52))
 
             Text(event.title)
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.88))
+                .font(.system(size: 10, weight: .semibold, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.88))
                 .lineLimit(2)
 
             Text(event.calendarTitle)
-                .font(.system(size: 8, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.32))
+                .font(.system(size: 8, weight: .medium, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.32))
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -424,8 +428,8 @@ private struct CalendarEventsList: View {
             VStack(alignment: .leading, spacing: 9) {
                 HStack {
                     Text("Ближайшие события")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.76))
+                        .font(.system(size: 12, weight: .semibold, design: .default))
+                        .foregroundStyle(NotchPalette.text.opacity(0.76))
 
                     Spacer()
 
@@ -437,7 +441,7 @@ private struct CalendarEventsList: View {
                             .frame(width: 40, height: 40)
                     }
                     .buttonStyle(NotchButtonStyle())
-                    .foregroundStyle(.white.opacity(0.64))
+                    .foregroundStyle(NotchPalette.text.opacity(0.64))
                     .accessibilityLabel("Обновить календарь")
                 }
 
@@ -482,24 +486,24 @@ private struct CalendarEventRow: View {
                     Text(event.endDate, style: .time)
                 }
             }
-            .font(.system(size: 10, weight: .semibold, design: .rounded))
-            .foregroundStyle(.white.opacity(0.58))
+            .font(.system(size: 10, weight: .semibold, design: .default))
+            .foregroundStyle(NotchPalette.text.opacity(0.58))
 
             Text(event.title)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
+                .font(.system(size: 13, weight: .semibold, design: .default))
+                .foregroundStyle(NotchPalette.text)
                 .lineLimit(2)
 
             Text(event.calendarTitle)
-                .font(.system(size: 9, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.36))
+                .font(.system(size: 9, weight: .medium, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.36))
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(11)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.white.opacity(0.07))
+                .fill(NotchPalette.text.opacity(0.07))
         )
         .accessibilityElement(children: .combine)
     }
@@ -526,18 +530,18 @@ private struct CalendarMessagePanel: View {
             }
 
             Text(title)
-                .font(.system(size: 16, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
+                .font(.system(size: 16, weight: .semibold, design: .default))
+                .foregroundStyle(NotchPalette.text)
 
             Text(detail)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.42))
+                .font(.system(size: 11, weight: .medium, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.42))
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 270)
 
             if let actionTitle, let action {
                 Button(actionTitle, action: action)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .font(.system(size: 11, weight: .semibold, design: .default))
                     .foregroundStyle(NotchPalette.accent)
                     .frame(minWidth: 40, minHeight: 40)
                     .buttonStyle(NotchButtonStyle())

@@ -2,6 +2,41 @@ import AppKit
 import SceneKit
 import SwiftUI
 
+/// SceneKit's USDZ parser is synchronous. Keep the first parse off the main
+/// actor and share an immutable template between compact mascot instances.
+@MainActor
+private final class NoolMascotSceneCache: ObservableObject {
+    static let shared = NoolMascotSceneCache()
+
+    @Published private(set) var template: SCNScene?
+    private var loadTask: Task<Void, Never>?
+    private var didRequestLoad = false
+
+    func loadIfNeeded() {
+        guard !didRequestLoad else { return }
+        didRequestLoad = true
+        guard let url = Bundle.module.url(forResource: "NoolMascot", withExtension: "usdz") else {
+            return
+        }
+
+        loadTask = Task { [weak self] in
+            let loaded = await Task.detached(priority: .utility) { () -> LoadedNoolMascotScene? in
+                guard let scene = try? SCNScene(url: url, options: nil) else { return nil }
+                return LoadedNoolMascotScene(scene: scene)
+            }.value
+            guard let self else { return }
+            self.template = loaded?.scene
+            self.loadTask = nil
+        }
+    }
+}
+
+/// SceneKit's graph is not Sendable, but this scene is transferred once from
+/// the detached parser and then treated as an immutable cloning template.
+private struct LoadedNoolMascotScene: @unchecked Sendable {
+    let scene: SCNScene
+}
+
 private extension CompactAgentSignalKind {
     var accentColor: Color {
         switch self {
@@ -114,6 +149,8 @@ struct CompactNoticeMascot: View {
 }
 
 struct NoolWavingMascot: View {
+    static func prepareAsset() { NoolMascotSceneCache.shared.loadIfNeeded() }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -125,6 +162,7 @@ struct NoolWavingMascot: View {
 
 private struct NoolMascotSceneView: NSViewRepresentable {
     let reduceMotion: Bool
+    @ObservedObject private var sceneCache = NoolMascotSceneCache.shared
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -138,13 +176,33 @@ private struct NoolMascotSceneView: NSViewRepresentable {
         sceneView.preferredFramesPerSecond = 30
         sceneView.rendersContinuously = false
 
-        guard let sceneURL = Bundle.module.url(
-            forResource: "NoolMascot",
-            withExtension: "usdz"
-        ), let scene = try? SCNScene(url: sceneURL, options: nil) else {
-            return sceneView
+        sceneView.alphaValue = 0
+        sceneCache.loadIfNeeded()
+        if let template = sceneCache.template {
+            configure(sceneView, from: template, coordinator: context.coordinator)
         }
+        return sceneView
+    }
 
+    func updateNSView(_ sceneView: SCNView, context: Context) {
+        sceneCache.loadIfNeeded()
+        if context.coordinator.isConfigured == false, let template = sceneCache.template {
+            configure(sceneView, from: template, coordinator: context.coordinator)
+        }
+        updateAnimation(in: sceneView, coordinator: context.coordinator)
+    }
+
+    private func configure(
+        _ sceneView: SCNView,
+        from template: SCNScene,
+        coordinator: Coordinator
+    ) {
+        // Clone the node hierarchy so wave actions and transforms stay local to
+        // this SCNView while all instances reuse the single parsed USDZ asset.
+        let scene = SCNScene()
+        for node in template.rootNode.childNodes {
+            scene.rootNode.addChildNode(node.clone())
+        }
         scene.background.contents = NSColor.clear
         sceneView.scene = scene
         configureCameraAndLighting(in: scene, for: sceneView)
@@ -154,16 +212,13 @@ private struct NoolMascotSceneView: NSViewRepresentable {
             recursively: true
         ) {
             waveNode.eulerAngles.y = -2.0
-            context.coordinator.waveNode = waveNode
-            context.coordinator.neutralRotation = waveNode.eulerAngles
+            coordinator.waveNode = waveNode
+            coordinator.neutralRotation = waveNode.eulerAngles
         }
 
-        updateAnimation(in: sceneView, coordinator: context.coordinator)
-        return sceneView
-    }
-
-    func updateNSView(_ sceneView: SCNView, context: Context) {
-        updateAnimation(in: sceneView, coordinator: context.coordinator)
+        coordinator.isConfigured = true
+        sceneView.alphaValue = 1
+        updateAnimation(in: sceneView, coordinator: coordinator)
     }
 
     private func configureCameraAndLighting(in scene: SCNScene, for sceneView: SCNView) {
@@ -257,5 +312,6 @@ private struct NoolMascotSceneView: NSViewRepresentable {
 
         var waveNode: SCNNode?
         var neutralRotation = SCNVector3Zero
+        var isConfigured = false
     }
 }

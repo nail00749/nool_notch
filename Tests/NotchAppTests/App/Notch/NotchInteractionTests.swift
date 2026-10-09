@@ -141,6 +141,58 @@ final class NotchInteractionTests: XCTestCase {
         XCTAssertEqual(metrics.expandedCalendarSize, CGSize(width: 500, height: 460))
     }
 
+    func testExpandedPanelReservesSymmetricLanesForSideControls() {
+        let metrics = NotchLayoutMetrics(physicalNotchSize: CGSize(width: 220, height: 38))
+
+        XCTAssertEqual(
+            NotchWindowSizingPolicy.panelSize(
+                metrics: metrics,
+                isExpanded: true,
+                selectedPanel: .ai,
+                calendarViewMode: .list,
+                isShowingSettings: false
+            ),
+            CGSize(width: 500 + NotchLayout.expandedSideControlLaneWidth * 2, height: 440)
+        )
+        XCTAssertEqual(
+            NotchWindowSizingPolicy.panelSize(
+                metrics: metrics,
+                isExpanded: false,
+                selectedPanel: .ai,
+                calendarViewMode: .list,
+                isShowingSettings: false
+            ),
+            NotchWindowSizingPolicy.compactInteractionSize(metrics: metrics)
+        )
+
+        XCTAssertEqual(
+            NotchWindowSizingPolicy.panelSize(
+                metrics: metrics,
+                isExpanded: true,
+                selectedPanel: .ai,
+                calendarViewMode: .list,
+                isShowingSettings: false,
+                hasSideControls: false
+            ),
+            CGSize(width: 500, height: 440)
+        )
+    }
+
+    func testCustomExpandedDimensionsClampCalendarHeightAndResizeOuterPanel() {
+        let metrics = NotchLayoutMetrics(physicalNotchSize: CGSize(width: 220, height: 38))
+        let customSize = NotchWindowSizingPolicy.panelSize(
+            metrics: metrics,
+            isExpanded: true,
+            selectedPanel: .calendar,
+            calendarViewMode: .month,
+            isShowingSettings: false,
+            expandedWidth: 560,
+            maxExpandedHeight: 420
+        )
+
+        XCTAssertEqual(customSize, CGSize(width: 560 + NotchLayout.expandedSideControlLaneWidth * 2, height: 420))
+    }
+
     func testHoverOnlyEnlargesCompactGeometryAndDoesNotChangeExpandedGeometry() {
         let metrics = NotchLayoutMetrics(physicalNotchSize: .zero)
         let idle = metrics.compactSize(isPlaying: false)
@@ -203,7 +255,7 @@ final class NotchInteractionTests: XCTestCase {
     func testCollapseWaitsUntilExpansionAnimationHasSettled() {
         XCTAssertEqual(
             NotchHoverPolicy.collapseDelay(elapsedSinceExpansion: 0.10),
-            0.62,
+            0.50,
             accuracy: 0.001
         )
         XCTAssertEqual(
@@ -264,6 +316,88 @@ final class NotchInteractionTests: XCTestCase {
             hostingView.bounds.maxY,
             accuracy: 1
         )
+    }
+
+    @MainActor
+    func testTransitionSurfaceUsesWindowBoundsEvenWhenExpandedChildIsLarger() throws {
+        let recorder = LayoutFrameRecorder()
+        let window = NSPanel(contentRect: NSRect(x: 100, y: 100, width: 340, height: 60),
+                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let hostingView = NSHostingView(rootView: NotchTransitionStack {
+            Color.red.frame(width: 500, height: 380)
+        }.background(LayoutFrameProbe(recorder: recorder)))
+        hostingView.sizingOptions = NotchWindowHostingPolicy.sizingOptions
+        window.contentView = hostingView
+        for size in [CGSize(width: 340, height: 60), CGSize(width: 420, height: 220),
+                     CGSize(width: 620, height: 380), CGSize(width: 390, height: 140)] {
+            window.setFrame(NSRect(x: 650 - size.width / 2, y: 800 - size.height,
+                                   width: size.width, height: size.height), display: false)
+            hostingView.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            hostingView.layoutSubtreeIfNeeded()
+            let frame = try XCTUnwrap(recorder.frame)
+            XCTAssertEqual(frame.width, size.width, accuracy: 1)
+            XCTAssertEqual(frame.height, size.height, accuracy: 1)
+            XCTAssertEqual(frame.midX, hostingView.bounds.midX, accuracy: 1)
+            XCTAssertEqual(frame.maxY, hostingView.bounds.maxY, accuracy: 1)
+        }
+    }
+
+    func testAnimationEnvelopePreservesTopCenterAndContainsBothEndpoints() {
+        let compact = CGRect(x: 330, y: 740, width: 340, height: 60)
+        let expanded = CGRect(x: 190, y: 400, width: 620, height: 400)
+        XCTAssertEqual(NotchWindowEnvelope.frame(containing: compact, target: expanded), expanded)
+        XCTAssertEqual(NotchWindowEnvelope.frame(containing: expanded, target: compact), expanded)
+        let resized = CGRect(x: 140, y: 500, width: 720, height: 300)
+        XCTAssertEqual(NotchWindowEnvelope.frame(containing: expanded, target: resized),
+                       CGRect(x: 140, y: 400, width: 720, height: 400))
+    }
+
+    @MainActor
+    func testVisualViewportStaysAtTopCenterInsideLargerAnimationCanvas() throws {
+        let recorder = LayoutFrameRecorder()
+        let window = NSPanel(contentRect: NSRect(x: 190, y: 400, width: 620, height: 400),
+                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let host = NSHostingView(rootView: AnyView(Color.clear))
+        host.sizingOptions = NotchWindowHostingPolicy.sizingOptions
+        window.contentView = host
+        for size in [CGSize(width: 340, height: 60), CGSize(width: 500, height: 220),
+                     CGSize(width: 620, height: 400), CGSize(width: 390, height: 140)] {
+            host.rootView = AnyView(NotchVisualViewport(size: size) {
+                NotchTransitionStack { Color.red.frame(width: 500, height: 380) }
+                    .background(LayoutFrameProbe(recorder: recorder))
+            })
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            host.layoutSubtreeIfNeeded()
+            let frame = try XCTUnwrap(recorder.frame)
+            XCTAssertEqual(frame.width, size.width, accuracy: 1)
+            XCTAssertEqual(frame.height, size.height, accuracy: 1)
+            XCTAssertEqual(frame.midX, host.bounds.midX, accuracy: 1)
+            XCTAssertEqual(frame.maxY, host.bounds.maxY, accuracy: 1)
+            XCTAssertEqual(window.frame, CGRect(x: 190, y: 400, width: 620, height: 400))
+        }
+    }
+
+    @MainActor
+    func testVisualViewportAnimationCompletesAfterRenderingRatherThanAtTargetAssignment() throws {
+        let presentation = NotchWindowPresentation(size: CGSize(width: 500, height: 380))
+        let window = NSPanel(contentRect: NSRect(x: 100, y: 100, width: 500, height: 380),
+                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let host = NSHostingView(rootView: AnimatedViewportProbe(presentation: presentation))
+        host.sizingOptions = NotchWindowHostingPolicy.sizingOptions
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        var completed = false
+        withAnimation(.linear(duration: 0.25), completionCriteria: .removed) {
+            presentation.size = CGSize(width: 340, height: 60)
+        } completion: { completed = true }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertFalse(completed, "The envelope must remain until visible interpolation finishes")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.35))
+        XCTAssertTrue(completed)
     }
 
     func testHoverExpansionUsesConfiguredDelay() {
@@ -374,7 +508,7 @@ final class NotchInteractionTests: XCTestCase {
                 calendarViewMode: .list,
                 isShowingSettings: false
             ),
-            CGSize(width: 500, height: 338)
+            CGSize(width: 500, height: 440)
         )
         XCTAssertEqual(
             NotchWindowSizingPolicy.size(
@@ -963,6 +1097,17 @@ final class NotchInteractionTests: XCTestCase {
 @MainActor
 private final class LayoutFrameRecorder {
     var frame: NSRect?
+}
+
+private struct AnimatedViewportProbe: View {
+    @ObservedObject var presentation: NotchWindowPresentation
+
+    var body: some View {
+        NotchVisualViewport(size: presentation.size) {
+            NotchTransitionStack { Color.clear.frame(width: 500, height: 380) }
+                .background(Color.black)
+        }
+    }
 }
 
 private struct LayoutFrameProbe: NSViewRepresentable {

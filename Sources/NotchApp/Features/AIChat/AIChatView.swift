@@ -108,11 +108,10 @@ struct AIChatView: View {
                         .foregroundStyle(NotchPalette.secondary)
                 }
                 .padding(.horizontal, 11).frame(height: 36)
-                .background(NotchPalette.text.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .padding(.horizontal, 9).frame(height: 36)
-            .background(NotchPalette.text.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
+            .background(NotchPalette.raised, in: RoundedRectangle(cornerRadius: 8))
             .accessibilityLabel("Провайдер: \(store.selectedProvider.title)")
             .help("Выбрать провайдера. Смена начнёт новый чат.")
 
@@ -135,7 +134,7 @@ struct AIChatView: View {
                         Text(modelTitle).font(.system(size: 11)).lineLimit(1)
                         Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
                     }
-                    .foregroundStyle(NotchPalette.text.opacity(0.6))
+                    .foregroundStyle(NotchPalette.secondary)
                     .padding(.horizontal, 8).frame(height: 36)
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden)
@@ -198,12 +197,10 @@ struct AIChatView: View {
         VStack(spacing: 11) {
             AIChatProviderIcon(provider: store.selectedProvider, size: 24)
                 .frame(width: 46, height: 46)
-                .background(NotchPalette.text.opacity(0.045), in: RoundedRectangle(cornerRadius: 14))
-                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(NotchPalette.text.opacity(0.07)))
+                .background(NotchPalette.raised, in: RoundedRectangle(cornerRadius: 12))
             VStack(spacing: 6) {
                 Text(unavailable ? "Подключите модель" : "С чего начнём?")
-                    .font(.system(size: 21, weight: .medium, design: .rounded))
-                    .foregroundStyle(NotchPalette.text.opacity(0.92))
+                    .font(.system(size: 21, weight: .medium))
                 Text(unavailable ? (store.selectedStatus?.message ?? "") :
                         "Задайте вопрос, разберите идею или поработайте с текстом.")
                     .font(.system(size: 12)).foregroundStyle(NotchPalette.secondary)
@@ -273,9 +270,9 @@ struct AIChatView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .foregroundStyle(isError ? Color.signalCoral : NotchPalette.text.opacity(0.6))
+        .foregroundStyle(isError ? Color(nsColor: .systemRed) : NotchPalette.secondary)
         .padding(.horizontal, 14).padding(.vertical, 9)
-        .background((isError ? Color.signalCoral : NotchPalette.text).opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+        .background((isError ? Color(nsColor: .systemRed) : NotchPalette.secondary).opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
         .padding(.horizontal, 18).padding(.bottom, 8)
     }
 
@@ -290,13 +287,12 @@ struct AIChatView: View {
                 composerActions
             }
             .background {
-                RoundedRectangle(cornerRadius: 16).fill(NotchPalette.raised.opacity(composerFocused ? 1 : 0.7))
+                RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .textBackgroundColor))
             }
             .overlay {
-                RoundedRectangle(cornerRadius: 16)
-                    .strokeBorder(composerFocused ? NotchPalette.accent.opacity(0.32) : NotchPalette.text.opacity(0.1))
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(composerFocused ? NotchPalette.accent.opacity(0.7) : NotchPalette.separator)
             }
-            .shadow(color: Color.black.opacity(0.12), radius: 10, y: 4)
             privacyFooter
         }
         .padding(.horizontal, 18).padding(.top, 4).padding(.bottom, 12)
@@ -325,12 +321,12 @@ struct AIChatView: View {
             .help("Добавить файл или скриншот · можно перетащить в чат")
             .accessibilityLabel("Прикрепить файлы")
             if store.isImportingAttachments { ProgressView().controlSize(.mini) }
-            Text("↵ отправить").foregroundStyle(NotchPalette.text.opacity(0.48))
-            Text("·  ⇧↵ новая строка").foregroundStyle(NotchPalette.text.opacity(0.3))
+            Text("↵ отправить").foregroundStyle(NotchPalette.secondary)
+            Text("·  ⇧↵ новая строка").foregroundStyle(NotchPalette.secondary)
             Spacer()
             if store.draft.count > 7_000 {
                 Text("\(store.draft.count)/8000").monospacedDigit()
-                    .foregroundStyle(store.draft.count > 8_000 ? Color.signalCoral : NotchPalette.secondary)
+                    .foregroundStyle(store.draft.count > 8_000 ? Color(nsColor: .systemRed) : NotchPalette.secondary)
             }
             sendButton
         }
@@ -344,11 +340,11 @@ struct AIChatView: View {
         } label: {
             Image(systemName: store.isStreaming ? "stop.fill" : "arrow.up")
                 .font(.system(size: store.isStreaming ? 12 : 16, weight: .semibold))
-                .foregroundStyle(store.isStreaming || store.canSend ? Color.black.opacity(0.85) : NotchPalette.text.opacity(0.25))
+                .foregroundStyle(store.isStreaming || store.canSend ? Color(nsColor: .alternateSelectedControlTextColor) : NotchPalette.secondary)
                 .frame(width: 32, height: 32)
                 .background {
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(store.isStreaming || store.canSend ? NotchPalette.accent : NotchPalette.text.opacity(0.07))
+                        .fill(store.isStreaming || store.canSend ? NotchPalette.accent : NotchPalette.raised)
                 }
                 .frame(width: 40, height: 40).contentShape(Rectangle())
         }
@@ -390,10 +386,9 @@ private struct AIChatMessageRow: View {
                     Text(verbatim: message.text)
                         .font(.system(size: 14)).lineSpacing(4).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
-                        .foregroundStyle(NotchPalette.text.opacity(0.9))
                     }
                         .padding(.horizontal, 15).padding(.vertical, 11)
-                        .background(NotchPalette.raised, in: RoundedRectangle(cornerRadius: 15))
+                        .background(NotchPalette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                 }
                 .accessibilityLabel("Вы: \(message.text)")
             } else {
@@ -401,7 +396,7 @@ private struct AIChatMessageRow: View {
                     HStack(spacing: 8) {
                         AIChatProviderIcon(provider: provider, size: 17)
                         Text(provider.chatTitle).font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(NotchPalette.text.opacity(0.7))
+                            .foregroundStyle(NotchPalette.secondary)
                         if message.state == .streaming { ProgressView().controlSize(.mini) }
                         Spacer()
                         if !message.text.isEmpty {
@@ -425,13 +420,13 @@ private struct AIChatMessageRow: View {
                         }
                     }.frame(height: 40)
                     if message.text.isEmpty && message.state == .streaming {
-                        Text("Готовлю ответ…").font(.system(size: 13)).foregroundStyle(NotchPalette.text.opacity(0.42))
+                        Text("Готовлю ответ…").font(.system(size: 13)).foregroundStyle(NotchPalette.secondary)
                             .padding(.top, 5)
                     } else {
                         Text(LocalizedStringKey(message.text))
                             .font(.system(size: 14)).lineSpacing(5).textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
-                            .foregroundStyle(NotchPalette.text.opacity(0.86)).tint(NotchPalette.accent)
+                            .tint(NotchPalette.accent)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if message.state == .interrupted || message.state == .failed {
@@ -484,8 +479,8 @@ private struct AIChatAttachmentStrip: View {
                                 .accessibilityLabel("Удалить \(attachment.name)")
                         }
                     }
-                    .foregroundStyle(NotchPalette.text.opacity(0.85)).padding(6)
-                    .background(NotchPalette.text.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(6)
+                    .background(NotchPalette.raised, in: RoundedRectangle(cornerRadius: 8))
                     .help(attachment.name)
                 }
             }
@@ -501,13 +496,13 @@ private struct AIChatProviderIcon: View {
             switch provider {
             case .apple:
                 Image(systemName: appleSymbol).font(.system(size: size, weight: .medium))
-                    .foregroundStyle(Color.signalMint)
+                    .foregroundStyle(NotchPalette.accent)
             case .codex:
                 Image("QuotaChatGPT", bundle: .module).resizable().renderingMode(.template).scaledToFit()
                     .foregroundStyle(NotchPalette.text.opacity(0.85))
             case .claude:
                 Image("QuotaClaude", bundle: .module).resizable().renderingMode(.template).scaledToFit()
-                    .foregroundStyle(Color(red: 0.85, green: 0.56, blue: 0.43))
+                    .foregroundStyle(NotchPalette.secondary)
             case .ollama:
                 Image("QuotaOllama", bundle: .module).resizable().renderingMode(.template).scaledToFit()
                     .foregroundStyle(NotchPalette.text.opacity(0.85))
@@ -535,9 +530,11 @@ private struct AIChatQuietButtonStyle: ButtonStyle {
     @State private var hovered = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(NotchPalette.text.opacity(hovered ? 0.9 : 0.55))
-            .background(NotchPalette.text.opacity(configuration.isPressed ? 0.1 : (hovered ? 0.055 : 0)),
-                        in: RoundedRectangle(cornerRadius: 10))
+            .foregroundStyle(hovered ? NotchPalette.text : NotchPalette.secondary)
+            .background(
+                NotchPalette.raised.opacity(configuration.isPressed ? 1 : (hovered ? 0.75 : 0)),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
             .onHover { hovered = $0 }
     }
 }
@@ -548,11 +545,11 @@ private struct AIChatSuggestionStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(NotchPalette.text.opacity(enabled ? (hovered ? 0.9 : 0.65) : 0.3))
+            .foregroundStyle(enabled ? NotchPalette.text : NotchPalette.secondary)
             .padding(.horizontal, 13).frame(height: 40)
-            .background(NotchPalette.text.opacity(configuration.isPressed ? 0.09 : (hovered ? 0.07 : 0.035)),
-                        in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(NotchPalette.text.opacity(0.06)))
+            .background(NotchPalette.raised.opacity(configuration.isPressed ? 1 : (hovered ? 0.85 : 0.6)),
+                        in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(NotchPalette.separator))
             .onHover { hovered = $0 }
     }
 }
@@ -577,9 +574,9 @@ struct AIChatSettingsView: View {
                     }
                 }
                 Button("Проверить подключения", action: store.refreshAvailability)
-                Text("Для Ollama запустите локальный сервер на 127.0.0.1:11434. Nool показывает установленные локальные модели и не скачивает их автоматически.")
+                Text("Для Ollama запустите локальный сервер на 127.0.0.1:11434. NooL App показывает установленные локальные модели и не скачивает их автоматически.")
                     .font(.caption).foregroundStyle(NotchPalette.secondary)
-                Text("Для входа используйте установленный CLI: codex login или claude auth login. Nool не сохраняет их ключи и не меняет конфиги.")
+                Text("Для входа используйте установленный CLI: codex login или claude auth login. NooL App не сохраняет их ключи и не меняет конфиги.")
                     .font(.caption).foregroundStyle(NotchPalette.secondary).textSelection(.enabled)
             }.padding(8)
         }
@@ -606,8 +603,8 @@ private struct AIChatComposer: NSViewRepresentable {
         let editor = ChatTextView(frame: scroll.bounds)
         editor.isRichText = false
         editor.drawsBackground = false
-        editor.textColor = NSColor(NotchPalette.text)
-        editor.insertionPointColor = NSColor(NotchPalette.accent)
+        editor.textColor = .labelColor
+        editor.insertionPointColor = .controlAccentColor
         editor.font = .systemFont(ofSize: 14)
         editor.textContainerInset = NSSize(width: 14, height: 12)
         editor.textContainer?.lineFragmentPadding = 0
@@ -632,6 +629,8 @@ private struct AIChatComposer: NSViewRepresentable {
         context.coordinator.parent = self
         guard let editor = scroll.documentView as? NSTextView else { return }
         if editor.string != text { editor.string = text }
+        editor.textColor = .labelColor
+        editor.insertionPointColor = .controlAccentColor
         context.coordinator.measure(editor)
     }
 

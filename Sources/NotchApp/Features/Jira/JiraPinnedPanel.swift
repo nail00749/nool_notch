@@ -61,13 +61,13 @@ struct JiraPinnedPanel: View {
                         model.selectJiraPinnedSource(source)
                     } label: {
                         Label(sourceTitle(source), systemImage: sourceIcon(source))
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
-                            .foregroundStyle(isSelected ? .white : .white.opacity(0.48))
+                            .font(.system(size: 10, weight: .semibold, design: .default))
+                            .foregroundStyle(isSelected ? NotchPalette.text : NotchPalette.text.opacity(0.48))
                             .lineLimit(1)
                             .padding(.horizontal, 10)
                             .frame(height: 30)
                             .background(
-                                isSelected ? Color.white.opacity(0.14) : Color.white.opacity(0.055),
+                                isSelected ? NotchPalette.text.opacity(0.14) : NotchPalette.text.opacity(0.055),
                                 in: RoundedRectangle(cornerRadius: 10, style: .continuous)
                             )
                     }
@@ -85,10 +85,10 @@ struct JiraPinnedPanel: View {
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(Color.signalMint)
             Text("Нет закреплений")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .font(.system(size: 13, weight: .semibold, design: .default))
             Text("Закрепите доски, проекты или задачи в настройках Jira.")
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.42))
+                .font(.system(size: 10, weight: .medium, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.42))
                 .multilineTextAlignment(.center)
             Button("Открыть настройки", action: onOpenSettings)
                 .buttonStyle(NotchButtonStyle())

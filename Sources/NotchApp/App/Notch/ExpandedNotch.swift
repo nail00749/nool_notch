@@ -4,26 +4,25 @@ import SwiftUI
 struct ExpandedNotch: View {
     @ObservedObject var model: NotchViewModel
     let layoutMetrics: NotchLayoutMetrics
+    @ObservedObject var customizationSettings: NotchCustomizationSettings
     let showsSettingsMascot: Bool
     let onOpenSettings: (NotchSettingsSection) -> Void
+    let onQuickAction: (NotchQuickActionID) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var swipeTranslation: CGFloat = 0
+    @State private var hasPreparedNeighbors = false
 
     private var contentVisible: Bool {
         model.expandedContentVisible
     }
 
     private var contentAnimation: Animation {
-        reduceMotion
-            ? .linear(duration: 0.01)
-            : .easeOut(duration: 0.20)
+        NotchMotion.contentAnimation(reduceMotion: reduceMotion)
     }
 
     private var carouselAnimation: Animation {
-        reduceMotion
-            ? .linear(duration: 0.01)
-            : .interpolatingSpring(stiffness: 260, damping: 32)
+        NotchMotion.panelAnimation(reduceMotion: reduceMotion)
     }
 
     private var expandedSize: CGSize {
@@ -32,33 +31,40 @@ struct ExpandedNotch: View {
             isExpanded: true,
             selectedPanel: model.selectedPanel,
             calendarViewMode: model.calendarViewMode,
-            isShowingSettings: false
+            isShowingSettings: false,
+            expandedWidth: customizationSettings.expandedWidth,
+            maxExpandedHeight: customizationSettings.maxExpandedHeight,
+            activeUtility: model.activeUtility
         )
+    }
+
+    private var headerTitle: String {
+        model.activeUtility?.title ?? (model.visiblePanels.isEmpty ? "Модули" : model.selectedPanel.title)
+    }
+
+    private var recognizeTextAction: (([URL]) -> Void)? {
+        guard model.modules.isEnabled(.textRecognition) else { return nil }
+        return { model.recognizeText($0) }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             ExpandedNotchHeader(
-                title: model.activeUtility?.title ?? model.selectedPanel.title,
+                title: headerTitle,
                 physicalNotchSize: layoutMetrics.physicalNotchSize,
-                sideWingWidth: layoutMetrics.expandedHeaderWingWidth,
+                sideWingWidth: layoutMetrics.expandedHeaderWingWidth(
+                    width: customizationSettings.expandedWidth
+                ),
                 showsMascot: showsSettingsMascot,
+                isPinned: model.isExpansionPinned,
+                onTogglePin: model.toggleExpansionPin,
                 onShowSettings: { onOpenSettings(.general) }
             )
             .opacity(contentVisible ? 1 : 0)
-            .offset(y: contentVisible ? 0 : 3)
+            .offset(y: reduceMotion || contentVisible ? 0 : 3)
             .animation(contentAnimation, value: contentVisible)
 
-            HStack(spacing: 4) {
-                PanelSwitcher(
-                    panels: model.visiblePanels,
-                    selectedPanel: model.activeUtility == nil ? model.selectedPanel : nil,
-                    badge: panelBadge,
-                    onSelect: selectPanel
-                )
-                utilityButton(.search, icon: "magnifyingglass")
-                utilityButton(.files, icon: "tray")
-            }
+            navigationBar
             .padding(.horizontal, 16)
             .overlay(alignment: .bottom) {
                 Rectangle().fill(NotchPalette.separator)
@@ -68,40 +74,21 @@ struct ExpandedNotch: View {
             }
             .padding(.bottom, 6)
             .opacity(contentVisible ? 1 : 0)
-            .offset(y: contentVisible ? 0 : 3)
+            .offset(y: reduceMotion || contentVisible ? 0 : 3)
             .animation(contentAnimation.delay(reduceMotion ? 0 : 0.03), value: contentVisible)
 
-            Group {
-                if model.activeUtility == .search {
-                    UnifiedSearchPanel(model: model)
-                } else if model.activeUtility == .files {
-                    FileShelfPanel(store: model.fileShelfStore, onChooseFiles: model.chooseShelfFiles,
-                                   onProcessFiles: model.openFileActions, onRecognizeText: model.recognizeText)
-                } else {
-                    SwipeCarousel(
-                        items: model.visiblePanels,
-                        selection: model.selectedPanel,
-                        translation: swipeTranslation
-                    ) { panel in
-                        panelPage(panel)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background {
-                        HorizontalSwipeMonitor(
-                            onChanged: updateSwipe,
-                            onThresholdReached: commitSwipe,
-                            onEnded: finishSwipe
-                        )
-                    }
-                }
-            }
+            mainContent
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .opacity(contentVisible ? 1 : 0)
-            .offset(y: contentVisible ? 0 : 3)
+            .offset(y: reduceMotion || contentVisible ? 0 : 3)
             .animation(contentAnimation.delay(reduceMotion ? 0 : 0.06), value: contentVisible)
 
+            if !customizationSettings.actions(at: .bottom).isEmpty {
+                bottomQuickActions
+            }
+
             footer
-            .font(.system(size: 10, weight: .medium, design: .rounded))
+            .font(.system(size: 10, weight: .medium, design: .default))
             .foregroundStyle(NotchPalette.secondary)
             .padding(.horizontal, 22)
             .padding(.top, 10)
@@ -113,7 +100,7 @@ struct ExpandedNotch: View {
                     .allowsHitTesting(false)
             }
             .opacity(contentVisible ? 1 : 0)
-            .offset(y: contentVisible ? 0 : 3)
+            .offset(y: reduceMotion || contentVisible ? 0 : 3)
             .animation(contentAnimation.delay(reduceMotion ? 0 : 0.06), value: contentVisible)
         }
         .frame(width: expandedSize.width, height: expandedSize.height)
@@ -126,7 +113,105 @@ struct ExpandedNotch: View {
         .onDisappear {
             model.expandedContentVisible = false
         }
+        .task {
+            // Present the selected page first; prepare swipe neighbors after its fade.
+            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+            hasPreparedNeighbors = true
+        }
         .contentShape(Rectangle())
+    }
+
+    private var navigationBar: some View {
+        HStack(spacing: 4) {
+            utilityButton(.overview, icon: "square.grid.2x2")
+            PanelSwitcher(
+                panels: model.visiblePanels,
+                selectedPanel: model.activeUtility == nil ? model.selectedPanel : nil,
+                badge: panelBadge,
+                onSelect: selectPanel
+            )
+            utilityButton(.search, icon: "magnifyingglass")
+            if model.modules.isEnabled(.fileShelf) {
+                utilityButton(.files, icon: "tray")
+            }
+            Button(action: model.requestCollapse) {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(NotchPalette.secondary)
+                    .frame(width: 40, height: 40)
+            }
+            .buttonStyle(NotchButtonStyle())
+            .accessibilityLabel("Свернуть чёлку")
+            .help("Свернуть чёлку и снять закрепление")
+        }
+    }
+
+    @ViewBuilder
+    private var mainContent: some View {
+        if model.activeUtility == .recentCaptures {
+            recentCapturesContent
+        } else if model.activeUtility == .scratchpad {
+            ScratchpadPanel(store: model.scratchpad,
+                            onExportPresentationChange: { presented in
+                if presented { model.transientSurfaceDidPresent(.scratchpadExport) }
+                else { model.transientSurfaceDidDisappear(.scratchpadExport) }
+            }, dismissalRequest: model.transientSurfaceDismissalRequest)
+        } else if model.activeUtility == .overview {
+            NotchOverviewPanel(model: model, onOpenSettings: { onOpenSettings(.modules) })
+        } else if model.activeUtility == .search {
+            UnifiedSearchPanel(model: model)
+        } else if model.activeUtility == .files {
+            FileShelfPanel(store: model.fileShelfStore, onChooseFiles: model.chooseShelfFiles,
+                           onProcessFiles: model.openFileActions, onRecognizeText: recognizeTextAction)
+        } else if model.visiblePanels.isEmpty {
+            emptyModulesState
+        } else {
+            SwipeCarousel(
+                items: model.visiblePanels,
+                selection: model.selectedPanel,
+                translation: swipeTranslation,
+                retainedRadius: hasPreparedNeighbors ? 1 : 0
+            ) { panel in panelPage(panel) }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                HorizontalSwipeMonitor(
+                    onChanged: updateSwipe,
+                    onThresholdReached: commitSwipe,
+                    onEnded: finishSwipe
+                )
+            }
+        }
+    }
+
+    private var recentCapturesContent: some View {
+        RecentCapturesPanel(store: model.recentCaptures, onAddToShelf: addCaptureToShelf,
+                            onFolderPickerPresentationChange: { presented in
+            if presented { model.transientSurfaceDidPresent(.recentCapturesFolderPicker) }
+            else { model.transientSurfaceDidDisappear(.recentCapturesFolderPicker) }
+        }, dismissalRequest: model.transientSurfaceDismissalRequest)
+        .padding(.horizontal, 22)
+        .padding(.top, 4)
+    }
+
+    private var addCaptureToShelf: ((URL) -> Void)? {
+        guard model.modules.isEnabled(.fileShelf) else { return nil }
+        return { model.addRecentCaptureToShelf($0) }
+    }
+
+    private var emptyModulesState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "square.grid.2x2")
+                .font(.system(size: 28, weight: .light))
+                .foregroundStyle(NotchPalette.secondary)
+            Text("Выберите модули для чёлки")
+                .font(.system(size: 14, weight: .semibold))
+            Text("Включить панели можно в настройках NooL App.")
+                .font(.system(size: 11))
+                .foregroundStyle(NotchPalette.secondary)
+            Button("Открыть модули") { onOpenSettings(.modules) }
+                .buttonStyle(NotchButtonStyle())
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder
@@ -167,11 +252,31 @@ struct ExpandedNotch: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(utility.title)
-        .help(utility == .files ? "Временная полка файлов" : "Поиск по загруженным данным")
+        .help(utility.title)
+    }
+
+    private var bottomQuickActions: some View {
+        HStack(spacing: 8) {
+            ForEach(customizationSettings.actions(at: .bottom)) { action in
+                Button { onQuickAction(action.action) } label: {
+                    Label(action.title, systemImage: action.iconName)
+                        .font(.system(size: 10, weight: .medium))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, minHeight: 32)
+                        .background(NotchPalette.raised, in: RoundedRectangle(cornerRadius: 9))
+                }
+                .buttonStyle(NotchButtonStyle())
+                .help(action.title)
+            }
+        }
+        .padding(.horizontal, 22)
+        .padding(.top, 6)
+        .opacity(contentVisible ? 1 : 0)
     }
 
     private func selectPanel(_ panel: PanelID) {
         guard panel != model.selectedPanel || model.activeUtility != nil else { return }
+        hasPreparedNeighbors = true
         withAnimation(carouselAnimation) {
             swipeTranslation = 0
             model.selectPanel(panel)
@@ -180,6 +285,7 @@ struct ExpandedNotch: View {
 
     private func updateSwipe(_ distance: CGFloat) {
         guard reduceMotion == false else { return }
+        hasPreparedNeighbors = true
         let direction: HorizontalSwipeDirection = distance > 0 ? .next : .previous
         let resistance: CGFloat = targetPanel(direction) == nil ? 0.16 : 1
         var transaction = Transaction(animation: nil)
@@ -230,7 +336,7 @@ struct ExpandedNotch: View {
 
             Spacer(minLength: 8)
 
-            if model.visiblePanels.count > 1 {
+            if model.activeUtility == nil, model.visiblePanels.count > 1 {
                 HStack(spacing: 5) {
                     ForEach(model.visiblePanels) { panel in
                         Capsule()
@@ -252,6 +358,8 @@ struct ExpandedNotch: View {
     }
 
     private var freshnessText: String {
+        if model.activeUtility == .overview { return "\(model.visiblePanels.count) панелей в чёлке" }
+        if let utility = model.activeUtility { return utility.title }
         guard let date = model.lastUpdatedAt(for: model.selectedPanel) else {
             return "нет свежих данных"
         }
@@ -272,14 +380,14 @@ struct ExpandedNotch: View {
             guard count > 0 else { return nil }
             return PanelTabBadge(
                 text: String(min(count, 99)),
-                color: Color.white.opacity(0.42)
+                color: NotchPalette.text.opacity(0.42)
             )
         case .calendar:
             let todayCount = model.numericBadgeCount(for: .calendar) ?? 0
             guard todayCount > 0 else { return nil }
             return PanelTabBadge(
                 text: String(todayCount),
-                color: Color.white.opacity(0.42)
+                color: NotchPalette.text.opacity(0.42)
             )
         case .music:
             guard model.nowPlayingSnapshot?.playbackState.isPlaying == true else { return nil }
@@ -301,7 +409,7 @@ struct ExpandedNotch: View {
                 text: issueCount > 99 ? "99+" : String(issueCount),
                 color: hasOverdue
                     ? Color.signalCoral
-                    : Color.white.opacity(0.42)
+                    : NotchPalette.text.opacity(0.42)
             )
         }
     }
@@ -312,6 +420,8 @@ private struct ExpandedNotchHeader: View {
     let physicalNotchSize: CGSize
     let sideWingWidth: CGFloat?
     let showsMascot: Bool
+    let isPinned: Bool
+    let onTogglePin: () -> Void
     let onShowSettings: () -> Void
 
     private var sideHeaderHeight: CGFloat {
@@ -368,11 +478,18 @@ private struct ExpandedNotchHeader: View {
     }
 
     private var trailingContent: some View {
-        HStack(spacing: 4) {
-            if showsMascot {
+        HStack(spacing: 8) {
+            if showsMascot, sideWingWidth.map({ $0 >= 146 }) ?? true {
                 NoolWavingMascot()
-                    .frame(width: 40, height: 40)
+                    .frame(width: 32, height: 40)
             }
+
+            HeaderButton(
+                icon: isPinned ? "pin.fill" : "pin",
+                label: isPinned ? "Снять закрепление чёлки" : "Оставить чёлку открытой",
+                isSelected: isPinned,
+                action: onTogglePin
+            )
 
             HeaderButton(
                 icon: "gearshape",
@@ -386,21 +503,24 @@ private struct ExpandedNotchHeader: View {
 private struct HeaderButton: View {
     let icon: String
     let label: String
+    var isSelected = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(NotchPalette.text.opacity(0.85))
+                .foregroundStyle(isSelected ? NotchPalette.accent : NotchPalette.text.opacity(0.85))
                 .frame(width: 40, height: 40)
                 .background(
-                    NotchPalette.raised,
+                    isSelected ? NotchPalette.accent.opacity(0.18) : NotchPalette.raised,
                     in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                 )
         }
         .buttonStyle(NotchButtonStyle())
         .accessibilityLabel(label)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .help(label)
     }
 }
 
@@ -432,15 +552,13 @@ private struct PanelSwitcher: View {
         HStack(spacing: 2) {
             ForEach(panels) { panel in
                 Button {
-                    withAnimation(.easeOut(duration: 0.16)) {
-                        onSelect(panel)
-                    }
+                    onSelect(panel)
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: panel.iconName)
                             .font(.system(size: 11, weight: .semibold))
                         Text(panel.title)
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .font(.system(size: 11, weight: .semibold, design: .default))
                             .lineLimit(1)
                         if let badge = badge(panel) {
                             PanelTabBadgeView(badge: badge)
@@ -479,7 +597,7 @@ private struct PanelTabBadgeView: View {
         Group {
             if let text = badge.text {
                 Text(text)
-                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                    .font(.system(size: 8, weight: .bold, design: .default))
                     .monospacedDigit()
                     .padding(.horizontal, 5)
                     .frame(minWidth: 16, minHeight: 16)
@@ -506,11 +624,11 @@ private struct PlaceholderPanel: View {
                 .font(.system(size: 27, weight: .light))
                 .foregroundStyle(Color.signalMint)
             Text(title)
-                .font(.system(size: 17, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
+                .font(.system(size: 17, weight: .semibold, design: .default))
+                .foregroundStyle(NotchPalette.text)
             Text(detail)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.42))
+                .font(.system(size: 11, weight: .medium, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.42))
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 250)
         }

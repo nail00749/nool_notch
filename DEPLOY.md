@@ -1,4 +1,4 @@
-# Публикация Nool Notch
+# Публикация NooL App
 
 Этот runbook описывает выпуск GitHub Release и обновление Homebrew cask.
 Основной репозиторий: `nail00749/nool_notch`. Homebrew tap:
@@ -92,11 +92,11 @@ gh release view "v${NOTCHAPP_VERSION}"
 
 ```sh
 cd dist
-shasum -a 256 -c "NoolNotch-v${NOTCHAPP_VERSION}-arm64.zip.sha256"
-unzip -t "NoolNotch-v${NOTCHAPP_VERSION}-arm64.zip"
-plutil -p NotchApp.app/Contents/Info.plist
-file NotchApp.app/Contents/MacOS/NotchApp
-codesign --verify --deep --strict --verbose=2 NotchApp.app
+shasum -a 256 -c "NooLApp-v${NOTCHAPP_VERSION}-arm64.zip.sha256"
+unzip -t "NooLApp-v${NOTCHAPP_VERSION}-arm64.zip"
+plutil -p "NooL App.app/Contents/Info.plist"
+file "NooL App.app/Contents/MacOS/NotchApp"
+codesign --verify --deep --strict --verbose=2 "NooL App.app"
 cd ..
 ```
 
@@ -116,7 +116,7 @@ commit:
 
 ```sh
 git push origin HEAD:main
-git tag -a "v${NOTCHAPP_VERSION}" -m "Nool Notch v${NOTCHAPP_VERSION}"
+git tag -a "v${NOTCHAPP_VERSION}" -m "NooL App v${NOTCHAPP_VERSION}"
 git push origin "v${NOTCHAPP_VERSION}"
 ```
 
@@ -155,11 +155,11 @@ gh run view RUN_ID --repo nail00749/nool_notch --log-failed
 
 ```sh
 gh release create "v${NOTCHAPP_VERSION}" \
-  "dist/NoolNotch-v${NOTCHAPP_VERSION}-arm64.zip" \
-  "dist/NoolNotch-v${NOTCHAPP_VERSION}-arm64.zip.sha256" \
+  "dist/NooLApp-v${NOTCHAPP_VERSION}-arm64.zip" \
+  "dist/NooLApp-v${NOTCHAPP_VERSION}-arm64.zip.sha256" \
   --repo nail00749/nool_notch \
   --verify-tag \
-  --title "Nool Notch v${NOTCHAPP_VERSION}" \
+  --title "NooL App v${NOTCHAPP_VERSION}" \
   --generate-notes
 ```
 
@@ -174,8 +174,8 @@ gh release download "v${NOTCHAPP_VERSION}" \
   --repo nail00749/nool_notch \
   --dir "$NOTCHAPP_VERIFY_DIR"
 cd "$NOTCHAPP_VERIFY_DIR"
-shasum -a 256 -c "NoolNotch-v${NOTCHAPP_VERSION}-arm64.zip.sha256"
-unzip -t "NoolNotch-v${NOTCHAPP_VERSION}-arm64.zip"
+shasum -a 256 -c "NooLApp-v${NOTCHAPP_VERSION}-arm64.zip.sha256"
+unzip -t "NooLApp-v${NOTCHAPP_VERSION}-arm64.zip"
 ```
 
 Сохрани SHA-256 ZIP — он нужен для Homebrew cask.
@@ -190,14 +190,17 @@ git clone https://github.com/nail00749/homebrew-tap.git "$NOTCHAPP_TAP_DIR/tap"
 cd "$NOTCHAPP_TAP_DIR/tap"
 ```
 
-В `Casks/nool-notch.rb` измени только `version` и `sha256`. URL уже использует
-версию динамически. Затем проверь и отправь commit:
+При первом релизе под новым именем в `Casks/nool-notch.rb` обнови `version`,
+`sha256`, имя ZIP в `url` на `NooLApp-v#{version}-arm64.zip`, а также строки
+`name "NooL App"` и `app "NooL App.app"`. Сохрани токен cask `nool-notch` и
+адрес репозитория в URL. Для следующих версий достаточно обновлять `version`
+и `sha256`. Затем проверь и отправь commit:
 
 ```sh
 git diff --check
 ruby -c Casks/nool-notch.rb
 git add Casks/nool-notch.rb
-git commit -m "chore: update Nool Notch to ${NOTCHAPP_VERSION}"
+git commit -m "chore: update NooL App to ${NOTCHAPP_VERSION}"
 git push origin main
 ```
 

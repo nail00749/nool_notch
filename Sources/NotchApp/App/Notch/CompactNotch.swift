@@ -11,6 +11,8 @@ enum CompactMusicArtwork {
 struct CompactNotch: View {
     @ObservedObject var model: NotchViewModel
     @ObservedObject var visualSettings: NotchVisualSettings
+    @ObservedObject var customizationSettings: NotchCustomizationSettings
+    @ObservedObject private var gestureSettings = NotchGestureSettings.shared
     let layoutMetrics: NotchLayoutMetrics
     let compactHeight: CGFloat
     let onExpand: () -> Void
@@ -18,13 +20,33 @@ struct CompactNotch: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var presentedMascotNotice: CompactMascotNotice?
     @State private var mascotPresentationTask: Task<Void, Never>?
+    @State private var volumeFeedback: NotchVolumeAdjustmentResult?
+    @State private var volumeFeedbackTask: Task<Void, Never>?
 
     private var isPlaying: Bool {
-        model.nowPlayingSnapshot?.playbackState.isPlaying == true
+        model.modules.isEnabled(.music)
+            && model.nowPlayingSnapshot?.playbackState.isPlaying == true
     }
 
     private var usesWideLayout: Bool {
-        model.usesWideCompactLayout
+        model.compactMeetingReminder != nil
+            || model.compactTimer != nil
+            || model.hasCompactLiveActivity
+            || showsMusicIndicator
+            || showsQuotaIndicator
+    }
+
+    private var showsMusicIndicator: Bool {
+        customizationSettings.showsMusicIndicator
+            && model.modules.isEnabled(.music)
+            && isPlaying
+    }
+
+    private var showsQuotaIndicator: Bool {
+        guard customizationSettings.showsQuotaIndicator,
+              model.modules.isEnabled(.quotas),
+              model.compactQuotaDisplayMode == .top else { return false }
+        return isPlaying || customizationSettings.showsQuotaWhenIdle
     }
 
     private var mascotNotice: CompactMascotNotice? {
@@ -125,6 +147,8 @@ struct CompactNotch: View {
         .onDisappear {
             mascotPresentationTask?.cancel()
             mascotPresentationTask = nil
+            volumeFeedbackTask?.cancel()
+            volumeFeedbackTask = nil
         }
     }
 
@@ -176,7 +200,7 @@ struct CompactNotch: View {
             )
             .overlay {
                 CompactQuotaBorder(
-                    remainingRatio: model.compactQuotaDisplayMode == .top
+                    remainingRatio: showsQuotaIndicator
                         ? model.compactWeeklyRemainingRatio
                         : nil,
                     lineColor: visualSettings.lineColor,
@@ -216,7 +240,7 @@ struct CompactNotch: View {
 
     private var notchButton: some View {
         Group {
-            if let reminder = model.compactMeetingReminder {
+            if model.selectedCompactActivity == .meeting, let reminder = model.compactMeetingReminder {
                 CompactMeetingReminderView(
                     reminder: reminder,
                     physicalNotchSize: layoutMetrics.physicalNotchSize,
@@ -226,16 +250,106 @@ struct CompactNotch: View {
                 .frame(width: baseCompactSize.width,
                        height: compactHeight + (model.isCompactHovered ? 6 : 0))
                 .frame(width: baseCompactSize.width + leadingMascotExtension, alignment: .trailing)
-            } else if let timer = model.compactTimer {
+            } else if model.selectedCompactActivity == .timer, let timer = model.compactTimer {
                 CompactTimerView(timer: timer,
                     physicalNotchSize: layoutMetrics.physicalNotchSize,
                     onOpen: model.openTimer, onToggle: model.timerSource.toggle)
                     .frame(width: baseCompactSize.width,
                            height: compactHeight + (model.isCompactHovered ? 6 : 0))
                     .frame(width: baseCompactSize.width + leadingMascotExtension, alignment: .trailing)
+            } else if case .live(let id) = model.selectedCompactActivity,
+                      let activity = model.liveActivities.first(where: { $0.id == id }) {
+                CompactLiveActivityView(activity: activity,
+                    physicalNotchSize: layoutMetrics.physicalNotchSize,
+                    onOpen: { model.openPanel(.live) })
+                    .frame(width: baseCompactSize.width,
+                           height: compactHeight + (model.isCompactHovered ? 6 : 0))
+                    .frame(width: baseCompactSize.width + leadingMascotExtension, alignment: .trailing)
             } else {
                 defaultNotchButton
             }
+        }
+        .id(model.selectedCompactActivity?.id)
+        .transition(.opacity)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: model.selectedCompactActivity)
+        .onChange(of: model.compactActivityPages.map(\.id)) { _, ids in
+            if let selectedID = model.selectedCompactActivityID, !ids.contains(selectedID) {
+                model.selectedCompactActivityID = nil
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if model.compactActivityPages.count > 1 {
+                activityPosition
+                    .padding(.trailing, 12)
+                    .padding(.bottom, 2)
+                    .allowsHitTesting(false)
+            }
+        }
+        .background {
+            if model.compactActivityPages.count > 1 {
+                HorizontalSwipeMonitor(onChanged: { _ in }, onThresholdReached: { direction in
+                    model.cycleCompactActivity(forward: direction == .next)
+                    return true
+                }, onEnded: { _ in })
+            }
+        }
+        .contextMenu {
+            if model.compactActivityPages.count > 1 {
+                ForEach(model.compactActivityPages) { page in
+                    Button {
+                        model.selectCompactActivity(page)
+                    } label: {
+                        if model.selectedCompactActivity == page {
+                            Label(activityTitle(page), systemImage: "checkmark")
+                        } else {
+                            Text(activityTitle(page))
+                        }
+                    }
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { _ in
+            model.contextMenuDidBeginTracking()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in
+            model.contextMenuDidEndTracking()
+        }
+        .accessibilityAction(named: Text("Следующая активность")) {
+            model.cycleCompactActivity(forward: true)
+        }
+        .accessibilityAction(named: Text("Предыдущая активность")) {
+            model.cycleCompactActivity(forward: false)
+        }
+        .help(model.compactActivityPages.count > 1
+              ? "Свайп влево или вправо — другая активность. Правый клик — список."
+              : "Открыть NooL App")
+    }
+
+    private var activityPosition: some View {
+        let pages = model.compactActivityPages
+        let index = pages.firstIndex(where: { $0 == model.selectedCompactActivity }) ?? 0
+        return HStack(spacing: 3) {
+            if pages.count <= 5 {
+                ForEach(pages.indices, id: \.self) { position in
+                    Capsule().fill(Color.white.opacity(position == index ? 0.85 : 0.25))
+                        .frame(width: position == index ? 7 : 3, height: 3)
+                }
+            } else {
+                Text("\(index + 1)/\(pages.count)")
+                    .font(.system(size: 7, weight: .medium)).monospacedDigit()
+                    .foregroundStyle(NotchPalette.secondary)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Активность \(index + 1) из \(pages.count)")
+    }
+
+    private func activityTitle(_ page: CompactActivityPage) -> String {
+        switch page {
+        case .meeting: return model.compactMeetingReminder?.event.title ?? "Встреча"
+        case .timer: return model.compactTimer?.title ?? "Таймер"
+        case .music: return "Музыка"
+        case .live(let id): return model.liveActivities.first(where: { $0.id == id })?.title ?? "Live"
         }
     }
 
@@ -246,6 +360,18 @@ struct CompactNotch: View {
                     width: baseCompactSize.width,
                     height: compactHeight + (model.isCompactHovered ? 6 : 0)
                 )
+                .background {
+                    if model.modules.isEnabled(.gestures) {
+                        NotchGestureSurface(
+                            preferences: gestureSettings.preferences,
+                            isCompact: true,
+                            onSingleClick: openCompactContent,
+                            onDoubleClick: performGestureAction,
+                            onVolume: showVolumeFeedback
+                        )
+                        .allowsHitTesting(false)
+                    }
+                }
                 .frame(
                     width: baseCompactSize.width + leadingMascotExtension,
                     alignment: .trailing
@@ -259,7 +385,21 @@ struct CompactNotch: View {
             alignment: .topTrailing
         )
         .contentShape(Rectangle())
-        .accessibilityLabel("Открыть Notch")
+        .accessibilityLabel("Открыть NooL App")
+        .overlay(alignment: .bottomTrailing) {
+            if let volumeFeedback {
+                Text(volumeFeedback.compactFeedback)
+                    .font(.system(size: 9, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                    .padding(.horizontal, 5)
+                    .frame(maxWidth: 88, minHeight: 18)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.trailing, 5)
+                    .allowsHitTesting(false)
+                    .accessibilityLabel(volumeFeedback.feedback)
+            }
+        }
     }
 
     @ViewBuilder
@@ -267,15 +407,21 @@ struct CompactNotch: View {
         let physicalNotchSize = layoutMetrics.physicalNotchSize
 
         if physicalNotchSize.width > 0, physicalNotchSize.height > 0 {
-            if isPlaying {
+            if usesWideLayout {
                 HStack(spacing: 0) {
-                    musicIndicator
-                        .frame(width: NotchLayout.compactWingWidth)
+                    Group {
+                        if showsMusicIndicator {
+                            musicIndicator
+                        } else {
+                            Color.clear
+                        }
+                    }
+                    .frame(width: NotchLayout.compactWingWidth)
 
                     PhysicalNotchSafeZone(size: physicalNotchSize)
                         .frame(width: physicalNotchSize.width)
 
-                    if model.compactQuotaDisplayMode == .top {
+                    if showsQuotaIndicator {
                         CompactWeeklyQuotaIndicator(
                             remainingRatio: model.compactWeeklyRemainingRatio,
                             providerName: model.compactQuotaProviderName
@@ -291,14 +437,14 @@ struct CompactNotch: View {
             }
         } else {
             HStack(spacing: 0) {
-                if isPlaying {
+                if showsMusicIndicator {
                     musicIndicator
                         .padding(.leading, 14)
                 }
 
                 Spacer(minLength: 0)
 
-                if isPlaying, model.compactQuotaDisplayMode == .top {
+                if showsQuotaIndicator {
                     CompactWeeklyQuotaIndicator(
                         remainingRatio: model.compactWeeklyRemainingRatio,
                         providerName: model.compactQuotaProviderName
@@ -310,10 +456,32 @@ struct CompactNotch: View {
     }
 
     private func openCompactContent() {
-        if primaryLiveActivity != nil {
+        if model.selectedCompactActivity == .music {
+            model.selectPanel(.music)
+            model.isExpanded = true
+        } else if primaryLiveActivity != nil {
             model.prepareToOpenPrimaryLiveActivity()
+            model.isExpanded = true
         }
         onExpand()
+    }
+
+    private func performGestureAction(_ action: NotchDoubleClickAction) {
+        switch action {
+        case .disabled: break
+        case .playPause: model.nowPlayingTogglePlayPause()
+        case .nextTrack: model.nowPlayingNextTrack()
+        case .previousTrack: model.nowPlayingPreviousTrack()
+        }
+    }
+
+    private func showVolumeFeedback(_ result: NotchVolumeAdjustmentResult) {
+        volumeFeedback = result
+        volumeFeedbackTask?.cancel()
+        volumeFeedbackTask = Task { @MainActor in
+            do { try await Task.sleep(for: .seconds(1.5)) } catch { return }
+            volumeFeedback = nil
+        }
     }
 
     @ViewBuilder

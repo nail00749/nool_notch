@@ -46,8 +46,8 @@ jobs:
           fi
 
           gh release create "$GITHUB_REF_NAME" \
-            "dist/NoolNotch-v${VERSION}-arm64.zip" \
-            "dist/NoolNotch-v${VERSION}-arm64.zip.sha256" \
+            "dist/NooLApp-v${VERSION}-arm64.zip" \
+            "dist/NooLApp-v${VERSION}-arm64.zip.sha256" \
             --verify-tag \
-            --title "Nool Notch ${GITHUB_REF_NAME}" \
+            --title "NooL App ${GITHUB_REF_NAME}" \
             --generate-notes

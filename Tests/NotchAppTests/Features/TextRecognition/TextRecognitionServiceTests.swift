@@ -67,9 +67,29 @@ final class TextRecognitionServiceTests: XCTestCase {
 
         let imageText = try await TextRecognitionService.recognize(urls: [imageURL])
         let pdfText = try await TextRecognitionService.recognize(urls: [pdfURL])
+        let captureText = try await TextRecognitionService.recognize(imageData: imageData)
 
         XCTAssertTrue(imageText.localizedCaseInsensitiveContains("HELLO"), imageText)
         XCTAssertTrue(pdfText.localizedCaseInsensitiveContains("HELLO"), pdfText)
+        XCTAssertTrue(captureText.localizedCaseInsensitiveContains("HELLO"), captureText)
+    }
+
+    func testInMemoryCaptureRejectsOversizeCorruptionAndCancellation() async throws {
+        do {
+            _ = try await TextRecognitionService.recognize(
+                imageData: Data(count: TextRecognitionService.maximumFileBytes + 1))
+            XCTFail("Expected size rejection before image decoding")
+        } catch { XCTAssertEqual(error as? TextRecognitionError, .fileTooLarge("Область экрана")) }
+        do {
+            _ = try await TextRecognitionService.recognize(imageData: Data("invalid".utf8))
+            XCTFail("Expected invalid image")
+        } catch { XCTAssertEqual(error as? TextRecognitionError, .invalidImage("Область экрана")) }
+        let token = TextRecognitionCancellation()
+        token.cancel()
+        do {
+            _ = try await TextRecognitionService.recognize(imageData: Data(), cancellation: token)
+            XCTFail("Expected cancellation")
+        } catch is CancellationError { }
     }
 
     private func failure(for urls: [URL]) async -> Error? {

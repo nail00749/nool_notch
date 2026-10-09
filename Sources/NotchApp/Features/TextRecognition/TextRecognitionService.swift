@@ -92,6 +92,26 @@ enum TextRecognitionService {
             .contains(url.pathExtension.lowercased())
     }
 
+    /// Screen captures stay in memory and use the same bounded Vision path as files.
+    static func recognize(
+        imageData: Data, name: String = "Область экрана",
+        cancellation: TextRecognitionCancellation = TextRecognitionCancellation()
+    ) async throws -> String {
+        try cancellation.check()
+        guard imageData.count <= maximumFileBytes else { throw TextRecognitionError.fileTooLarge(name) }
+        return try await withTaskCancellationHandler {
+            try await Task.detached(priority: .userInitiated) {
+                try cancellation.check()
+                let text = try recognizeImage(imageData, name: name, cancellation: cancellation)
+                guard text.count <= maximumCharacters else { throw TextRecognitionError.textTooLong }
+                try cancellation.check()
+                return text
+            }.value
+        } onCancel: {
+            cancellation.cancel()
+        }
+    }
+
     static func recognize(
         urls: [URL],
         cancellation: TextRecognitionCancellation = TextRecognitionCancellation()

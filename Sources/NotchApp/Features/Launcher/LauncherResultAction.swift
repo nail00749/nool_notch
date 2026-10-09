@@ -1,7 +1,7 @@
 import Foundation
 
 enum LauncherResultAction: String, CaseIterable, Identifiable {
-    case open, reveal, copyPath, processFile, renameFile, attachToAI, recognizeText
+    case open, preview, reveal, copyPath, processFile, renameFile, attachToAI, recognizeText
     case copy, paste, prepareAI, translate, explain, jiraStatus, jiraWorklog
     case saveSnippet, removeSnippet
 
@@ -9,6 +9,7 @@ enum LauncherResultAction: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .open: "Открыть / применить"
+        case .preview: "Быстрый просмотр"
         case .reveal: "Показать в Finder"
         case .copyPath: "Скопировать путь"
         case .processFile: "Обработать файл…"
@@ -29,6 +30,7 @@ enum LauncherResultAction: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .open: "arrow.up.forward"
+        case .preview: "eye"
         case .reveal: "folder"
         case .copyPath: "link"
         case .processFile: "wand.and.stars"
@@ -50,7 +52,7 @@ enum LauncherResultAction: String, CaseIterable, Identifiable {
         switch result.payload {
         case .application: return [.open, .reveal, .copyPath]
         case .file(let url):
-            var actions: [Self] = [.open, .reveal, .copyPath, .processFile, .renameFile]
+            var actions: [Self] = [.open, .preview, .reveal, .copyPath, .processFile, .renameFile]
             if AIChatAttachmentLoader.allowedExtensions.contains(url.pathExtension.lowercased()) { actions.append(.attachToAI) }
             if TextRecognitionService.supports(url: url) { actions.append(.recognizeText) }
             return actions
@@ -61,7 +63,7 @@ enum LauncherResultAction: String, CaseIterable, Identifiable {
         case .calculation: return [.copy, .prepareAI, .explain, .saveSnippet]
         case .nool(_, let kind):
             return kind == .jira ? [.open, .copy, .jiraStatus, .jiraWorklog] : [.open, .copy]
-        case .windowAction, .windowLayout, .windowLayoutManager: return [.open]
+        case .windowAction, .windowLayout, .windowLayoutManager, .workspace, .workspaceManager, .speedTest, .networkDiagnostics, .screenTextCapture: return [.open]
         }
     }
 }

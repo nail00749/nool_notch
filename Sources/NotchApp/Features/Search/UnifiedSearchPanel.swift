@@ -33,14 +33,14 @@ struct UnifiedSearchPanel: View {
                     .accessibilityLabel("Очистить поиск")
                 }
             }
-            .font(.system(size: 13, weight: .medium, design: .rounded))
+            .font(.system(size: 13, weight: .medium, design: .default))
             .padding(.horizontal, 10)
             .frame(height: 40)
-            .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+            .background(NotchPalette.text.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
 
             Text("По загруженным данным Jira, AI-сессий и календаря")
-                .font(.system(size: 10, design: .rounded))
-                .foregroundStyle(.white.opacity(0.45))
+                .font(.system(size: 10, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.45))
 
             if let event = selectedEvent {
                 ScrollView {
@@ -75,19 +75,19 @@ struct UnifiedSearchPanel: View {
                                         .frame(width: 18)
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(result.title)
-                                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                            .foregroundStyle(.white)
+                                            .font(.system(size: 12, weight: .semibold, design: .default))
+                                            .foregroundStyle(NotchPalette.text)
                                             .lineLimit(2)
                                         Text(result.subtitle)
-                                            .font(.system(size: 10, design: .rounded))
-                                            .foregroundStyle(.white.opacity(0.5))
+                                            .font(.system(size: 10, design: .default))
+                                            .foregroundStyle(NotchPalette.text.opacity(0.5))
                                             .lineLimit(2)
                                     }
                                     Spacer(minLength: 0)
                                 }
                                 .padding(10)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                                .background(NotchPalette.text.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
@@ -114,9 +114,9 @@ struct UnifiedSearchPanel: View {
     private func message(_ title: String, icon: String) -> some View {
         VStack(spacing: 10) {
             Image(systemName: icon).font(.title2)
-            Text(title).font(.system(size: 12, design: .rounded))
+            Text(title).font(.system(size: 12, design: .default))
         }
-        .foregroundStyle(.white.opacity(0.5))
+        .foregroundStyle(NotchPalette.text.opacity(0.5))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

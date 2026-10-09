@@ -29,6 +29,7 @@ final class AIChatStore: ObservableObject {
     private var discoveryGenerations: [AIChatProviderID: Int] = [:]
     private var responseGeneration = 0
     private var historyGeneration = 0
+    private var historyLoadInProgress = false
     private var persistenceGeneration = 0
     private var historyLoadFailed = false
     private var historyLoadFinished = true
@@ -41,7 +42,7 @@ final class AIChatStore: ObservableObject {
     private var attachmentGeneration = 0
     private var attachmentTask: Task<Void, Never>?
 
-    convenience init(defaults: UserDefaults = .standard) {
+    convenience init(defaults: UserDefaults = .standard, loadHistoryImmediately: Bool = true) {
         self.init(
             providers: [
                 LauncherAppleChatProvider(),
@@ -50,7 +51,8 @@ final class AIChatStore: ObservableObject {
                 LauncherOllamaChatProvider()
             ],
             defaults: defaults,
-            historyURL: Self.defaultHistoryURL()
+            historyURL: Self.defaultHistoryURL(),
+            loadHistoryImmediately: loadHistoryImmediately
         )
     }
 
@@ -58,7 +60,8 @@ final class AIChatStore: ObservableObject {
         providers: [any LauncherAIChatProviding],
         defaults: UserDefaults,
         timeout: Duration = .seconds(180),
-        historyURL: URL? = nil
+        historyURL: URL? = nil,
+        loadHistoryImmediately: Bool = true
     ) {
         self.providers = Dictionary(uniqueKeysWithValues: providers.map { ($0.id, $0) })
         self.defaults = defaults
@@ -71,7 +74,7 @@ final class AIChatStore: ObservableObject {
             selectedModelID = defaults.string(forKey: "nool.launcher.ai.model") ?? ""
         }
         historyLoadFinished = historyURL == nil
-        loadHistoryIfNeeded()
+        if loadHistoryImmediately { loadHistoryIfNeeded() }
     }
 
     var selectedStatus: AIChatProviderStatus? { statuses[selectedProvider] }
@@ -154,7 +157,13 @@ final class AIChatStore: ObservableObject {
     }
 
     func refreshAvailability() {
+        resume()
         for id in AIChatProviderID.allCases { refresh(id) }
+    }
+
+    /// Loads saved chats on the first entry after a cold-disabled launch.
+    func resume() {
+        loadHistoryIfNeeded()
     }
 
     func selectProvider(_ id: AIChatProviderID) {
@@ -361,6 +370,9 @@ final class AIChatStore: ObservableObject {
     }
 
     func flushHistory() async {
+        // A cold-disabled chat can still hold an unsaved draft supplied by a
+        // caller. Merge the existing disk history before persisting it.
+        resumeForPendingHistory()
         draftSaveTask?.cancel()
         draftSaveTask = nil
         saveCurrentConversation(debounced: false)
@@ -374,7 +386,11 @@ final class AIChatStore: ObservableObject {
         }
     }
 
-    func shutdown() {
+    /// Pauses active work while retaining the conversation and connection settings.
+    /// Refreshing the AI tab later starts provider discovery again.
+    func suspend() {
+        // A queued disk read is bounded and cannot be cancelled safely. Let it
+        // finish so pending drafts are merged with the saved history before write.
         cancelAttachmentImport()
         stop()
         draftSaveTask?.cancel()
@@ -385,6 +401,20 @@ final class AIChatStore: ObservableObject {
         for id in AIChatProviderID.allCases { discoveryGenerations[id, default: 0] += 1 }
         checking = []
         for provider in providers.values { provider.cancel() }
+    }
+
+    func shutdown() {
+        suspend()
+        // The app waits for persistence after shutdown. Start a deferred read
+        // when a caller supplied a draft, so that wait also covers its write.
+        resumeForPendingHistory()
+    }
+
+    private func resumeForPendingHistory() {
+        guard !historyLoadFinished,
+              historyNeedsSavingAfterLoad || !history.isEmpty || !messages.isEmpty || !draft.isEmpty || !draftAttachments.isEmpty
+        else { return }
+        resume()
     }
 
     private func finish(replyID: UUID, error: String?) {
@@ -555,7 +585,8 @@ final class AIChatStore: ObservableObject {
     }
 
     private func loadHistoryIfNeeded() {
-        guard let historyURL else { return }
+        guard let historyURL, !historyLoadFinished, !historyLoadInProgress, !historyLoadFailed else { return }
+        historyLoadInProgress = true
         let generation = historyGeneration
         beginPersistenceOperation()
         historyQueue.async { [weak self, historyURL] in
@@ -564,6 +595,7 @@ final class AIChatStore: ObservableObject {
                 guard let self else { return }
                 defer { self.finishPersistenceOperation() }
                 guard self.historyGeneration == generation else { return }
+                self.historyLoadInProgress = false
                 switch result {
                 case let .success(loaded):
                     self.historyLoadFinished = true

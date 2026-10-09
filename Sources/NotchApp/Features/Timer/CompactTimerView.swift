@@ -21,13 +21,13 @@ struct CompactTimerView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Таймер \(timer.countdownText). Открыть таймер")
+            .accessibilityLabel("\(timer.title) \(timer.countdownText). Открыть")
             if physicalNotchSize.width > 0, physicalNotchSize.height > 0 {
                 PhysicalNotchSafeZone(size: physicalNotchSize)
                     .frame(width: physicalNotchSize.width)
             } else {
                 Button(action: onOpen) {
-                    Label(isPaused ? "На паузе" : "Таймер", systemImage: "timer")
+                    Label(isPaused ? "На паузе" : timer.title, systemImage: timer.mode == .stopwatch ? "stopwatch" : "timer")
                         .font(.system(size: 11, weight: .medium, design: .rounded))
                         .foregroundStyle(.orange.opacity(0.8))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -43,7 +43,7 @@ struct CompactTimerView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(isPaused ? "Продолжить таймер" : "Поставить таймер на паузу")
+            .accessibilityLabel(isPaused ? "Продолжить \(timer.title.lowercased())" : "Пауза: \(timer.title.lowercased())")
         }
     }
 }

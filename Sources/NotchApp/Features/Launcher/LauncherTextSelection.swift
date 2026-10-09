@@ -63,7 +63,7 @@ final class LauncherTextSelection: ObservableObject {
         guard let pid, pid != ProcessInfo.processInfo.processIdentifier else { return }
         guard isTrusted() else {
             needsPermission = true
-            message = "Для чтения выделения разрешите Nool в «Универсальный доступ», затем откройте Launcher снова."
+            message = "Для чтения выделения разрешите NooL App в «Универсальный доступ», затем откройте Launcher снова."
             return
         }
         isReading = true

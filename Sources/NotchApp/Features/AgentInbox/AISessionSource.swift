@@ -6,6 +6,7 @@ protocol AISessionSource: AnyObject, Sendable {
     var displayName: String { get }
 
     func snapshots() -> AsyncStream<AISessionSourceSnapshot>
+    func stop()
     func open(sessionID: String) async -> Bool
     func respond(
         sessionID: String,
@@ -15,6 +16,8 @@ protocol AISessionSource: AnyObject, Sendable {
 }
 
 extension AISessionSource {
+    func stop() {}
+
     func respond(
         sessionID: String,
         requestID: String,

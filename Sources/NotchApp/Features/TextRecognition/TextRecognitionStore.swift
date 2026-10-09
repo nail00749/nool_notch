@@ -16,6 +16,7 @@ final class TextRecognitionStore: ObservableObject {
     typealias Recognizer = @Sendable ([URL], TextRecognitionCancellation) async throws -> String
 
     let urls: [URL]
+    let sourceTitle: String?
     @Published private(set) var phase: Phase = .idle
     @Published var text = "" {
         didSet { refreshMatches(navigate: false) }
@@ -28,7 +29,7 @@ final class TextRecognitionStore: ObservableObject {
     @Published private(set) var selectionRevision = 0
     @Published private(set) var actionMessage: String?
 
-    private let onSendToAI: (String) -> Bool
+    private let onSendToAI: (String, String) -> Bool
     private let onClose: () -> Void
     private let recognizer: Recognizer
     private var task: Task<Void, Never>?
@@ -41,16 +42,25 @@ final class TextRecognitionStore: ObservableObject {
 
     init(
         urls: [URL],
-        onSendToAI: @escaping (String) -> Bool,
+        sourceTitle: String? = nil,
+        onSendToAI: @escaping (String, String) -> Bool,
         onClose: @escaping () -> Void,
         recognizer: @escaping Recognizer = { urls, cancellation in
             try await TextRecognitionService.recognize(urls: urls, cancellation: cancellation)
         }
     ) {
         self.urls = urls
+        self.sourceTitle = sourceTitle
         self.onSendToAI = onSendToAI
         self.onClose = onClose
         self.recognizer = recognizer
+    }
+
+    convenience init(imageData: Data, name: String = "Область экрана",
+                     onSendToAI: @escaping (String, String) -> Bool, onClose: @escaping () -> Void) {
+        self.init(urls: [], sourceTitle: name, onSendToAI: onSendToAI, onClose: onClose) { _, token in
+            try await TextRecognitionService.recognize(imageData: imageData, name: name, cancellation: token)
+        }
     }
 
     deinit {
@@ -109,17 +119,25 @@ final class TextRecognitionStore: ObservableObject {
     }
 
     func prepareAIDraft() {
+        prepareAIDraft(prompt: "")
+    }
+
+    func prepareTranslationDraft() {
+        prepareAIDraft(prompt: "Переведи прикреплённый текст на русский язык, сохраняя его смысл и структуру.")
+    }
+
+    private func prepareAIDraft(prompt: String) {
         guard phase == .ready else { return }
-        let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !draft.isEmpty else {
+        let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty else {
             actionMessage = "Добавьте текст перед передачей в AI."
             return
         }
-        guard draft.count <= Self.maximumAIDraftCharacters else {
+        guard content.count + prompt.count <= Self.maximumAIDraftCharacters else {
             actionMessage = "AI-черновик принимает до 12 000 символов. Сократите текст или скопируйте его."
             return
         }
-        if onSendToAI(draft) {
+        if onSendToAI(content, prompt) {
             onClose()
         } else {
             actionMessage = "Не удалось открыть AI-черновик: текущий чат занят или AI недоступен. Скопируйте текст либо повторите позже."

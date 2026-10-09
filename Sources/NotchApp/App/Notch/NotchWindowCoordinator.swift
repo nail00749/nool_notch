@@ -32,28 +32,40 @@ enum QuotaEdgePanelMotion {
 @MainActor
 final class NotchWindowCoordinator: NSObject {
     private let launcher: LauncherWindowCoordinator
+    private let moduleRuntime: AppModuleRuntime
+    private var moduleChanges: AnyCancellable?
     private let window: NotchPanel
+    private let presentation: NotchWindowPresentation
     private let quotaEdgeCoordinator: QuotaEdgeWindowCoordinator
     private let quotaStackCoordinator: QuotaStackWindowCoordinator
     private let settingsCoordinator: SettingsWindowCoordinator
     private let model: NotchViewModel
     private let visualSettings: NotchVisualSettings
+    private let customizationSettings: NotchCustomizationSettings
     private let displaySettings: NotchDisplaySettings
     private let launchAtLogin: LaunchAtLoginManager
     private let dockSettings: NoolDockSettings
+    private let lidEffect = LidEffectController()
+    private let systemMonitor = SystemMonitorStore()
+    private var systemMonitorWindow: SystemMonitorWindowCoordinator?
     private var dock: NoolDockWindowCoordinator?
     private let fileActions = FileActionsWindowCoordinator()
     private let textRecognition = TextRecognitionWindowCoordinator()
+    private let screenTextCapture = ScreenTextCaptureCoordinator()
     private var lastLayoutWasExpanded = false
     private var targetWindowFrame: NSRect?
+    private var layoutAnimationGeneration = 0
     private var applicationBeforeSearch: NSRunningApplication?
     private var displayFollowTimer: Timer?
     private var modelChanges: AnyCancellable?
+    private var customizationChanges: AnyCancellable?
     private(set) var isStarted = false
     private var isTerminated = false
 
     init(launcher: LauncherWindowCoordinator) {
         self.launcher = launcher
+        moduleRuntime = AppModuleRuntime(store: launcher.model.modules)
+        let quotaDelivery = SystemQuotaAlertDelivery()
         model = NotchViewModel(
             aiSessionStore: AISessionStore(
                 sources: [
@@ -61,9 +73,12 @@ final class NotchWindowCoordinator: NSObject {
                     LocalAgentSessionSource()
                 ]
             ),
-            widgetPublisher: QuotaWidgetPublisher.makeIfAvailable()
+            widgetPublisher: QuotaWidgetPublisher.makeIfAvailable(),
+            quotaAlerts: QuotaAlertController(delivery: quotaDelivery),
+            modules: launcher.model.modules
         )
         visualSettings = NotchVisualSettings()
+        customizationSettings = .shared
         displaySettings = NotchDisplaySettings()
         launchAtLogin = LaunchAtLoginManager()
         dockSettings = NoolDockSettings()
@@ -79,6 +94,7 @@ final class NotchWindowCoordinator: NSObject {
             compactHeight: compactHeight
         )
         let origin = Self.origin(for: initialScreen, size: size)
+        presentation = NotchWindowPresentation(size: size)
         window = NotchPanel(
             contentRect: NSRect(origin: origin, size: size),
             styleMask: [
@@ -95,32 +111,64 @@ final class NotchWindowCoordinator: NSObject {
         settingsCoordinator = SettingsWindowCoordinator(
             model: model,
             visualSettings: visualSettings,
+            customizationSettings: customizationSettings,
             displaySettings: displaySettings,
             launchAtLogin: launchAtLogin,
             launcher: launcher,
-            dockSettings: dockSettings
+            dockSettings: dockSettings,
+            lidEffect: lidEffect,
+            systemMonitor: systemMonitor
         )
 
         super.init()
+        systemMonitorWindow = SystemMonitorWindowCoordinator(
+            store: systemMonitor,
+            displaySettings: displaySettings,
+            occupiedFrames: { [weak self] in self?.reservedQuotaFrames() ?? [] },
+            openSettings: { [weak self] in self?.showSettingsWindow(section: .systemMonitor) }
+        )
+        quotaDelivery.onOpenLimits = { [weak self] in self?.model.openQuotaLimits() }
         launcher.model.connectNoolSearch(to: model)
         model.onOpenFileActions = { [weak self] urls in
-            guard let self, self.isStarted else { return }
+            guard let self, self.isStarted, self.model.modules.isEnabled(.fileShelf) else { return }
             self.model.isExpanded = false
             self.fileActions.show(urls: urls, shelf: self.model.fileShelfStore)
         }
         launcher.onProcessFiles = { [weak self] urls, kind in
-            guard let self, self.isStarted else { return }
+            guard let self, self.isStarted, self.model.modules.isEnabled(.fileShelf) else { return }
             self.fileActions.show(urls: urls, shelf: self.model.fileShelfStore, initialKind: kind)
         }
         let recognize: ([URL]) -> Void = { [weak self, weak launcher] urls in
-            guard let self, self.isStarted else { return }
+            guard let self, self.isStarted, self.model.modules.isEnabled(.textRecognition) else { return }
             self.model.isExpanded = false
-            self.textRecognition.show(urls: urls) { [weak launcher] text in
-                launcher?.prepareTextRecognitionDraft(text) ?? false
+            self.textRecognition.show(urls: urls) { [weak launcher] text, prompt in
+                launcher?.prepareTextRecognitionDraft(text, prompt: prompt) ?? false
             }
         }
         model.onRecognizeText = recognize
         launcher.onRecognizeText = recognize
+        launcher.onCaptureScreenText = { [weak self, weak launcher] in
+            guard let self, self.isStarted, self.model.modules.isEnabled(.textRecognition) else { return }
+            self.model.isExpanded = false
+            self.model.isCompactHovered = false
+            self.screenTextCapture.start(
+                onCapture: { [weak self, weak launcher] data in
+                    guard let self, self.isStarted, self.model.modules.isEnabled(.textRecognition) else { return }
+                    self.textRecognition.show(imageData: data) { [weak launcher] text, prompt in
+                        launcher?.prepareTextRecognitionDraft(text, prompt: prompt) ?? false
+                    }
+                },
+                onFailure: { [weak self, weak launcher] message in
+                    guard self?.isStarted == true else { return }
+                    launcher?.show()
+                    launcher?.model.message = message
+                },
+                onCancel: { [weak self, weak launcher] in
+                    guard self?.isStarted == true else { return }
+                    launcher?.show()
+                }
+            )
+        }
         dock = NoolDockWindowCoordinator(
             settings: dockSettings,
             model: model,
@@ -130,8 +178,10 @@ final class NotchWindowCoordinator: NSObject {
 
         let contentView = NotchRootView(
             model: model,
+            presentation: presentation,
             visualSettings: visualSettings,
             displaySettings: displaySettings,
+            customizationSettings: customizationSettings,
             onOpenSettings: { [weak self] section in
                 self?.showSettingsWindow(section: section)
             },
@@ -156,7 +206,6 @@ final class NotchWindowCoordinator: NSObject {
                 }
             }
         )
-        .preferredColorScheme(.dark)
         let hostingView = NSHostingView(rootView: contentView)
         hostingView.sizingOptions = NotchWindowHostingPolicy.sizingOptions
         hostingView.wantsLayer = true
@@ -168,6 +217,8 @@ final class NotchWindowCoordinator: NSObject {
         window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
         window.isOpaque = false
         window.backgroundColor = .clear
+        // The notch stays black; native controls must remain readable in light app themes.
+        window.appearance = NSAppearance(named: .darkAqua)
         window.hasShadow = false
         window.isFloatingPanel = true
         window.titleVisibility = .hidden
@@ -183,6 +234,29 @@ final class NotchWindowCoordinator: NSObject {
         ]
         window.hidesOnDeactivate = false
         window.isMovableByWindowBackground = false
+        configureModuleRuntime()
+    }
+
+    private func configureModuleRuntime() {
+        moduleRuntime.register(.quotas, start: { [weak self] in
+            self?.quotaEdgeCoordinator.start()
+            self?.quotaStackCoordinator.start()
+        }, stop: { [weak self] in
+            self?.quotaEdgeCoordinator.stop()
+            self?.quotaStackCoordinator.stop()
+        })
+        moduleRuntime.register(.systemMonitor, start: { [weak self] in
+            self?.systemMonitorWindow?.start()
+        }, stop: { [weak self] in self?.systemMonitorWindow?.stop() })
+        moduleRuntime.register(.dock, start: { [weak self] in self?.dock?.start() },
+                               stop: { [weak self] in self?.dock?.stop() })
+        moduleRuntime.register(.lidEffect, start: { [weak self] in self?.lidEffect.start() },
+                               stop: { [weak self] in self?.lidEffect.pause() })
+        moduleRuntime.register(.textRecognition, start: {}, stop: { [weak self] in
+            self?.screenTextCapture.cancel()
+            self?.textRecognition.stop()
+        })
+        moduleRuntime.register(.fileShelf, start: {}, stop: { [weak self] in self?.fileActions.stop() })
     }
 
     func show() {
@@ -193,6 +267,7 @@ final class NotchWindowCoordinator: NSObject {
             return
         }
         isStarted = true
+        if visualSettings.showsExpandedMascot { NoolWavingMascot.prepareAsset() }
         model.timerSource.onCompletion = {
             NSSound(named: NSSound.Name("Glass"))?.play()
         }
@@ -202,6 +277,13 @@ final class NotchWindowCoordinator: NSObject {
                 self.synchronizeQuotaPresentation()
             }
         }
+        customizationChanges = customizationSettings.layoutChanges
+            .sink { [weak self] in
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.isStarted else { return }
+                    self.reposition()
+                }
+            }
         displaySettings.onConfigurationChange = { [weak self] in
             guard let self, self.isStarted else { return }
             self.configureDisplayFollowing()
@@ -210,25 +292,37 @@ final class NotchWindowCoordinator: NSObject {
         configureDisplayFollowing()
         settingsCoordinator.start()
         window.orderFrontRegardless()
-        quotaEdgeCoordinator.start()
-        quotaStackCoordinator.start()
-        dock?.start()
+        moduleRuntime.start()
+        moduleChanges = model.modules.changes.sink { [weak self] _ in
+            guard let self, self.isStarted else { return }
+            self.dock?.reposition()
+            self.synchronizeQuotaPresentation()
+        }
     }
 
     func stop() {
         guard !isTerminated else { return }
         isTerminated = true
         isStarted = false
+        layoutAnimationGeneration += 1
+        moduleChanges = nil
+        moduleRuntime.stop()
         modelChanges?.cancel()
         modelChanges = nil
+        customizationChanges?.cancel()
+        customizationChanges = nil
         displayFollowTimer?.invalidate()
         displayFollowTimer = nil
         displaySettings.onConfigurationChange = nil
         model.timerSource.onCompletion = nil
         quotaEdgeCoordinator.stop()
         quotaStackCoordinator.stop()
+        systemMonitorWindow?.stop()
         settingsCoordinator.stop()
+        lidEffect.stop()
         fileActions.stop()
+        screenTextCapture.cancel()
+        launcher.onCaptureScreenText = nil
         textRecognition.stop()
         dock?.stop()
         model.stop()
@@ -239,6 +333,11 @@ final class NotchWindowCoordinator: NSObject {
     func waitForFileActions() async { await fileActions.waitForCompletion() }
 
     func waitForQuotaWidgetPersistence() async { await model.waitForQuotaWidgetPersistence() }
+    func saveScratchpadBeforeTermination() async -> Bool {
+        await model.scratchpad.flush()
+        return !model.scratchpad.hasUnsavedChanges
+    }
+    func waitForLidEffect() async { await lidEffect.waitForStop() }
 
     func openWidgetLimits() {
         model.openQuotaLimits()
@@ -258,6 +357,14 @@ final class NotchWindowCoordinator: NSObject {
             size: size
         )
         targetWindowFrame = frame
+        layoutAnimationGeneration += 1
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            presentation.size = size
+            presentation.mountsExpandedContent = model.isExpanded
+            model.expansionSurfaceSettled = model.isExpanded
+        }
         window.setFrame(frame, display: true)
         synchronizeQuotaPresentation()
     }
@@ -276,29 +383,52 @@ final class NotchWindowCoordinator: NSObject {
         )
         let wasExpanded = lastLayoutWasExpanded
         lastLayoutWasExpanded = isExpanded
+        if !isExpanded || !wasExpanded { model.expansionSurfaceSettled = false }
 
         guard targetWindowFrame != frame else { return }
         targetWindowFrame = frame
+        layoutAnimationGeneration += 1
+        let generation = layoutAnimationGeneration
 
         guard reduceMotion == false else {
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                presentation.size = size
+                presentation.mountsExpandedContent = isExpanded
+            }
             window.setFrame(frame, display: true)
+            model.expansionSurfaceSettled = isExpanded
             return
         }
 
-        NSAnimationContext.runAnimationGroup { context in
-            if isExpanded == false, wasExpanded == false {
-                context.duration = NotchMotion.compactResizeDuration
-                context.timingFunction = NotchMotion.compactResizeTimingFunction()
-            } else {
-                context.duration = isExpanded ? NotchMotion.expansionDuration : NotchMotion.collapseDuration
-                context.timingFunction = NotchMotion.compactResizeTimingFunction()
-            }
-            window.animator().setFrame(frame, display: true)
+        // No per-frame NSWindow resize: resizing the host and rendering SwiftUI
+        // on separate clocks produces visible judder even with identical easing.
+        window.setFrame(NotchWindowEnvelope.frame(containing: window.frame, target: frame), display: true)
+        window.contentView?.layoutSubtreeIfNeeded()
+        let animation: Animation
+        if !isExpanded && !wasExpanded {
+            animation = NotchMotion.compactResizeAnimation(reduceMotion: false)
+        } else if isExpanded && wasExpanded {
+            animation = .easeInOut(duration: NotchMotion.panelChangeDuration)
+        } else {
+            animation = NotchMotion.layoutAnimation(isExpanded: isExpanded, reduceMotion: false)
+        }
+        withAnimation(animation, completionCriteria: .removed) {
+            presentation.size = size
+        } completion: { [weak self] in
+            guard let self, self.isStarted,
+                  self.layoutAnimationGeneration == generation,
+                  self.model.isExpanded == isExpanded else { return }
+            self.window.setFrame(frame, display: true)
+            self.model.expansionSurfaceSettled = isExpanded
+            // Construct/destroy heavy panel trees only after the geometry stops.
+            self.presentation.mountsExpandedContent = isExpanded
         }
     }
 
     private func targetWindowSize(isExpanded: Bool? = nil) -> NSSize {
-        NotchWindowSizingPolicy.size(
+        NotchWindowSizingPolicy.panelSize(
             metrics: displaySettings.activeMetrics,
             isExpanded: isExpanded ?? model.isExpanded,
             selectedPanel: model.selectedPanel,
@@ -307,10 +437,28 @@ final class NotchWindowCoordinator: NSObject {
             compactHeight: displaySettings.effectiveCompactHeight(
                 fallback: visualSettings.compactHeight
             ),
-            isPlaying: model.usesWideCompactLayout,
+            isPlaying: usesWideCompactLayout,
             showsAgentMascot: model.compactMascotNotice != nil,
-            isHovered: model.isCompactHovered
+            isHovered: model.isCompactHovered,
+            expandedWidth: customizationSettings.expandedWidth,
+            maxExpandedHeight: customizationSettings.maxExpandedHeight,
+            hasSideControls: customizationSettings.quickActions.contains { $0.placement != .bottom },
+            activeUtility: model.activeUtility
         )
+    }
+
+    private var usesWideCompactLayout: Bool {
+        let isPlaying = model.modules.isEnabled(.music)
+            && model.nowPlayingSnapshot?.playbackState.isPlaying == true
+        let showsQuota = customizationSettings.showsQuotaIndicator
+            && model.modules.isEnabled(.quotas)
+            && model.compactQuotaDisplayMode == .top
+            && (isPlaying || customizationSettings.showsQuotaWhenIdle)
+        return model.compactMeetingReminder != nil
+            || model.compactTimer != nil
+            || model.hasCompactLiveActivity
+            || (isPlaying && customizationSettings.showsMusicIndicator)
+            || showsQuota
     }
 
     private func configureDisplayFollowing() {
@@ -337,6 +485,24 @@ final class NotchWindowCoordinator: NSObject {
         guard isStarted else { return }
         quotaEdgeCoordinator.synchronize()
         quotaStackCoordinator.synchronize()
+        systemMonitorWindow?.synchronize()
+    }
+
+    private func reservedQuotaFrames() -> [CGRect] {
+        guard let screen = displaySettings.activeScreen ?? displaySettings.selectedScreen() else { return [] }
+        if model.shouldEnableQuotaEdgePanel {
+            let rail = QuotaEdgePanelLayout.railFrame(in: screen.frame, edge: model.quotaPanelEdge,
+                                                     providerCount: model.visibleQuotaProviders.count)
+            let detailWidth = QuotaEdgePanelLayout.detailWindowSize.width + QuotaEdgePanelLayout.detailGap
+            return [CGRect(x: model.quotaPanelEdge == .left ? rail.minX : rail.minX - detailWidth,
+                           y: rail.minY, width: rail.width + detailWidth, height: rail.height)]
+        }
+        if model.shouldEnableQuotaCornerStack {
+            return model.visibleQuotaProviders.indices.map {
+                QuotaCornerStackLayout.itemFrame(in: screen.frame, corner: model.quotaStackCorner, index: $0)
+            }
+        }
+        return []
     }
 
     private static func origin(for screen: NSScreen?, size: NSSize) -> NSPoint {

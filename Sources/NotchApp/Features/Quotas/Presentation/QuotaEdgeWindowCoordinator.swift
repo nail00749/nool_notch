@@ -58,7 +58,11 @@ final class QuotaEdgeWindowCoordinator {
         for panel in ownedPanels {
             panel.orderOut(nil)
             panel.alphaValue = 0
+            panel.contentView = nil
         }
+        quotaTriggerConfiguration = nil
+        quotaEdgeConfiguration = nil
+        quotaDetailConfiguration = nil
     }
 
     func synchronize() {
@@ -102,7 +106,6 @@ final class QuotaEdgeWindowCoordinator {
                     self?.setQuotaTriggerHovered(isHovering)
                 }
             )
-            .preferredColorScheme(.dark)
             let hostingView = NSHostingView(rootView: rootView)
             hostingView.sizingOptions = NotchWindowHostingPolicy.sizingOptions
             hostingView.wantsLayer = true
@@ -157,7 +160,6 @@ final class QuotaEdgeWindowCoordinator {
                     self?.setHoveredQuotaProvider(providerID)
                 }
             )
-            .preferredColorScheme(.dark)
             let hostingView = NSHostingView(rootView: rootView)
             hostingView.sizingOptions = NotchWindowHostingPolicy.sizingOptions
             hostingView.wantsLayer = true
@@ -223,7 +225,6 @@ final class QuotaEdgeWindowCoordinator {
                 providerID: providerID,
                 edge: edge
             )
-            .preferredColorScheme(.dark)
             let hostingView = NSHostingView(rootView: rootView)
             hostingView.sizingOptions = NotchWindowHostingPolicy.sizingOptions
             hostingView.wantsLayer = true

@@ -18,13 +18,13 @@ struct UpcomingMeetingCard: View {
 
                     VStack(alignment: .leading, spacing: 3) {
                         Text(meeting.event.title)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white)
+                            .font(.system(size: 12, weight: .semibold, design: .default))
+                            .foregroundStyle(NotchPalette.text)
                             .lineLimit(1)
 
                         Text(meeting.countdownText(at: context.date))
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.54))
+                            .font(.system(size: 10, weight: .medium, design: .default))
+                            .foregroundStyle(NotchPalette.text.opacity(0.54))
                             .monospacedDigit()
                     }
 
@@ -35,7 +35,7 @@ struct UpcomingMeetingCard: View {
                             onJoin(joinURL)
                         } label: {
                             Text("Войти")
-                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                .font(.system(size: 10, weight: .semibold, design: .default))
                                 .foregroundStyle(.black.opacity(0.78))
                                 .padding(.horizontal, 10)
                                 .frame(minHeight: 28)
@@ -48,7 +48,7 @@ struct UpcomingMeetingCard: View {
                 .padding(10)
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(.white.opacity(0.07))
+                        .fill(NotchPalette.text.opacity(0.07))
                 )
                 .accessibilityElement(children: .combine)
             }

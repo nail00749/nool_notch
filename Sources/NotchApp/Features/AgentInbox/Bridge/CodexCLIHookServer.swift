@@ -69,9 +69,13 @@ final class CodexCLIHookServer {
     var onEvent: ((CodexCLIHookEvent, CodexCLIHookResponder?) -> Void)?
 
     private var listener: NWListener?
+    private var generation: UInt = 0
+    private var connections: [ObjectIdentifier: NWConnection] = [:]
 
     func start() throws {
         guard listener == nil else { return }
+        generation &+= 1
+        let generation = self.generation
         unlink(Self.socketPath)
 
         let previousMask = umask(0o077)
@@ -84,7 +88,11 @@ final class CodexCLIHookServer {
             self.listener = listener
             listener.newConnectionHandler = { [weak self] connection in
                 Task { @MainActor in
-                    self?.accept(connection)
+                    guard let self, self.generation == generation, self.listener != nil else {
+                        connection.cancel()
+                        return
+                    }
+                    self.accept(connection, generation: generation)
                 }
             }
             listener.stateUpdateHandler = { state in
@@ -103,21 +111,28 @@ final class CodexCLIHookServer {
     }
 
     func stop() {
+        generation &+= 1
         listener?.cancel()
         listener = nil
+        connections.values.forEach { $0.cancel() }
+        connections.removeAll()
         unlink(Self.socketPath)
     }
 
-    private func accept(_ connection: NWConnection) {
+    private func accept(_ connection: NWConnection, generation: UInt) {
+        connections[ObjectIdentifier(connection)] = connection
         connection.start(queue: .main)
-        receiveAll(from: connection, accumulated: Data())
+        receiveAll(from: connection, accumulated: Data(), generation: generation)
     }
 
-    private func receiveAll(from connection: NWConnection, accumulated: Data) {
+    private func receiveAll(from connection: NWConnection, accumulated: Data, generation: UInt) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) {
             [weak self] content, _, isComplete, error in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.generation == generation, self.listener != nil else {
+                    connection.cancel()
+                    return
+                }
                 var data = accumulated
                 if let content { data.append(content) }
                 if data.count > 1_048_576 {
@@ -125,7 +140,7 @@ final class CodexCLIHookServer {
                 } else if isComplete || error != nil {
                     self.process(data, from: connection)
                 } else {
-                    self.receiveAll(from: connection, accumulated: data)
+                    self.receiveAll(from: connection, accumulated: data, generation: generation)
                 }
             }
         }
@@ -162,6 +177,8 @@ final class CodexCLIHookServer {
     }
 
     private func send(_ data: Data, to connection: NWConnection) {
+        // A resolved request can flush its reply while stop cancels unfinished inputs.
+        connections.removeValue(forKey: ObjectIdentifier(connection))
         connection.send(content: data, completion: .contentProcessed { _ in
             connection.cancel()
         })

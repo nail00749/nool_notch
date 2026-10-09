@@ -7,7 +7,7 @@ struct LiveActivitiesPanel: View {
         ScrollView {
             VStack(spacing: 12) {
                 NoolTimerPanel(source: model.timerSource,
-                    onCompact: { model.isExpanded = false })
+                    onCompact: model.requestCollapse)
                 LazyVStack(spacing: 8) {
                     ForEach(model.liveActivities.filter { $0.sourceID != model.timerSource.id }) { activity in
                         LiveActivityRow(activity: activity)
@@ -47,8 +47,8 @@ private struct LiveActivityRow: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(activity.title)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.9))
+                        .font(.system(size: 12, weight: .semibold, design: .default))
+                        .foregroundStyle(NotchPalette.text.opacity(0.9))
                         .lineLimit(1)
 
                     Spacer(minLength: 4)
@@ -74,7 +74,7 @@ private struct LiveActivityRow: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .background(
-            Color.white.opacity(0.055),
+            NotchPalette.text.opacity(0.055),
             in: RoundedRectangle(cornerRadius: 14, style: .continuous)
         )
         .overlay {

@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Carbon
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -13,6 +14,7 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
     var onOpenSettings: (() -> Void)?
     var onProcessFiles: (([URL], FileActionKind?) -> Void)?
     var onRecognizeText: (([URL]) -> Void)?
+    var onCaptureScreenText: (() -> Void)?
     private let hotKey = LauncherHotKey()
     private let panel: LauncherPanel
     private var previousApplication: NSRunningApplication?
@@ -21,17 +23,29 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
     private var screenObserver: NSObjectProtocol?
     private var pasteTask: Task<Void, Never>?
     private var isChoosingAttachments = false
+    private var attachmentPicker: NSOpenPanel?
+    private var attachmentPickerGeneration = 0
     private let windowLayoutsPanel = WindowLayoutsWindowCoordinator()
     private var windowCommandTask: Task<Void, Never>?
+    private var windowCommandGeneration = 0
+    private let workspacesPanel = WorkspacesWindowCoordinator()
+    private let workspaceLauncher = WorkspaceLauncher()
+    private var workspaceLaunchTask: Task<Void, Never>?
+    private var workspaceLaunchGeneration = 0
+    private var pendingWorkspaceMessage: String?
+    private let speedTestPanel = SpeedTestWindowCoordinator()
+    private let preview = LauncherPreviewController()
+    private var previewSubscriptions: Set<AnyCancellable> = []
+    private var moduleSubscriptions: Set<AnyCancellable> = []
 
     override init() {
         let settings = LauncherSettings()
         self.settings = settings
-        model = LauncherModel(settings: settings)
+        model = LauncherModel(settings: settings, modules: .shared)
         panel = LauncherPanel(contentRect: NSRect(x: 0, y: 0, width: 680, height: 492),
                               styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         super.init()
-        panel.title = "Nool Launcher"
+        panel.title = "NooL Launcher"
         panel.identifier = NSUserInterfaceItemIdentifier("nool.launcher")
         panel.isFloatingPanel = true
         panel.level = .floating
@@ -58,10 +72,23 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
             pasteAIResponse: { [weak self] text in self?.pasteAIResponse(text) },
             chooseAttachments: { [weak self] in self?.chooseAttachments() },
             openWindowLayouts: { [weak self] in self?.showWindowLayouts() },
+            openWorkspaces: { [weak self] in self?.showWorkspaces() },
+            captureScreenText: { [weak self] in self?.captureScreenText() },
+            openSpeedTest: { [weak self] in self?.showSpeedTest() },
             performAction: { [weak self] action, result in self?.performAction(action, result: result) }
         ))
         hosting.sizingOptions = []
         panel.contentView = hosting
+        preview.onClose = { [weak self] in self?.focusSearch() }
+        preview.onError = { [weak self] message in self?.model.message = message }
+        model.$query.sink { [weak self] _ in self?.preview.cancel(restoreFocus: false) }.store(in: &previewSubscriptions)
+        model.$category.sink { [weak self] _ in self?.preview.cancel(restoreFocus: false) }.store(in: &previewSubscriptions)
+        model.$selectedID.sink { [weak self] id in
+            guard let self, let previewID = self.preview.resultID, id != previewID else { return }
+            self.preview.cancel(restoreFocus: false)
+        }.store(in: &previewSubscriptions)
+        model.modules.changes.sink { [weak self] _ in self?.moduleAvailabilityChanged() }
+            .store(in: &moduleSubscriptions)
         hotKey.onPress = { [weak self] in
             guard let self, !self.settings.isRecordingShortcut else { return }
             self.toggle()
@@ -94,6 +121,10 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
         previousApplication = app?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? nil : app
         model.textSelection.capture(pid: previousApplication?.processIdentifier)
         model.present()
+        if let pendingWorkspaceMessage {
+            model.message = pendingWorkspaceMessage
+            self.pendingWorkspaceMessage = nil
+        }
         position()
         panel.makeKeyAndOrderFront(nil)
         focusSearch()
@@ -101,9 +132,21 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
     }
 
     func stop() {
+        windowCommandGeneration += 1
         windowCommandTask?.cancel()
+        workspaceLaunchGeneration += 1
+        workspaceLaunchTask?.cancel()
+        workspaceLaunchTask = nil
+        workspaceLauncher.stop()
         windowLayoutsPanel.close()
+        workspacesPanel.close()
+        speedTestPanel.stop()
+        preview.cancel(restoreFocus: false)
         pasteTask?.cancel()
+        attachmentPickerGeneration += 1
+        attachmentPicker?.cancel(nil)
+        attachmentPicker = nil
+        isChoosingAttachments = false
         hide(restoreFocus: false)
         hotKey.stop()
         model.clipboard.stop()
@@ -114,8 +157,9 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
     }
 
     @discardableResult
-    func prepareTextRecognitionDraft(_ text: String) -> Bool {
-        guard model.prepareAIText(text) else { return false }
+    func prepareTextRecognitionDraft(_ text: String, prompt: String = "") -> Bool {
+        guard model.modules.isEnabled(.aiChat) else { return false }
+        guard model.prepareAIText(text, prompt: prompt) else { return false }
         show()
         return true
     }
@@ -126,7 +170,7 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func chooseAttachments() {
-        guard !isChoosingAttachments, !model.aiChat.isStreaming else { return }
+        guard model.modules.isEnabled(.aiChat), !isChoosingAttachments, !model.aiChat.isStreaming else { return }
         let picker = NSOpenPanel()
         picker.canChooseDirectories = false
         picker.allowsMultipleSelection = true
@@ -134,9 +178,15 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
         picker.message = "До 4 файлов: изображения, текстовые документы или PDF с текстом."
         picker.prompt = "Прикрепить"
         isChoosingAttachments = true
+        attachmentPickerGeneration += 1
+        let generation = attachmentPickerGeneration
+        attachmentPicker = picker
         picker.beginSheetModal(for: panel) { [weak self] response in
             guard let self else { return }
+            guard self.attachmentPickerGeneration == generation else { return }
             self.isChoosingAttachments = false
+            self.attachmentPicker = nil
+            guard self.model.modules.isEnabled(.aiChat) else { return }
             if response == .OK { self.model.aiChat.importAttachments(picker.urls) }
             self.panel.makeKeyAndOrderFront(nil)
             self.focusSearch()
@@ -150,6 +200,30 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
             settings.hotKeyError = hotKey.register(settings.shortcut)
         }
         model.settingsChanged()
+    }
+
+    private func moduleAvailabilityChanged() {
+        if !model.modules.isEnabled(.windowManagement) {
+            windowCommandGeneration += 1
+            windowCommandTask?.cancel()
+            windowCommandTask = nil
+            workspaceLaunchGeneration += 1
+            workspaceLaunchTask?.cancel()
+            workspaceLaunchTask = nil
+            workspaceLauncher.stop()
+            windowLayoutsPanel.close()
+            workspacesPanel.close()
+            pendingWorkspaceMessage = nil
+        }
+        if !model.modules.isEnabled(.networkTools) { speedTestPanel.stop() }
+        if !model.modules.isEnabled(.aiChat) {
+            pasteTask?.cancel()
+            pasteTask = nil
+            attachmentPickerGeneration += 1
+            attachmentPicker?.cancel(nil)
+            attachmentPicker = nil
+            isChoosingAttachments = false
+        }
     }
 
     private func position() {
@@ -176,6 +250,7 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func hide(restoreFocus: Bool) {
+        preview.cancel(restoreFocus: false)
         guard panel.isVisible else { return }
         removeDismissMonitors()
         panel.orderOut(nil)
@@ -191,12 +266,55 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func showWindowLayouts() {
+        guard model.modules.isEnabled(.windowManagement) else { return }
         let targetPID = previousApplication?.processIdentifier
         hide(restoreFocus: false)
         windowLayoutsPanel.show(manager: model.windowLayouts, targetPID: targetPID)
     }
 
+    private func showWorkspaces() {
+        guard model.modules.isEnabled(.windowManagement) else { return }
+        hide(restoreFocus: false)
+        workspacesPanel.show(store: model.workspaces, layouts: model.windowLayouts)
+    }
+
+    private func showSpeedTest(section: SpeedTestSection = .test) {
+        guard model.modules.isEnabled(.networkTools) else { return }
+        hide(restoreFocus: false)
+        speedTestPanel.show(section: section)
+    }
+
+    private func captureScreenText() {
+        guard model.modules.isEnabled(.textRecognition) else { return }
+        hide(restoreFocus: false)
+        onCaptureScreenText?()
+    }
+
+    private func launchWorkspace(id: UUID) {
+        guard model.modules.isEnabled(.windowManagement) else { return }
+        guard workspaceLaunchTask == nil, let workspace = model.workspaces.workspace(id: id) else {
+            model.message = workspaceLaunchTask == nil ? "Рабочее пространство больше недоступно." : "Дождитесь запуска текущего пространства."
+            return
+        }
+        hide(restoreFocus: false)
+        workspaceLaunchGeneration += 1
+        let generation = workspaceLaunchGeneration
+        workspaceLaunchTask = Task { [weak self] in
+            guard let self else { return }
+            let report = await self.workspaceLauncher.launch(workspace) { [weak self] layoutID in
+                guard let self else { return "NooL App закрывается; раскладка не применена." }
+                return await self.model.windowLayouts.restoreLayout(id: layoutID)
+            }
+            guard !Task.isCancelled, self.workspaceLaunchGeneration == generation,
+                  self.model.modules.isEnabled(.windowManagement) else { return }
+            self.model.workspaces.record(report)
+            self.pendingWorkspaceMessage = report.summary
+            self.workspaceLaunchTask = nil
+        }
+    }
+
     private func runWindowCommand(_ payload: LauncherPayload) {
+        guard model.modules.isEnabled(.windowManagement) else { return }
         guard windowCommandTask == nil else { return }
         model.windowLayouts.refreshAccessibilityAccess()
         guard model.windowLayouts.hasAccessibilityAccess else {
@@ -205,9 +323,13 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
         }
         let targetPID = previousApplication?.processIdentifier
         model.message = "Изменяем расположение окон…"
+        windowCommandGeneration += 1
+        let generation = windowCommandGeneration
         windowCommandTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.windowCommandTask = nil }
+            defer {
+                if self.windowCommandGeneration == generation { self.windowCommandTask = nil }
+            }
             let message: String
             switch payload {
             case .windowAction(let action):
@@ -216,24 +338,26 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
                 message = await self.model.windowLayouts.restoreLayout(id: id)
             default: return
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.windowCommandGeneration == generation,
+                  self.model.modules.isEnabled(.windowManagement) else { return }
             self.model.message = message
         }
     }
 
     private func requestSelectionAccess() {
+        guard model.modules.isEnabled(.aiChat) else { return }
         _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
         model.textSelection.capture(pid: previousApplication?.processIdentifier)
     }
 
     private func pasteAIResponse(_ text: String) {
-        guard let destination = previousApplication, !destination.isTerminated,
+        guard model.modules.isEnabled(.aiChat), let destination = previousApplication, !destination.isTerminated,
               let expected = model.textSelection.text else { return }
         pasteTask?.cancel()
         pasteTask = Task { [weak self] in
             guard let self else { return }
             let sameSelection = await self.model.textSelection.stillMatches(pid: destination.processIdentifier, expected: expected)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.model.modules.isEnabled(.aiChat) else { return }
             NSPasteboard.general.clearContents()
             guard NSPasteboard.general.setString(text, forType: .string) else { return }
             guard sameSelection else {
@@ -249,7 +373,32 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]) { [weak self] event in
                 guard let self else { return event }
                 if event.type == .keyDown {
+                    if (event.window === self.panel || event.window === self.preview.panel),
+                       self.preview.resultID != nil,
+                       (event.keyCode == UInt16(kVK_Escape)
+                           || LauncherKeyboardShortcuts.isPlainSpace(keyCode: event.keyCode, modifiers: event.modifierFlags)) {
+                        self.preview.cancel(restoreFocus: true)
+                        return nil
+                    }
+                    if event.window === self.preview.panel {
+                        return event
+                    }
                     guard event.window === self.panel else { return event }
+                    let hasMarkedText = (self.panel.firstResponder as? NSTextView)?.hasMarkedText() == true
+                    if LauncherKeyboardShortcuts.isPreview(keyCode: event.keyCode, modifiers: event.modifierFlags),
+                       !hasMarkedText, self.model.actionResult == nil, self.model.jiraActionDestination == nil,
+                       !self.model.showsQuickAI, self.model.selectedNoolEvent == nil,
+                       self.model.category != .ai, let result = self.model.selectedResult,
+                       case .file(let url) = result.payload {
+                        self.preview.present(url: url, resultID: result.id, parent: self.panel)
+                        return nil
+                    }
+                    if LauncherKeyboardShortcuts.isPlainSpace(keyCode: event.keyCode, modifiers: event.modifierFlags),
+                       !hasMarkedText, self.model.canPreviewWithSpace,
+                       let result = self.model.selectedResult, case .file(let url) = result.payload {
+                        self.preview.present(url: url, resultID: result.id, parent: self.panel)
+                        return nil
+                    }
                     if LauncherKeyboardShortcuts.isActions(keyCode: event.keyCode, modifiers: event.modifierFlags),
                        self.model.category != .ai,
                        (self.panel.firstResponder as? NSTextView)?.hasMarkedText() != true {
@@ -298,7 +447,8 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
                     }
                     if let action = LauncherKeyboardShortcuts.tabAction(keyCode: event.keyCode, modifiers: event.modifierFlags) {
                         switch action {
-                        case .select(let category): self.model.category = category
+                        case .select(let category):
+                            if self.model.availableCategories.contains(category) { self.model.category = category }
                         case .cycle(let backwards): self.model.cycleCategory(backwards: backwards)
                         }
                         return nil
@@ -309,7 +459,9 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
                         self.activate(result, paste: true)
                         return nil
                     }
-                } else if event.window !== self.panel, !self.hasVisibleChildWindow {
+                } else if event.window === self.panel {
+                    self.model.clearPreviewKeyboardSelection()
+                } else if !self.hasVisibleChildWindow {
                     self.hide(restoreFocus: false)
                 }
                 return event
@@ -332,9 +484,14 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func activate(_ result: LauncherResult, paste: Bool) {
-        guard model.results.contains(result) else { return }
+        guard model.results.contains(result), model.isResultAvailable(result) else { return }
         switch result.payload {
         case .windowLayoutManager: showWindowLayouts()
+        case .workspaceManager: showWorkspaces()
+        case .speedTest: showSpeedTest()
+        case .networkDiagnostics: showSpeedTest(section: .diagnostics)
+        case .screenTextCapture: captureScreenText()
+        case .workspace(let id): launchWorkspace(id: id)
         case .windowAction, .windowLayout: runWindowCommand(result.payload)
         case .nool(let id, _):
             if model.openNoolResult(id) { hide(restoreFocus: false) }
@@ -383,6 +540,9 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
         model.closeActions()
         switch action {
         case .open: activate(result, paste: false)
+        case .preview:
+            guard case .file(let url) = result.payload else { return }
+            preview.present(url: url, resultID: result.id, parent: panel)
         case .reveal: reveal(result)
         case .paste: activate(result, paste: true)
         case .copy:
@@ -444,7 +604,7 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
         guard AXIsProcessTrusted() else {
             let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options)
-            model.message = "Скопировано. Для автоматической вставки разрешите Nool в «Универсальный доступ» и повторите действие."
+            model.message = "Скопировано. Для автоматической вставки разрешите NooL App в «Универсальный доступ» и повторите действие."
             return
         }
         hide(restoreFocus: true)

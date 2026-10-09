@@ -18,6 +18,7 @@ final class CodexDesktopSessionSource: AISessionSource {
     private var pollingTask: Task<Void, Never>?
     private var scanGeneration = 0
     private var isStarted = false
+    private var streamGeneration: UInt = 0
     private var sessions: [AISession] = []
     private var health: AISessionSourceHealth = .unavailable(message: "Codex ещё не обнаружен")
 
@@ -46,10 +47,15 @@ final class CodexDesktopSessionSource: AISessionSource {
     }
 
     func snapshots() -> AsyncStream<AISessionSourceSnapshot> {
-        AsyncStream { continuation in
+        streamGeneration &+= 1
+        let generation = streamGeneration
+        return AsyncStream { continuation in
             self.continuation = continuation
             continuation.onTermination = { @Sendable [weak self] _ in
-                Task { @MainActor in self?.stop() }
+                Task { @MainActor in
+                    guard let self, self.streamGeneration == generation else { return }
+                    self.stop()
+                }
             }
             start()
         }
@@ -109,9 +115,10 @@ final class CodexDesktopSessionSource: AISessionSource {
         }
     }
 
-    private func stop() {
+    func stop() {
         guard isStarted else { return }
         isStarted = false
+        streamGeneration &+= 1
         scanGeneration += 1
         pollingTask?.cancel()
         pollingTask = nil

@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct LauncherSettingsView: View {
+    @ObservedObject var modules: AppModuleStore
     @ObservedObject var settings: LauncherSettings
     @ObservedObject var clipboard: LauncherClipboardStore
     @ObservedObject var aiChat: AIChatStore
@@ -13,7 +14,7 @@ struct LauncherSettingsView: View {
         VStack(alignment: .leading, spacing: 20) {
             GroupBox("Панель поиска") {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Приложения, файлы, буфер обмена и калькулятор — в одном окне.")
+                    Text("Приложения, файлы и калькулятор — в одном окне. Дополнительные функции выбираются в «Модулях».")
                         .font(.system(size: 12)).foregroundStyle(NotchPalette.secondary)
                     HStack {
                         Text("Горячая клавиша").font(.system(size: 12))
@@ -38,7 +39,7 @@ struct LauncherSettingsView: View {
                 }.padding(8)
             }
 
-            AIChatSettingsView(store: aiChat)
+            if modules.isEnabled(.aiChat) { AIChatSettingsView(store: aiChat) }
 
             GroupBox("Поиск файлов") {
                 VStack(alignment: .leading, spacing: 10) {
@@ -63,32 +64,34 @@ struct LauncherSettingsView: View {
                 }.padding(8)
             }
 
-            GroupBox("История буфера обмена") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Toggle("Сохранять текст и изображения", isOn: $settings.clipboardEnabled)
-                        .font(.system(size: 12))
-                    Text("Хранится только на этом Mac. Выключение удаляет историю. Скрытые и служебные записи не сохраняются.")
-                        .font(.caption).foregroundStyle(NotchPalette.secondary)
-                    if settings.clipboardEnabled {
-                        Picker("Лимит записей", selection: $settings.clipboardLimit) {
-                            ForEach([50, 100, 200, 500], id: \.self) { Text("\($0)").tag($0) }
-                        }
-                        Picker("Хранить", selection: $settings.retentionDays) {
-                            Text("1 день").tag(1)
-                            Text("7 дней").tag(7)
-                            Text("30 дней").tag(30)
-                        }
-                        Text("До 5 МБ на запись, до 50 МБ всего. Enter копирует; ⌘ Enter вставляет в предыдущее приложение.")
+            if modules.isEnabled(.clipboard) {
+                GroupBox("История буфера обмена") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle("Сохранять текст и изображения", isOn: $settings.clipboardEnabled)
+                            .font(.system(size: 12))
+                        Text("Хранится только на этом Mac. Выключение удаляет историю. Скрытые и служебные записи не сохраняются.")
                             .font(.caption).foregroundStyle(NotchPalette.secondary)
-                    }
-                    HStack {
-                        Text("Записей: \(clipboard.items.count)").font(.caption).foregroundStyle(NotchPalette.secondary).monospacedDigit()
-                        Spacer()
-                        Button("Очистить историю") { clipboard.clear() }
-                            .disabled(clipboard.items.isEmpty)
-                    }
-                    if let error = clipboard.errorMessage { Text(error).font(.caption).foregroundStyle(.orange) }
-                }.padding(8)
+                        if settings.clipboardEnabled {
+                            Picker("Лимит записей", selection: $settings.clipboardLimit) {
+                                ForEach([50, 100, 200, 500], id: \.self) { Text("\($0)").tag($0) }
+                            }
+                            Picker("Хранить", selection: $settings.retentionDays) {
+                                Text("1 день").tag(1)
+                                Text("7 дней").tag(7)
+                                Text("30 дней").tag(30)
+                            }
+                            Text("До 5 МБ на запись, до 50 МБ всего. Enter копирует; ⌘ Enter вставляет в предыдущее приложение.")
+                                .font(.caption).foregroundStyle(NotchPalette.secondary)
+                        }
+                        HStack {
+                            Text("Записей: \(clipboard.items.count)").font(.caption).foregroundStyle(NotchPalette.secondary).monospacedDigit()
+                            Spacer()
+                            Button("Очистить историю") { clipboard.clear() }
+                                .disabled(clipboard.items.isEmpty)
+                        }
+                        if let error = clipboard.errorMessage { Text(error).font(.caption).foregroundStyle(.orange) }
+                    }.padding(8)
+                }
             }
         }
         .groupBoxStyle(LauncherSettingsGroupStyle())

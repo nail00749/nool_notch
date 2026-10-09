@@ -5,6 +5,7 @@ struct DownloadSnapshot: Equatable, Sendable {
     let title: String
     let byteCount: Int64
     let finalFileExists: Bool
+    var modifiedAt: Date? = nil
 }
 
 struct DownloadActivityTracker: Sendable {
@@ -12,6 +13,7 @@ struct DownloadActivityTracker: Sendable {
         let snapshot: DownloadSnapshot
         let startedAt: Date
         let observedAt: Date
+        let lastChangedAt: Date
         var completedAt: Date?
     }
 
@@ -31,6 +33,7 @@ struct DownloadActivityTracker: Sendable {
                     snapshot: snapshot,
                     startedAt: now,
                     observedAt: hasSeeded ? now : now.addingTimeInterval(-12),
+                    lastChangedAt: min(snapshot.modifiedAt ?? now, now),
                     completedAt: nil
                 )
             } else if var record = records[id], record.completedAt == nil {
@@ -38,6 +41,9 @@ struct DownloadActivityTracker: Sendable {
                     snapshot: snapshot,
                     startedAt: record.startedAt,
                     observedAt: record.observedAt,
+                    lastChangedAt: snapshot.byteCount != record.snapshot.byteCount
+                        || snapshot.modifiedAt != record.snapshot.modifiedAt
+                        ? now : record.lastChangedAt,
                     completedAt: nil
                 )
                 records[id] = record
@@ -52,7 +58,7 @@ struct DownloadActivityTracker: Sendable {
             return now.timeIntervalSince(completedAt) < 12
         }
 
-        return records.values.map { record in
+        return records.values.compactMap { record in
             if let completedAt = record.completedAt {
                 return LiveActivity(
                     id: "download-\(record.snapshot.id)", sourceID: "system-downloads",
@@ -62,6 +68,9 @@ struct DownloadActivityTracker: Sendable {
                     endsAt: completedAt, updatedAt: completedAt, isCompactEligible: true
                 )
             }
+            // A leftover partial file is not evidence of an ongoing transfer.
+            // Keep its record so that renewed writes can reactivate it.
+            guard now.timeIntervalSince(record.lastChangedAt) < 120 else { return nil }
             let elapsed = LiveActivityClock.elapsedText(from: record.startedAt, to: now)
             return LiveActivity(
                 id: "download-\(record.snapshot.id)", sourceID: "system-downloads",
@@ -133,7 +142,7 @@ final class SystemDownloadActivitySource: LiveActivitySource {
         _ directory: URL,
         previous: [DownloadSnapshot]
     ) -> [DownloadSnapshot] {
-        let keys: Set<URLResourceKey> = [.fileSizeKey, .isRegularFileKey, .isDirectoryKey]
+        let keys: Set<URLResourceKey> = [.fileSizeKey, .isRegularFileKey, .isDirectoryKey, .contentModificationDateKey]
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles]
         ) else { return [] }
@@ -147,7 +156,8 @@ final class SystemDownloadActivitySource: LiveActivitySource {
             return DownloadSnapshot(
                 id: url.path, title: title,
                 byteCount: Int64(values.fileSize ?? 0),
-                finalFileExists: FileManager.default.fileExists(atPath: finalURL.path)
+                finalFileExists: FileManager.default.fileExists(atPath: finalURL.path),
+                modifiedAt: values.contentModificationDate
             )
         }
         let activeIDs = Set(active.map(\.id))

@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Этот файл — оперативный контекст для разработчиков и coding agents. Читай его
-перед изменениями в Nool Notch. Пользовательская документация находится в
+перед изменениями в NooL App. Пользовательская документация находится в
 `README.md`, история изменений — в `CHANGELOG.md`, а публикация релиза — в
 `DEPLOY.md`.
 
@@ -16,7 +16,7 @@ xcrun swift build
 ./scripts/run-app.sh
 ```
 
-`run-app.sh` собирает `Build/NotchApp.app`, подписывает его, завершает старый
+`run-app.sh` собирает `Build/NooL App.app`, подписывает его, завершает старый
 процесс и запускает новый bundle. Если стабильного сертификата нет, ad-hoc
 подпись разрешается только явно:
 
@@ -38,7 +38,7 @@ target, не отдельные Swift-модули. Shared не зависит �
   отдельный coordinator владеет окном и ждёт завершения отмены при выходе.
 - `Sources/NotchApp/Features/WindowLayouts` — геометрия, сохранение и AX-управление
   окнами; Accessibility запрашивается только явным действием пользователя.
-- `Sources/NotchApp/Features/Dock` — дополнительная панель Nool Dock.
+- `Sources/NotchApp/Features/Dock` — дополнительная панель NooL Dock.
 - `Sources/NotchApp/Features/TextRecognition` — локальный OCR изображений и
   PDF через Vision, ограниченное чтение вне main actor, отмена запроса при
   закрытии окна; AI получает только явно подготовленный черновик.
@@ -177,7 +177,7 @@ PR/CI не хранит и не логирует forge credentials. Для GitHu
   неразбираемый конфиг. Managed entry определяется только по
   `nool-agent-bridge`.
 - После изменений проверяй отдельно read-only discovery, blocking approval и
-  fallback при закрытом Nool: сбой bridge не должен блокировать CLI навсегда.
+  fallback при закрытом NooL App: сбой bridge не должен блокировать CLI навсегда.
 
 ### Live Activities
 

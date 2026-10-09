@@ -9,6 +9,7 @@ final class MemoryAppPreferences: AppPreferencesStoring {
     var panelOrder: [PanelID]
     var hiddenPanelIDs: Set<PanelID>
     var startupPanel: PanelID?
+    var opensOverviewOnExpansion = false
     var selectedAISection: AISection
     var hasCompletedPanelSwipe: Bool
     var quotaProviderOrder: [String]
@@ -68,6 +69,7 @@ final class MemoryAISessionSource: AISessionSource {
     var openResult = true
     private(set) var openedSessionIDs: [String] = []
     private var continuation: AsyncStream<AISessionSourceSnapshot>.Continuation?
+    private(set) var subscriptionCount = 0
 
     init(id: String = "memory-ai") {
         self.id = id
@@ -75,7 +77,8 @@ final class MemoryAISessionSource: AISessionSource {
     }
 
     func snapshots() -> AsyncStream<AISessionSourceSnapshot> {
-        AsyncStream { continuation in
+        subscriptionCount += 1
+        return AsyncStream { continuation in
             self.continuation = continuation
         }
     }

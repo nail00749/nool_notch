@@ -74,6 +74,27 @@ final class OllamaUsageTests: XCTestCase {
         XCTAssertEqual(snapshots[0], snapshots[1])
         XCTAssertEqual(snapshots[0].windows.first?.remaining, 90)
     }
+
+    func testCancelledReloadDoesNotReplaceLastSuccessfulUsage() async {
+        let page = FixtureOllamaPage()
+        let reader = OllamaUsageReader()
+        let first = await reader.loadSnapshot(from: page)
+
+        page.serverBody = "Session 10% resets in 1 hour Weekly 20% resets in 2 days"
+        page.suspendReload = true
+        let cancelled = Task { await reader.loadSnapshot(from: page) }
+        for _ in 0..<100 where page.reloadContinuation == nil { await Task.yield() }
+        reader.cancel()
+        page.suspendReload = false
+        page.reloadContinuation?.resume()
+        page.reloadContinuation = nil
+        _ = await cancelled.value
+
+        page.reloadError = URLError(.timedOut)
+        let stale = await reader.loadSnapshot(from: page)
+        XCTAssertEqual(stale.connection, .stale)
+        XCTAssertEqual(stale.windows, first.windows)
+    }
 }
 
 @MainActor

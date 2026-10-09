@@ -121,7 +121,7 @@ final class NoolDockIntegrationTests: XCTestCase {
                                                     openSettings: {}, openLauncher: {})
         defer { coordinator.stop() }
         coordinator.start()
-        let panel = try XCTUnwrap(NSApp.windows.first { $0.title == "Nool Dock" })
+        let panel = try XCTUnwrap(NSApp.windows.first { $0.title == "NooL Dock" })
         XCTAssertFalse(panel.isVisible)
         settings.isEnabled = true
         panel.contentView?.layoutSubtreeIfNeeded()
@@ -136,7 +136,7 @@ final class NoolDockIntegrationTests: XCTestCase {
         XCTAssertEqual(panel.contentView?.frame.width ?? 0, panel.frame.width, accuracy: 1)
         settings.isEnabled = false
         XCTAssertFalse(panel.isVisible)
-        XCTAssertFalse(NSApp.windows.first { $0.title == "Показать Nool Dock" }?.isVisible ?? true)
+        XCTAssertFalse(NSApp.windows.first { $0.title == "Показать NooL Dock" }?.isVisible ?? true)
     }
 
     @MainActor

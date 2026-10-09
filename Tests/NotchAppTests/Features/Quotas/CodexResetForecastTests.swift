@@ -114,7 +114,7 @@ final class CodexResetForecastTests: XCTestCase {
             CodexResetForecastVisibility.shouldLoad(
                 isExpanded: true,
                 selectedPanel: .live,
-                selectedAISection: .limits,
+                isForecastExpanded: true,
                 isShowingSettings: false,
                 isUtilityPresented: false,
                 isChatGPTProviderVisible: true
@@ -124,12 +124,25 @@ final class CodexResetForecastTests: XCTestCase {
             CodexResetForecastVisibility.shouldLoad(
                 isExpanded: true,
                 selectedPanel: .ai,
-                selectedAISection: .limits,
+                isForecastExpanded: true,
                 isShowingSettings: false,
                 isUtilityPresented: false,
                 isChatGPTProviderVisible: true
             )
         )
+    }
+
+    func testForecastLoadsOnlyWhenDetailsAreExpanded() {
+        for expanded in [false, true] {
+            XCTAssertEqual(CodexResetForecastVisibility.shouldLoad(
+                isExpanded: true,
+                selectedPanel: .ai,
+                isForecastExpanded: expanded,
+                isShowingSettings: false,
+                isUtilityPresented: false,
+                isChatGPTProviderVisible: true
+            ), expanded)
+        }
     }
 
     @MainActor

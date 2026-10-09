@@ -9,6 +9,7 @@ final class QuotaWidgetPublisher {
     private let queue = DispatchQueue(label: "com.nailuyltyev.NotchApp.quota-widget", qos: .utility)
     private var monitorTask: Task<Void, Never>?
     private var stopped = false
+    private var suspended = false
     private var lastProviders: [QuotaWidgetProvider]?
     private let reload: @Sendable () -> Void
 
@@ -42,10 +43,11 @@ final class QuotaWidgetPublisher {
 
     func start(refresh: @escaping @MainActor () -> Void) {
         guard monitorTask == nil, !stopped else { return }
+        suspended = false
         monitorTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 let installed = await Self.hasInstalledWidget()
-                guard !Task.isCancelled, self?.stopped == false else { return }
+                guard !Task.isCancelled, self?.stopped == false, self?.suspended == false else { return }
                 if installed {
                     refresh()
                 }
@@ -55,7 +57,7 @@ final class QuotaWidgetPublisher {
     }
 
     func publish(_ providers: [QuotaWidgetProvider]) {
-        guard !stopped, lastProviders != providers else { return }
+        guard !stopped, !suspended, lastProviders != providers else { return }
         lastProviders = providers
         let snapshot = QuotaWidgetData(providers: providers)
         let url = fileURL
@@ -72,6 +74,11 @@ final class QuotaWidgetPublisher {
 
     func stop() {
         stopped = true
+        suspend()
+    }
+
+    func suspend() {
+        suspended = true
         monitorTask?.cancel()
         monitorTask = nil
     }

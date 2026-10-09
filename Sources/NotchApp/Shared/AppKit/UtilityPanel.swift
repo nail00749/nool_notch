@@ -11,7 +11,8 @@ final class UtilityPanel: TextEditingPanel {
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
         minSize = minimumSize
-        appearance = NSAppearance(named: .darkAqua)
-        backgroundColor = NSColor(NotchPalette.surface)
+        // Inherit the system appearance so utility windows follow macOS Light/Dark mode.
+        appearance = nil
+        backgroundColor = .windowBackgroundColor
     }
 }

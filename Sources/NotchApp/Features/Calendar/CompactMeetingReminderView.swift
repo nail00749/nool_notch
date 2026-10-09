@@ -28,8 +28,8 @@ struct CompactMeetingReminderView: View {
             } else {
                 Button(action: onOpenCalendar) {
                     Text(reminder.event.title)
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.7))
+                        .font(.system(size: 10, weight: .medium, design: .default))
+                        .foregroundStyle(NotchPalette.text.opacity(0.7))
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .contentShape(Rectangle())
@@ -44,7 +44,7 @@ struct CompactMeetingReminderView: View {
                 Group {
                     if reminder.event.joinURL != nil {
                         Text("Войти")
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .font(.system(size: 10, weight: .semibold, design: .default))
                     } else {
                         Image(systemName: "calendar")
                             .font(.system(size: 12, weight: .semibold))

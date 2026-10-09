@@ -69,6 +69,7 @@ protocol AppPreferencesStoring: AnyObject {
     var panelOrder: [PanelID] { get set }
     var hiddenPanelIDs: Set<PanelID> { get set }
     var startupPanel: PanelID? { get set }
+    var opensOverviewOnExpansion: Bool { get set }
     var selectedAISection: AISection { get set }
     var hasCompletedPanelSwipe: Bool { get set }
     var quotaProviderOrder: [String] { get set }
@@ -193,6 +194,11 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
                 defaults.removeObject(forKey: Self.startupPanelKey)
             }
         }
+    }
+
+    var opensOverviewOnExpansion: Bool {
+        get { defaults.bool(forKey: "navigation.opensOverviewOnExpansion") }
+        set { defaults.set(newValue, forKey: "navigation.opensOverviewOnExpansion") }
     }
 
     var selectedAISection: AISection {

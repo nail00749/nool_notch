@@ -47,7 +47,6 @@ struct FileActionsView: View {
         .background(NotchPalette.surface)
         .foregroundStyle(NotchPalette.text)
         .tint(NotchPalette.accent)
-        .preferredColorScheme(.dark)
     }
 
     private var header: some View {
@@ -60,7 +59,7 @@ struct FileActionsView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Действия с файлами")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .font(.system(size: 18, weight: .bold, design: .default))
                 Text(store.selectionSummary)
                     .font(.system(size: 12))
                     .foregroundStyle(NotchPalette.secondary)
@@ -84,7 +83,7 @@ struct FileActionsView: View {
                     ForEach(Array(store.inputURLs.enumerated()), id: \.element) { index, url in
                         HStack(spacing: 9) {
                             Text("\(index + 1)")
-                                .font(.system(size: 10, weight: .bold, design: .rounded))
+                                .font(.system(size: 10, weight: .bold, design: .default))
                                 .foregroundStyle(NotchPalette.secondary)
                                 .frame(width: 20, height: 20)
                                 .background(NotchPalette.surface.opacity(0.72), in: Circle())
@@ -182,7 +181,7 @@ struct FileActionsView: View {
                     .tint(NotchPalette.accent)
                     .accessibilityLabel("Качество JPEG")
                 Text("\(Int(store.options.jpegQuality * 100))%")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(.system(size: 12, weight: .semibold, design: .default))
                     .foregroundStyle(NotchPalette.text)
                     .frame(width: 38, alignment: .trailing)
             }

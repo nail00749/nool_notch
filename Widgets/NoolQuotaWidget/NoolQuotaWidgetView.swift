@@ -269,8 +269,8 @@ private enum NoolQuotaWidgetEmptyState {
 
     var title: String {
         switch self {
-        case .noData: "Откройте Nool"
-        case .sourceDisabled: "Включите источник в Nool"
+        case .noData: "Откройте NooL App"
+        case .sourceDisabled: "Включите источник в NooL App"
         }
     }
 
@@ -283,8 +283,8 @@ private enum NoolQuotaWidgetEmptyState {
 
     var accessibilityLabel: String {
         switch self {
-        case .noData: "Откройте Nool, чтобы обновить лимиты"
-        case .sourceDisabled: "Включите выбранный источник лимитов в Nool"
+        case .noData: "Откройте NooL App, чтобы обновить лимиты"
+        case .sourceDisabled: "Включите выбранный источник лимитов в NooL App"
         }
     }
 }

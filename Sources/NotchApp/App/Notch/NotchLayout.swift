@@ -57,33 +57,45 @@ struct NotchLayoutMetrics: Equatable {
     }
 
     var expandedSize: CGSize {
-        CGSize(
-            width: NotchLayout.expandedContentSize.width,
-            height: NotchLayout.expandedContentSize.height + physicalNotchSize.height
-        )
+        expandedSize(width: nil)
+    }
+
+    func expandedSize(width: CGFloat?) -> CGSize {
+        CGSize(width: width ?? NotchLayout.expandedContentSize.width,
+               height: NotchLayout.expandedContentSize.height + physicalNotchSize.height)
     }
 
     var expandedMusicSize: CGSize {
+        expandedMusicSize(width: nil)
+    }
+
+    func expandedMusicSize(width: CGFloat?) -> CGSize {
         let hasPhysicalNotch = physicalNotchSize.width > 0 && physicalNotchSize.height > 0
         return CGSize(
-            width: NotchLayout.expandedContentSize.width,
+            width: width ?? NotchLayout.expandedContentSize.width,
             height: hasPhysicalNotch ? 380 : 404
         )
     }
 
     var expandedCalendarSize: CGSize {
-        CGSize(
-            width: NotchLayout.expandedCalendarContentSize.width,
-            height: NotchLayout.expandedCalendarContentSize.height + physicalNotchSize.height
-        )
+        expandedCalendarSize(width: nil)
+    }
+
+    func expandedCalendarSize(width: CGFloat?) -> CGSize {
+        CGSize(width: width ?? NotchLayout.expandedCalendarContentSize.width,
+               height: NotchLayout.expandedCalendarContentSize.height + physicalNotchSize.height)
     }
 
     var expandedHeaderWingWidth: CGFloat? {
+        expandedHeaderWingWidth(width: nil)
+    }
+
+    func expandedHeaderWingWidth(width: CGFloat?) -> CGFloat? {
         guard physicalNotchSize.width > 0, physicalNotchSize.height > 0 else {
             return nil
         }
 
-        let availableWidth = expandedSize.width - physicalNotchSize.width
+        let availableWidth = (width ?? expandedSize.width) - physicalNotchSize.width
         guard availableWidth > 0 else { return nil }
         return availableWidth / 2
     }
@@ -104,6 +116,9 @@ enum NotchLayout {
     static let expandedContentSize = CGSize(width: 500, height: 300)
     static let expandedCalendarContentSize = CGSize(width: 500, height: 460)
     static let expandedTopPadding: CGFloat = 24
+    static let expandedSideControlLaneWidth: CGFloat = 60
+    static let expandedSideControlButtonSize: CGFloat = 42
+    static let expandedSideControlSpacing: CGFloat = 10
 
     static var physicalNotchSize: CGSize { currentMetrics.physicalNotchSize }
     static var compactSize: CGSize { currentMetrics.compactSize }
@@ -188,7 +203,10 @@ enum NotchWindowSizingPolicy {
         compactHeight: CGFloat = NotchLayout.defaultCompactHeight,
         isPlaying: Bool = true,
         showsAgentMascot: Bool = false,
-        isHovered: Bool = false
+        isHovered: Bool = false,
+        expandedWidth: CGFloat? = nil,
+        maxExpandedHeight: CGFloat? = nil,
+        activeUtility: NotchUtilityPanel? = nil
     ) -> CGSize {
         guard isExpanded else {
             return compactInteractionSize(
@@ -199,15 +217,69 @@ enum NotchWindowSizingPolicy {
                 isHovered: isHovered
             )
         }
-        guard isShowingSettings == false else { return metrics.expandedSize }
+        let expandedSize: CGSize
+        guard isShowingSettings == false else {
+            expandedSize = metrics.expandedSize(width: expandedWidth)
+            return Self.clampHeight(expandedSize, maximum: maxExpandedHeight)
+        }
 
-        if selectedPanel == .live || selectedPanel == .music || selectedPanel == .jira {
-            return metrics.expandedMusicSize
+        if activeUtility == .overview || activeUtility == .scratchpad || activeUtility == .recentCaptures {
+            expandedSize = CGSize(width: expandedWidth ?? metrics.expandedSize.width, height: 420)
+        } else if selectedPanel == .ai {
+            expandedSize = CGSize(width: expandedWidth ?? metrics.expandedSize.width, height: 440)
+        } else if selectedPanel == .live {
+            expandedSize = CGSize(width: expandedWidth ?? metrics.expandedSize.width, height: 300)
+        } else if selectedPanel == .music || selectedPanel == .jira {
+            expandedSize = metrics.expandedMusicSize(width: expandedWidth)
+        } else if selectedPanel == .calendar, calendarViewMode == .month {
+            expandedSize = metrics.expandedCalendarSize(width: expandedWidth)
+        } else {
+            expandedSize = metrics.expandedSize(width: expandedWidth)
         }
-        if selectedPanel == .calendar, calendarViewMode == .month {
-            return metrics.expandedCalendarSize
-        }
-        return metrics.expandedSize
+        return Self.clampHeight(expandedSize, maximum: maxExpandedHeight)
+    }
+
+    /// Outer NSPanel size. The expanded content remains centered at its existing
+    /// width while the reserved side lanes host the animated round controls.
+    static func panelSize(
+        metrics: NotchLayoutMetrics,
+        isExpanded: Bool,
+        selectedPanel: PanelID,
+        calendarViewMode: CalendarViewMode,
+        isShowingSettings: Bool,
+        compactHeight: CGFloat = NotchLayout.defaultCompactHeight,
+        isPlaying: Bool = true,
+        showsAgentMascot: Bool = false,
+        isHovered: Bool = false,
+        expandedWidth: CGFloat? = nil,
+        maxExpandedHeight: CGFloat? = nil,
+        hasSideControls: Bool = true,
+        activeUtility: NotchUtilityPanel? = nil
+    ) -> CGSize {
+        let contentSize = size(
+            metrics: metrics,
+            isExpanded: isExpanded,
+            selectedPanel: selectedPanel,
+            calendarViewMode: calendarViewMode,
+            isShowingSettings: isShowingSettings,
+            compactHeight: compactHeight,
+            isPlaying: isPlaying,
+            showsAgentMascot: showsAgentMascot,
+            isHovered: isHovered,
+            expandedWidth: expandedWidth,
+            maxExpandedHeight: maxExpandedHeight,
+            activeUtility: activeUtility
+        )
+        guard isExpanded, isShowingSettings == false else { return contentSize }
+        let sideControlWidth = hasSideControls
+            ? NotchLayout.expandedSideControlLaneWidth * 2
+            : 0
+        return CGSize(width: contentSize.width + sideControlWidth, height: contentSize.height)
+    }
+
+    private static func clampHeight(_ size: CGSize, maximum: CGFloat?) -> CGSize {
+        guard let maximum, maximum.isFinite, maximum > 0 else { return size }
+        return CGSize(width: size.width, height: min(size.height, maximum))
     }
 }
 

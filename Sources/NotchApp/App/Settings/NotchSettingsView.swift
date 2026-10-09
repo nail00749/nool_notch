@@ -4,6 +4,11 @@ import SwiftUI
 
 enum NotchSettingsSection: String, CaseIterable, Identifiable {
     case general
+    case notch
+    case modules
+    case gestures
+    case lidEffect
+    case systemMonitor
     case launcher
     case dock
     case displays
@@ -18,8 +23,13 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: "Основные"
+        case .notch: "Чёлка"
+        case .modules: "Модули"
+        case .gestures: "Жесты"
+        case .lidEffect: "Крышка MacBook"
+        case .systemMonitor: "Мониторинг"
         case .launcher: "Launcher"
-        case .dock: "Nool Dock"
+        case .dock: "NooL Dock"
         case .displays: "Дисплеи"
         case .updates: "Обновления"
         case .limits: "Лимиты"
@@ -32,6 +42,11 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .general: "Поведение и оформление"
+        case .notch: "Макет, панели и активности"
+        case .modules: "Выберите нужные функции"
+        case .gestures: "Громкость и действия на чёлке"
+        case .lidEffect: "Размытие и затемнение экрана"
+        case .systemMonitor: "CPU, память, диск и сеть"
         case .launcher: "Поиск и буфер обмена"
         case .dock: "Приложения и виджеты"
         case .displays: "Экран и отдельные размеры"
@@ -46,6 +61,11 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
     var iconName: String {
         switch self {
         case .general: "slider.horizontal.3"
+        case .notch: "rectangle.topthird.inset.filled"
+        case .modules: "square.grid.2x2"
+        case .gestures: "hand.draw"
+        case .lidEffect: "laptopcomputer"
+        case .systemMonitor: "chart.xyaxis.line"
         case .launcher: "magnifyingglass"
         case .dock: "dock.rectangle"
         case .displays: "display.2"
@@ -56,15 +76,50 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         case .jira: "checkmark.square"
         }
     }
+
+    var moduleID: AppModuleID? {
+        switch self {
+        case .gestures: .gestures
+        case .lidEffect: .lidEffect
+        case .systemMonitor: .systemMonitor
+        case .dock: .dock
+        case .limits: .quotas
+        case .integrations: .agentInbox
+        case .music: .music
+        case .jira: .jira
+        case .general, .notch, .modules, .launcher, .displays, .updates: nil
+        }
+    }
+
+    static func settingsSection(for module: AppModuleID) -> NotchSettingsSection? {
+        switch module {
+        case .aiChat, .clipboard: .launcher
+        case .agentInbox: .integrations
+        case .quotas: .limits
+        case .music: .music
+        case .jira: .jira
+        case .systemMonitor: .systemMonitor
+        case .dock: .dock
+        case .lidEffect: .lidEffect
+        case .gestures: .gestures
+        case .calendar, .liveActivities, .fileShelf, .textRecognition,
+             .networkTools, .windowManagement, .scratchpad, .recentCaptures: nil
+        }
+    }
 }
 
 struct NotchSettingsView: View {
+    @ObservedObject private var appearanceSettings = AppAppearanceSettings.shared
+    @ObservedObject private var modules: AppModuleStore
     @ObservedObject var model: NotchViewModel
     @ObservedObject var settings: NotchVisualSettings
+    @ObservedObject var customizationSettings: NotchCustomizationSettings
     @ObservedObject var displaySettings: NotchDisplaySettings
     @ObservedObject var launchAtLogin: LaunchAtLoginManager
     let launcher: LauncherWindowCoordinator
     @ObservedObject var dockSettings: NoolDockSettings
+    let lidEffect: LidEffectController
+    let systemMonitor: SystemMonitorStore
 
     @State private var selectedSection: NotchSettingsSection
     @State private var swipeTranslation: CGFloat = 0
@@ -81,22 +136,37 @@ struct NotchSettingsView: View {
             : .interpolatingSpring(stiffness: 260, damping: 32)
     }
 
+    private var visibleSections: [NotchSettingsSection] {
+        NotchSettingsSection.allCases.filter { section in
+            section.moduleID.map(modules.isEnabled) ?? true
+        }
+    }
+
     init(
         model: NotchViewModel,
         settings: NotchVisualSettings,
+        customizationSettings: NotchCustomizationSettings,
         displaySettings: NotchDisplaySettings,
         launchAtLogin: LaunchAtLoginManager,
         launcher: LauncherWindowCoordinator,
         dockSettings: NoolDockSettings,
+        lidEffect: LidEffectController,
+        systemMonitor: SystemMonitorStore,
         initialSection: NotchSettingsSection = .general
     ) {
         self.model = model
+        self.modules = model.modules
         self.settings = settings
+        self.customizationSettings = customizationSettings
         self.displaySettings = displaySettings
         self.launchAtLogin = launchAtLogin
         self.launcher = launcher
         self.dockSettings = dockSettings
-        _selectedSection = State(initialValue: initialSection)
+        self.lidEffect = lidEffect
+        self.systemMonitor = systemMonitor
+        let availableSection = initialSection.moduleID.map(model.modules.isEnabled) == false
+            ? NotchSettingsSection.modules : initialSection
+        _selectedSection = State(initialValue: availableSection)
     }
 
     var body: some View {
@@ -108,17 +178,17 @@ struct NotchSettingsView: View {
                 .frame(width: 1)
 
             SwipeCarousel(
-                items: NotchSettingsSection.allCases,
+                items: visibleSections,
                 selection: selectedSection,
                 translation: swipeTranslation,
-                retainedRadius: NotchSettingsSection.allCases.count
+                retainedRadius: visibleSections.count
             ) { section in
                 sectionPage(section)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(width: 560, height: 520)
-        .background(NotchPalette.surface)
+        .frame(minWidth: 780, idealWidth: 880, minHeight: 620, idealHeight: 740)
+        .background(.regularMaterial)
         .foregroundStyle(NotchPalette.text)
         .tint(NotchPalette.accent)
         .background {
@@ -128,13 +198,29 @@ struct NotchSettingsView: View {
                 onEnded: finishSwipe
             )
         }
-        .preferredColorScheme(.dark)
-        .onChange(of: selectedSection) { _, _ in launcher.settings.isRecordingShortcut = false }
+        .onChange(of: selectedSection) { old, new in
+            launcher.settings.isRecordingShortcut = false
+            if old == .lidEffect { lidEffect.cancelPreview() }
+            if old == .integrations { codeReviewIntegrations.stop() }
+            if new == .integrations { refreshCodeReviewIntegrations() }
+        }
+        .onChange(of: modules.enabledModules) { _, _ in
+            if !modules.isEnabled(.agentInbox) { codeReviewIntegrations.stop() }
+            if let moduleID = selectedSection.moduleID, !modules.isEnabled(moduleID) {
+                swipeTranslation = 0
+                selectedSection = .modules
+            }
+        }
         .onAppear {
             launchAtLogin.refresh()
-            model.refreshAllQuotaProviders()
-            model.refreshNowPlaying()
+            if let moduleID = selectedSection.moduleID, !modules.isEnabled(moduleID) {
+                selectedSection = .modules
+            }
+            if modules.isEnabled(.quotas) { model.refreshAllQuotaProviders() }
+            if modules.isEnabled(.music) { model.refreshNowPlaying() }
+            if selectedSection == .integrations { refreshCodeReviewIntegrations() }
         }
+        .onDisappear { codeReviewIntegrations.stop() }
     }
 
     private func selectSection(_ section: NotchSettingsSection) {
@@ -177,7 +263,7 @@ struct NotchSettingsView: View {
     }
 
     private func targetSection(_ direction: HorizontalSwipeDirection) -> NotchSettingsSection? {
-        let sections = NotchSettingsSection.allCases
+        let sections = visibleSections
         guard let currentIndex = sections.firstIndex(of: selectedSection) else { return nil }
 
         let nextIndex = direction == .next ? currentIndex + 1 : currentIndex - 1
@@ -204,15 +290,15 @@ struct NotchSettingsView: View {
             HStack(spacing: 10) {
                 Image(systemName: "rectangle.topthird.inset.filled")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.black)
+                    .foregroundStyle(.white)
                     .frame(width: 34, height: 34)
                     .background(NotchPalette.accent, in: RoundedRectangle(cornerRadius: 10))
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("NotchApp")
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    Text("NooL App")
+                        .font(.system(size: 14, weight: .semibold))
                     Text("Настройки")
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(NotchPalette.secondary)
                 }
             }
@@ -220,7 +306,7 @@ struct NotchSettingsView: View {
 
             ScrollView {
                 VStack(spacing: 6) {
-                    ForEach(NotchSettingsSection.allCases) { section in
+                    ForEach(visibleSections) { section in
                         sidebarButton(section)
                     }
                 }
@@ -232,8 +318,8 @@ struct NotchSettingsView: View {
             Button {
                 NSApplication.shared.terminate(nil)
             } label: {
-                Label("Выйти из NotchApp", systemImage: "power")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                Label("Выйти из NooL App", systemImage: "power")
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Color.signalCoral)
                     .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
                     .padding(.horizontal, 11)
@@ -243,7 +329,7 @@ struct NotchSettingsView: View {
         .padding(16)
         .frame(width: 172)
         .frame(maxHeight: .infinity, alignment: .topLeading)
-        .background(NotchPalette.raised.opacity(0.35))
+        .background(.thinMaterial)
     }
 
     private func sidebarButton(_ section: NotchSettingsSection) -> some View {
@@ -252,12 +338,12 @@ struct NotchSettingsView: View {
             selectSection(section)
         } label: {
             Label(section.title, systemImage: section.iconName)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(isSelected ? NotchPalette.accent : NotchPalette.secondary)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isSelected ? NotchPalette.text : NotchPalette.secondary)
                 .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
                 .padding(.horizontal, 11)
                 .background(
-                    isSelected ? NotchPalette.raised : .clear,
+                    isSelected ? NotchPalette.accent.opacity(0.12) : .clear,
                     in: RoundedRectangle(cornerRadius: 11, style: .continuous)
                 )
         }
@@ -268,10 +354,10 @@ struct NotchSettingsView: View {
     private func pageHeader(_ section: NotchSettingsSection) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(section.title)
-                .font(.system(size: 23, weight: .semibold, design: .rounded))
+                .font(.system(size: 23, weight: .semibold))
                 .foregroundStyle(NotchPalette.text)
             Text(section.subtitle)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(NotchPalette.secondary)
         }
         .padding(.horizontal, 24)
@@ -281,30 +367,50 @@ struct NotchSettingsView: View {
 
     @ViewBuilder
     private func sectionContent(_ section: NotchSettingsSection) -> some View {
-        switch section {
-        case .general:
-            generalPage
-        case .launcher:
-            LauncherSettingsView(settings: launcher.settings, clipboard: launcher.model.clipboard,
-                                 aiChat: launcher.model.aiChat, open: launcher.show)
-        case .dock:
-            NoolDockSettingsView(settings: dockSettings)
-        case .displays:
-            displaysPage
-        case .updates:
-            updatesPage
-        case .limits:
-            limitsPage
-        case .integrations:
-            integrationsPage
-        case .music:
-            musicPage
-        case .jira:
-            VStack(spacing: 12) {
-                SettingsCard(title: "Подключение", icon: "key.horizontal") {
-                    JiraConnectionSettingsView(model: model)
+        if let moduleID = section.moduleID, !modules.isEnabled(moduleID) {
+            EmptyView()
+        } else {
+            switch section {
+            case .general:
+                generalPage
+            case .notch:
+                NotchCustomizationSettingsView(
+                    settings: customizationSettings,
+                    model: model,
+                    modules: modules,
+                    displaySettings: displaySettings,
+                    gestureSettings: .shared
+                )
+            case .modules:
+                AppModulesSettingsView(modules: modules, openSettings: selectSection)
+            case .gestures:
+                NotchGestureSettingsView(settings: .shared)
+            case .lidEffect:
+                LidEffectSettingsView(controller: lidEffect)
+            case .systemMonitor:
+                SystemMonitorSettingsView(store: systemMonitor)
+            case .launcher:
+                LauncherSettingsView(modules: modules, settings: launcher.settings, clipboard: launcher.model.clipboard,
+                                     aiChat: launcher.model.aiChat, open: launcher.show)
+            case .dock:
+                NoolDockSettingsView(settings: dockSettings)
+            case .displays:
+                displaysPage
+            case .updates:
+                updatesPage
+            case .limits:
+                limitsPage
+            case .integrations:
+                integrationsPage
+            case .music:
+                musicPage
+            case .jira:
+                VStack(spacing: 12) {
+                    SettingsCard(title: "Подключение", icon: "key.horizontal") {
+                        JiraConnectionSettingsView(model: model)
+                    }
+                    JiraPinnedSettingsView(model: model)
                 }
-                JiraPinnedSettingsView(model: model)
             }
         }
     }
@@ -313,7 +419,7 @@ struct NotchSettingsView: View {
         VStack(spacing: 12) {
             SettingsCard(title: "Расположение", icon: "display.2") {
                 VStack(alignment: .leading, spacing: 10) {
-                    Picker("Показывать Nool", selection: displayModeBinding) {
+                    Picker("Показывать NooL App", selection: displayModeBinding) {
                         ForEach(NotchDisplayMode.allCases) { mode in
                             Text(mode.title).tag(mode)
                         }
@@ -346,7 +452,7 @@ struct NotchSettingsView: View {
                     Text(displayModeHint)
                         .settingsHintStyle()
                 }
-                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .font(.system(size: 12, weight: .medium))
                 .tint(NotchPalette.accent)
             }
 
@@ -371,7 +477,7 @@ struct NotchSettingsView: View {
                             .settingsHintStyle()
                     }
                 }
-                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .font(.system(size: 12, weight: .medium))
                 .tint(NotchPalette.accent)
             }
         }
@@ -428,11 +534,11 @@ struct NotchSettingsView: View {
                 SettingsCard(title: "Что нового", icon: "sparkles") {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(release.title)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(NotchPalette.text.opacity(0.88))
 
                         Text(release.notes)
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(NotchPalette.text.opacity(0.62))
                             .textSelection(.enabled)
                             .lineLimit(14)
@@ -444,7 +550,7 @@ struct NotchSettingsView: View {
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(
-                                .black.opacity(0.34),
+                                .primary.opacity(0.06),
                                 in: RoundedRectangle(cornerRadius: 10, style: .continuous)
                             )
 
@@ -466,7 +572,7 @@ struct NotchSettingsView: View {
             }
 
             SettingsCard(title: "Как обновить", icon: "terminal") {
-                Text("Nool не запускает установку без подтверждения. Команда обновляет Homebrew и только cask `nool-notch`; настройки и Keychain сохраняются.")
+                Text("NooL App не запускает установку без подтверждения. Команда обновляет Homebrew и только cask `nool-notch`; настройки и Keychain сохраняются.")
                     .settingsHintStyle()
             }
         }
@@ -510,7 +616,7 @@ struct NotchSettingsView: View {
                 .foregroundStyle(NotchPalette.accent)
                 .frame(minHeight: 40)
             }
-            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .font(.system(size: 11, weight: .semibold))
         case .failed(let message):
             Text(message)
                 .settingsHintStyle()
@@ -555,11 +661,11 @@ struct NotchSettingsView: View {
     private var displayModeHint: String {
         switch displaySettings.mode {
         case .automatic:
-            "Nool остаётся на встроенном дисплее. Если его нет, используется экран под указателем."
+            "NooL App остаётся на встроенном дисплее. Если его нет, используется экран под указателем."
         case .followPointer:
             "Свернутая челка переезжает, когда указатель переходит на другой экран. Открытая панель остаётся на месте."
         case .fixed:
-            "Если выбранный дисплей отключён, Nool временно вернётся на встроенный или основной экран."
+            "Если выбранный дисплей отключён, NooL App временно вернётся на встроенный или основной экран."
         }
     }
 
@@ -581,6 +687,20 @@ struct NotchSettingsView: View {
 
     private var generalPage: some View {
         VStack(spacing: 12) {
+            SettingsCard(title: "Тема интерфейса", icon: "circle.lefthalf.filled") {
+                Picker("Тема", selection: $appearanceSettings.theme) {
+                    ForEach(AppTheme.allCases) { theme in
+                        Text(theme.title).tag(theme)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .accessibilityLabel("Тема интерфейса")
+
+                Text("Системная тема следует настройкам macOS. Выбор применяется ко всем окнам NooL App; компактная чёлка остаётся чёрной.")
+                    .settingsHintStyle()
+            }
+
             SettingsCard(title: "Поведение", icon: "cursorarrow.motionlines") {
                 VStack(alignment: .leading, spacing: 10) {
                     Picker("Раскрытие наведением", selection: Binding(
@@ -629,7 +749,7 @@ struct NotchSettingsView: View {
                                 .foregroundStyle(NotchPalette.secondary)
                                 .monospacedDigit()
                         }
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .font(.system(size: 10, weight: .semibold))
                     }
 
                     Divider()
@@ -677,7 +797,7 @@ struct NotchSettingsView: View {
                         .transition(.opacity.combined(with: .move(edge: .top)))
                     }
                 }
-                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .font(.system(size: 12, weight: .medium))
                 .tint(NotchPalette.accent)
                 .animation(.easeInOut(duration: 0.18), value: settings.lineMode)
             }
@@ -698,7 +818,7 @@ struct NotchSettingsView: View {
                             .settingsHintStyle()
                     }
                 }
-                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .font(.system(size: 12, weight: .medium))
                 .tint(NotchPalette.accent)
             }
         }
@@ -715,14 +835,15 @@ struct NotchSettingsView: View {
                     .overlay(NotchPalette.separator)
                     .padding(.vertical, 4)
 
-                Picker("При запуске", selection: startupPanelBinding) {
+                Picker("При открытии", selection: startupPanelBinding) {
                     Text("Последняя открытая").tag("")
+                    Text("Обзор разделов").tag("overview")
                     ForEach(model.visiblePanels) { panel in
                         Text(panel.title).tag(panel.rawValue)
                     }
                 }
                 .pickerStyle(.menu)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .font(.system(size: 11, weight: .medium))
 
                 Text("Скрывайте ненужные панели и меняйте порядок стрелками. Минимум одна панель всегда остаётся.")
                     .settingsHintStyle()
@@ -741,7 +862,7 @@ struct NotchSettingsView: View {
                 .frame(width: 18)
 
             Text(panel.title)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(isVisible ? NotchPalette.text.opacity(0.82) : NotchPalette.text.opacity(0.34))
 
             Spacer(minLength: 4)
@@ -782,9 +903,10 @@ struct NotchSettingsView: View {
 
     private var startupPanelBinding: Binding<String> {
         Binding(
-            get: { model.startupPanel?.rawValue ?? "" },
+            get: { model.opensOverviewOnExpansion ? "overview" : (model.startupPanel?.rawValue ?? "") },
             set: { rawValue in
-                model.setStartupPanel(rawValue.isEmpty ? nil : PanelID(rawValue: rawValue))
+                if rawValue == "overview" { model.setOverviewAsStartup() }
+                else { model.setStartupPanel(rawValue.isEmpty ? nil : PanelID(rawValue: rawValue)) }
             }
         )
     }
@@ -792,13 +914,17 @@ struct NotchSettingsView: View {
     private var limitsPage: some View {
         VStack(spacing: 12) {
             QuotaWidgetSettingsCard()
+            if let alerts = model.quotaAlerts {
+                QuotaAlertsSettingsCard(controller: alerts,
+                    providers: model.orderedQuotaProviders.map { (id: $0.id, name: $0.displayName) })
+            }
             SettingsCard(
                 title: "Панель лимитов",
                 icon: "rectangle.topthird.inset.filled"
             ) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Режим")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(NotchPalette.text.opacity(0.46))
 
                     HStack(spacing: 8) {
@@ -810,7 +936,7 @@ struct NotchSettingsView: View {
                     if model.compactQuotaDisplayMode == .top {
                         HStack(spacing: 10) {
                             Text("Источник справа")
-                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                                .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(NotchPalette.text.opacity(0.58))
 
                             Spacer()
@@ -839,10 +965,10 @@ struct NotchSettingsView: View {
 
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(model.compactQuotaProviderName)
-                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                    .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(NotchPalette.text.opacity(0.82))
                                 Text("Недельный лимит")
-                                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                                    .font(.system(size: 9, weight: .medium))
                                     .foregroundStyle(NotchPalette.text.opacity(0.38))
                             }
 
@@ -861,7 +987,7 @@ struct NotchSettingsView: View {
                     } else if model.compactQuotaDisplayMode == .wave {
                         HStack(spacing: 10) {
                             Text("Сторона")
-                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                                .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(NotchPalette.text.opacity(0.58))
 
                             Spacer()
@@ -891,10 +1017,10 @@ struct NotchSettingsView: View {
                                 Text(model.quotaPanelEdge == .left
                                     ? "Панель у левого края"
                                     : "Панель у правого края")
-                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                    .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(NotchPalette.text.opacity(0.82))
                                 Text("Черная метка у края раскрывает панель. Детали появляются при наведении на кольцо")
-                                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                                    .font(.system(size: 9, weight: .medium))
                                     .foregroundStyle(NotchPalette.text.opacity(0.38))
                             }
                             Spacer()
@@ -906,7 +1032,7 @@ struct NotchSettingsView: View {
                         )
                     } else {
                         Text("Угол появления")
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(NotchPalette.text.opacity(0.46))
 
                         LazyVGrid(
@@ -932,10 +1058,10 @@ struct NotchSettingsView: View {
                                 )
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(model.quotaStackCorner.title)
-                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                    .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(NotchPalette.text.opacity(0.82))
                                 Text("Наведите на метку в углу — лимиты раскроются каскадом")
-                                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                                    .font(.system(size: 9, weight: .medium))
                                     .foregroundStyle(NotchPalette.text.opacity(0.38))
                             }
                             Spacer()
@@ -992,7 +1118,7 @@ struct NotchSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(provider.displayName)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(isVisible ? NotchPalette.text.opacity(0.84) : NotchPalette.text.opacity(0.34))
                     Text(snapshot?.connection.label ?? "ОЖИДАНИЕ")
                         .font(.system(size: 8, weight: .bold, design: .monospaced))
@@ -1034,7 +1160,7 @@ struct NotchSettingsView: View {
 
             HStack(spacing: 8) {
                 Text(snapshot?.message ?? "Нет данных")
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(NotchPalette.text.opacity(0.35))
                     .lineLimit(1)
 
@@ -1055,7 +1181,7 @@ struct NotchSettingsView: View {
                     .buttonStyle(NotchButtonStyle())
                 }
             }
-            .font(.system(size: 10, weight: .semibold, design: .rounded))
+            .font(.system(size: 10, weight: .semibold))
             .padding(.leading, 31)
         }
         .padding(.vertical, 7)
@@ -1086,7 +1212,7 @@ struct NotchSettingsView: View {
                     .foregroundStyle(isSelected ? NotchPalette.accent : NotchPalette.text.opacity(0.58))
                     .frame(height: 20)
                 Text(mode.title)
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(isSelected ? NotchPalette.text.opacity(0.92) : NotchPalette.text.opacity(0.54))
             }
             .frame(maxWidth: .infinity, minHeight: 54)
@@ -1118,7 +1244,7 @@ struct NotchSettingsView: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(isSelected ? NotchPalette.accent : NotchPalette.text.opacity(0.48))
                 Text(corner.title)
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(isSelected ? NotchPalette.text.opacity(0.88) : NotchPalette.text.opacity(0.48))
                     .lineLimit(1)
                 Spacer(minLength: 0)
@@ -1239,7 +1365,7 @@ struct NotchSettingsView: View {
             SettingsCard(title: "CLI agents", icon: "terminal") {
                 VStack(alignment: .leading, spacing: 10) {
                     Toggle(
-                        "Разрешить approval из Nool",
+                        "Разрешить approval из NooL App",
                         isOn: Binding(
                             get: { cliHooksEnabled },
                             set: configureCLIHooks
@@ -1247,7 +1373,7 @@ struct NotchSettingsView: View {
                     )
                     .tint(NotchPalette.accent)
 
-                    Text("Выключено по умолчанию. После включения Nool добавит только свои hook-записи Codex CLI и Claude Code; выключение удалит их, сохранив чужие настройки.")
+                    Text("Выключено по умолчанию. После включения NooL App добавит только свои hook-записи Codex CLI и Claude Code; выключение удалит их, сохранив чужие настройки.")
                         .settingsHintStyle()
 
                     if let cliHooksMessage {
@@ -1256,12 +1382,12 @@ struct NotchSettingsView: View {
                             .foregroundStyle(cliHooksEnabled ? Color.signalMint : Color.signalAmber)
                     }
                 }
-                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .font(.system(size: 12, weight: .medium))
             }
 
             SettingsCard(title: "PR/CI", icon: "arrow.triangle.branch") {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Nool определяет GitHub или GitLab по remote репозитория активной или недавней AI-сессии.")
+                    Text("NooL App определяет GitHub или GitLab по remote репозитория активной или недавней AI-сессии.")
                         .settingsHintStyle()
 
                     ForEach(codeReviewIntegrations.statuses) { status in
@@ -1300,14 +1426,17 @@ struct NotchSettingsView: View {
             }
 
             SettingsCard(title: "Безопасность", icon: "lock.shield") {
-                Text("Авторизацией и хранением credentials управляют gh и glab через macOS Keychain. Nool не запрашивает, не копирует и не логирует токены.")
+                Text("Авторизацией и хранением credentials управляют gh и glab через macOS Keychain. NooL App не запрашивает, не копирует и не логирует токены.")
                     .settingsHintStyle()
             }
         }
-        .onAppear(perform: refreshCodeReviewIntegrations)
     }
 
     private func refreshCodeReviewIntegrations() {
+        guard selectedSection == .integrations, modules.isEnabled(.agentInbox) else {
+            codeReviewIntegrations.stop()
+            return
+        }
         codeReviewIntegrations.refresh(
             workspacePaths: model.codeReviewSessions.compactMap(\.workspacePath)
         )
@@ -1390,19 +1519,16 @@ struct SettingsCard<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
             Label(title, systemImage: icon)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(NotchPalette.text.opacity(0.7))
             content
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            NotchPalette.raised,
-            in: RoundedRectangle(cornerRadius: 17, style: .continuous)
-        )
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 17, style: .continuous)
-                .stroke(NotchPalette.text.opacity(0.07), lineWidth: 1)
+                .stroke(.primary.opacity(0.10), lineWidth: 1)
         }
     }
 }
@@ -1427,7 +1553,7 @@ private struct DiagnosticRow: View {
                 .lineLimit(1)
                 .monospacedDigit()
         }
-        .font(.system(size: 11, weight: .medium, design: .rounded))
+        .font(.system(size: 11, weight: .medium))
         .padding(.vertical, 8)
         .overlay(alignment: .bottom) {
             if showsDivider {
@@ -1444,17 +1570,26 @@ private struct SettingsActionButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: icon)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(isAccent ? NotchPalette.accent : NotchPalette.text.opacity(0.78))
-                .frame(maxWidth: .infinity, minHeight: 40)
-                .background(
-                    NotchPalette.separator,
-                    in: RoundedRectangle(cornerRadius: 11, style: .continuous)
-                )
+        Group {
+            if isAccent {
+                Button(action: action) {
+                    actionLabel
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                Button(action: action) {
+                    actionLabel
+                }
+                .buttonStyle(.bordered)
+            }
         }
-        .buttonStyle(NotchButtonStyle())
+        .tint(isAccent ? NotchPalette.accent : NotchPalette.secondary)
+    }
+
+    private var actionLabel: some View {
+        Label(title, systemImage: icon)
+            .font(.system(size: 11, weight: .semibold))
+            .frame(maxWidth: .infinity, minHeight: 40)
     }
 }
 
@@ -1473,7 +1608,7 @@ private struct CodeReviewIntegrationRow: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(status.provider.rawValue)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(NotchPalette.text.opacity(0.84))
                     Text(statusText)
                         .font(.system(size: 8, weight: .bold, design: .monospaced))
@@ -1488,13 +1623,13 @@ private struct CodeReviewIntegrationRow: View {
                     .foregroundStyle(NotchPalette.secondary)
                     .padding(.horizontal, 7)
                     .frame(minHeight: 24)
-                    .background(.black.opacity(0.25), in: Capsule())
+                    .background(.secondary.opacity(0.10), in: Capsule())
             }
 
             if status.isInstalled == false {
                 setupButton(title: "Установить \(status.cliName)", host: nil)
             } else if status.hosts.isEmpty {
-                Text("Открой AI-сессию в GitLab-репозитории — Nool сам добавит его хост из remote.")
+                Text("Открой AI-сессию в GitLab-репозитории — NooL App сам добавит его хост из remote.")
                     .settingsHintStyle()
                     .padding(.leading, 37)
             } else {
@@ -1504,13 +1639,13 @@ private struct CodeReviewIntegrationRow: View {
                             .fill(host.isAuthenticated ? Color.signalMint : Color.signalAmber)
                             .frame(width: 6, height: 6)
                         Text(host.host)
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(NotchPalette.text.opacity(0.58))
                             .lineLimit(1)
                         Spacer(minLength: 6)
                         if host.isAuthenticated {
                             Text("Подключено")
-                                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                                .font(.system(size: 9, weight: .semibold))
                                 .foregroundStyle(Color.signalMint)
                         } else {
                             setupButton(title: "Подключить", host: host.host)
@@ -1543,7 +1678,7 @@ private struct CodeReviewIntegrationRow: View {
                 title,
                 systemImage: status.isInstalled ? "key.horizontal" : "arrow.down.circle"
             )
-            .font(.system(size: 10, weight: .semibold, design: .rounded))
+            .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(NotchPalette.accent)
             .frame(maxWidth: .infinity, minHeight: 40)
             .background(

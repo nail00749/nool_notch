@@ -194,7 +194,7 @@ struct GitHubReleaseClient: AppReleaseChecking, Sendable {
         request.httpMethod = "GET"
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2026-03-10", forHTTPHeaderField: "X-GitHub-Api-Version")
-        request.setValue("Nool-Notch", forHTTPHeaderField: "User-Agent")
+        request.setValue("NooL-App", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await transport.data(for: request)
         guard (200..<300).contains(response.statusCode) else {
@@ -214,7 +214,7 @@ struct GitHubReleaseClient: AppReleaseChecking, Sendable {
         let notes = payload.body?.trimmingCharacters(in: .whitespacesAndNewlines)
         return AppRelease(
             version: version,
-            title: title?.isEmpty == false ? title! : "Nool Notch \(version)",
+            title: title?.isEmpty == false ? title! : "NooL App \(version)",
             notes: notes?.isEmpty == false ? notes! : "Описание релиза отсутствует.",
             pageURL: payload.htmlURL,
             publishedAt: payload.publishedAt

@@ -47,6 +47,7 @@ final class QuotaStackWindowCoordinator {
         for panel in ownedPanels {
             panel.orderOut(nil)
             panel.alphaValue = 0
+            panel.contentView = nil
         }
         quotaStackItemWindows.removeAll()
         quotaStackConfiguration = nil
@@ -86,7 +87,6 @@ final class QuotaStackWindowCoordinator {
                     self?.setQuotaStackTriggerHovered(hovering)
                 }
             )
-            .preferredColorScheme(.dark)
             quotaStackTriggerWindow.contentView = quotaHostingView(rootView)
             quotaStackTriggerConfiguration = corner
         }
@@ -185,7 +185,6 @@ final class QuotaStackWindowCoordinator {
                     self?.setQuotaStackItemHovered(providerID, hovering: hovering)
                 }
             )
-            .preferredColorScheme(.dark)
             panel.contentView = quotaHostingView(rootView)
             quotaStackItemWindows[providerID] = panel
         }

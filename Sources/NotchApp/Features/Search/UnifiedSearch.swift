@@ -3,8 +3,21 @@ import Foundation
 enum NotchUtilityPanel: Equatable {
     case files
     case search
+    case overview
+    case scratchpad
+    case recentCaptures
 
-    var title: String { self == .files ? "Файлы" : "Поиск" }
+    var requiresKeyboardFocus: Bool { self != .files }
+
+    var title: String {
+        switch self {
+        case .files: "Файлы"
+        case .search: "Поиск"
+        case .overview: "Обзор разделов"
+        case .scratchpad: "Черновик"
+        case .recentCaptures: "Недавние снимки"
+        }
+    }
 }
 
 enum UnifiedSearchResult: Identifiable, Equatable {

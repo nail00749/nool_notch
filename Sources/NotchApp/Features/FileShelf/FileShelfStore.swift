@@ -9,6 +9,21 @@ final class FileShelfStore: ObservableObject {
     @Published private(set) var isImporting = false
     @Published private(set) var errorMessage: String?
     private var activeImportCount = 0
+    private var importTasks: [UUID: Task<Void, Never>] = [:]
+    private var acceptsImports = true
+    private var importGeneration: UInt = 0
+
+    func setActive(_ active: Bool) {
+        guard acceptsImports != active else { return }
+        acceptsImports = active
+        importGeneration &+= 1
+        if !active {
+            importTasks.values.forEach { $0.cancel() }
+            importTasks.removeAll()
+            activeImportCount = 0
+            isImporting = false
+        }
+    }
 
     /// Called after an accepted drop has finished loading, including a drop that
     /// contained no usable file URLs. The owner can use it to resume collapse.
@@ -18,7 +33,8 @@ final class FileShelfStore: ObservableObject {
     var items: [FileShelfItem] { entries }
 
     @discardableResult
-    func add(urls: [URL]) -> Int {
+    func add(urls: [URL], accessScope: URL? = nil) -> Int {
+        guard acceptsImports else { return 0 }
         var addedCount = 0
         var rejectedMissingFile = false
         var rejectedNonFileURL = false
@@ -29,7 +45,7 @@ final class FileShelfStore: ObservableObject {
                 rejectedNonFileURL = true
                 continue
             }
-            let entry = FileShelfItem(url: url)
+            let entry = FileShelfItem(url: url, accessScope: accessScope)
 
             guard FileManager.default.fileExists(atPath: entry.url.path) else {
                 entry.endSecurityScopedAccess()
@@ -76,6 +92,7 @@ final class FileShelfStore: ObservableObject {
     }
 
     func replace(urls originals: [URL], with replacements: [URL]) {
+        guard acceptsImports else { return }
         // Standardization can change after the source is moved (notably /private/tmp).
         // Match the original URLs retained by the shelf, not a new filesystem lookup.
         let sourcePaths = Set(originals.map(\.path))
@@ -87,6 +104,7 @@ final class FileShelfStore: ObservableObject {
     /// The returned value reports whether the providers were accepted for import.
     @discardableResult
     func acceptDrop(providers: [NSItemProvider]) -> Bool {
+        guard acceptsImports else { return false }
         let fileProviders = providers.filter {
             $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
         }
@@ -97,12 +115,17 @@ final class FileShelfStore: ObservableObject {
         }
 
         activeImportCount += 1
+        let generation = importGeneration
+        let importID = UUID()
         isImporting = true
         errorMessage = nil
 
-        Task { [weak self] in
+        importTasks[importID] = Task { [weak self] in
             let urls = await Self.loadFileURLs(from: fileProviders)
             guard let self else { return }
+            defer { self.importTasks[importID] = nil }
+            guard !Task.isCancelled, self.acceptsImports,
+                  generation == self.importGeneration else { return }
 
             if urls.isEmpty {
                 self.errorMessage = "Не удалось прочитать перетащенный файл."
@@ -122,7 +145,9 @@ final class FileShelfStore: ObservableObject {
     private static func loadFileURLs(from providers: [NSItemProvider]) async -> [URL] {
         var urls: [URL] = []
         for provider in providers {
+            guard !Task.isCancelled else { break }
             if let url = await loadFileURL(from: provider) {
+                guard !Task.isCancelled else { break }
                 urls.append(url)
             }
         }
@@ -180,11 +205,11 @@ final class FileShelfItem: Identifiable {
     let id: String
     private let resource: SecurityScopedResource
 
-    init(url: URL) {
+    init(url: URL, accessScope: URL? = nil) {
         self.url = url
         self.standardizedURL = url.standardizedFileURL
         self.id = self.standardizedURL.path
-        self.resource = SecurityScopedResource(url: url)
+        self.resource = SecurityScopedResource(url: accessScope ?? url)
     }
 
     func endSecurityScopedAccess() {

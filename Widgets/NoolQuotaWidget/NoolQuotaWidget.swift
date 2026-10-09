@@ -46,7 +46,7 @@ enum QuotaWidgetProviderSelection: String, AppEnum, Sendable {
 }
 
 struct NoolQuotaWidgetConfiguration: WidgetConfigurationIntent {
-    static let title: LocalizedStringResource = "Лимиты Nool"
+    static let title: LocalizedStringResource = "Лимиты NooL App"
     static let description = IntentDescription("Показывает остаток лимитов за выбранный период.")
 
     @Parameter(title: "Период", default: .week)
@@ -146,7 +146,7 @@ struct NoolQuotaWidget: Widget {
                 }
                 .widgetURL(URL(string: "nool-notch://limits"))
         }
-        .configurationDisplayName("Лимиты Nool")
+        .configurationDisplayName("Лимиты NooL App")
         .description("Остаток лимитов ChatGPT, Claude и Ollama.")
         .supportedFamilies([.systemSmall, .systemMedium])
         .contentMarginsDisabled()

@@ -43,7 +43,7 @@ struct JiraPanel: View {
                 projectSidebar
 
                 Rectangle()
-                    .fill(Color.white.opacity(0.08))
+                    .fill(NotchPalette.text.opacity(0.08))
                     .frame(width: 1)
             }
 
@@ -71,9 +71,9 @@ struct JiraPanel: View {
     private var projectSidebar: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("ПРОЕКТЫ")
-                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .font(.system(size: 9, weight: .bold, design: .default))
                 .tracking(0.8)
-                .foregroundStyle(.white.opacity(0.38))
+                .foregroundStyle(NotchPalette.text.opacity(0.38))
                 .padding(.horizontal, 8)
 
             ScrollView(.vertical, showsIndicators: false) {
@@ -117,11 +117,11 @@ struct JiraPanel: View {
                         }
                     } label: {
                         Text(candidate.title)
-                            .font(.system(size: 9, weight: .semibold, design: .rounded))
-                            .foregroundStyle(mode == candidate ? .white : .white.opacity(0.42))
+                            .font(.system(size: 9, weight: .semibold, design: .default))
+                            .foregroundStyle(mode == candidate ? NotchPalette.text : NotchPalette.text.opacity(0.42))
                             .frame(width: 50, height: 30)
                             .background(
-                                mode == candidate ? Color.white.opacity(0.13) : .clear,
+                                mode == candidate ? NotchPalette.text.opacity(0.13) : .clear,
                                 in: RoundedRectangle(cornerRadius: 9, style: .continuous)
                             )
                     }
@@ -130,7 +130,7 @@ struct JiraPanel: View {
                 }
             }
             .padding(2)
-            .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 11))
+            .background(NotchPalette.text.opacity(0.045), in: RoundedRectangle(cornerRadius: 11))
 
             Spacer(minLength: 0)
 
@@ -149,10 +149,10 @@ struct JiraPanel: View {
             } label: {
                 Image(systemName: "arrow.up.arrow.down")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.76))
+                    .foregroundStyle(NotchPalette.text.opacity(0.76))
                     .frame(width: 40, height: 40)
                     .background(
-                        Color.white.opacity(0.08),
+                        NotchPalette.text.opacity(0.08),
                         in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                     )
             }
@@ -168,26 +168,26 @@ struct JiraPanel: View {
                     Image(systemName: "line.3.horizontal.decrease")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(
-                            activeFilterCount == 0 ? Color.white.opacity(0.76) : NotchPalette.accent
+                            activeFilterCount == 0 ? NotchPalette.text.opacity(0.76) : NotchPalette.accent
                         )
                         .frame(width: 40, height: 40)
 
                     if activeFilterCount > 0 {
                         Text("\(activeFilterCount)")
                             .font(.system(size: 8, weight: .black, design: .monospaced))
-                            .foregroundStyle(.black.opacity(0.82))
+                            .foregroundStyle(.white)
                             .frame(width: 13, height: 13)
                             .background(NotchPalette.accent, in: Circle())
                             .overlay {
                                 Circle()
-                                    .stroke(Color.black.opacity(0.55), lineWidth: 1)
+                                    .stroke(NotchPalette.separator, lineWidth: 1)
                             }
                             .padding(3)
                             .accessibilityHidden(true)
                     }
                 }
                 .background(
-                    Color.white.opacity(activeFilterCount == 0 ? 0.08 : 0.12),
+                    NotchPalette.text.opacity(activeFilterCount == 0 ? 0.08 : 0.12),
                     in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                 )
             }
@@ -213,10 +213,10 @@ struct JiraPanel: View {
             } label: {
                 Image(systemName: searchText.isEmpty ? "magnifyingglass" : "line.3.horizontal.decrease.circle.fill")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(searchText.isEmpty ? .white.opacity(0.76) : NotchPalette.accent)
+                    .foregroundStyle(searchText.isEmpty ? NotchPalette.text.opacity(0.76) : NotchPalette.accent)
                     .frame(width: 40, height: 40)
                     .background(
-                        Color.white.opacity(searchText.isEmpty ? 0.08 : 0.12),
+                        NotchPalette.text.opacity(searchText.isEmpty ? 0.08 : 0.12),
                         in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                     )
             }
@@ -238,10 +238,10 @@ struct JiraPanel: View {
                             .font(.system(size: 11, weight: .semibold))
                     }
                 }
-                .foregroundStyle(.white.opacity(0.76))
+                .foregroundStyle(NotchPalette.text.opacity(0.76))
                 .frame(width: 40, height: 40)
                 .background(
-                    Color.white.opacity(0.08),
+                    NotchPalette.text.opacity(0.08),
                     in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                 )
             }
@@ -476,7 +476,7 @@ private struct JiraFilterPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Фильтры задач")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .font(.system(size: 12, weight: .semibold, design: .default))
 
             filterButton(
                 title: "Только мои",
@@ -505,7 +505,7 @@ private struct JiraFilterPopover: View {
                 onIssueScopeChange(.allAccessible)
             }
             .buttonStyle(.plain)
-            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .font(.system(size: 11, weight: .semibold, design: .default))
             .foregroundStyle(
                 activeFilters.isEmpty && issueScope == .allAccessible
                     ? .secondary
@@ -548,7 +548,7 @@ private struct JiraFilterPopover: View {
                 Image(systemName: systemImage)
                     .foregroundStyle(.secondary)
             }
-            .font(.system(size: 11, weight: .medium, design: .rounded))
+            .font(.system(size: 11, weight: .medium, design: .default))
             .frame(minHeight: 40)
             .contentShape(Rectangle())
         }
@@ -565,7 +565,7 @@ private struct JiraSearchPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Поиск задач")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .font(.system(size: 12, weight: .semibold, design: .default))
 
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
@@ -648,12 +648,12 @@ private struct JiraProjectListRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundStyle(isSelected ? NotchPalette.accent : .white.opacity(0.72))
+                        .foregroundStyle(isSelected ? NotchPalette.accent : NotchPalette.text.opacity(0.72))
                         .lineLimit(1)
 
                     Text(subtitle)
-                        .font(.system(size: 8, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(isSelected ? 0.52 : 0.34))
+                        .font(.system(size: 8, weight: .medium, design: .default))
+                        .foregroundStyle(NotchPalette.text.opacity(isSelected ? 0.52 : 0.34))
                         .lineLimit(1)
                 }
 
@@ -669,7 +669,7 @@ private struct JiraProjectListRow: View {
             .frame(width: 104, alignment: .leading)
             .frame(minHeight: 42, alignment: .leading)
             .background(
-                isSelected ? NotchPalette.accent.opacity(0.13) : Color.white.opacity(0.04),
+                isSelected ? NotchPalette.accent.opacity(0.13) : NotchPalette.text.opacity(0.04),
                 in: RoundedRectangle(cornerRadius: 11, style: .continuous)
             )
             .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
@@ -889,15 +889,15 @@ struct JiraListContent: View {
                     .controlSize(.small)
                 Text("Загружаю ещё задачи…")
             }
-            .font(.system(size: 9, weight: .medium, design: .rounded))
-            .foregroundStyle(.white.opacity(0.56))
+            .font(.system(size: 9, weight: .medium, design: .default))
+            .foregroundStyle(NotchPalette.text.opacity(0.56))
             .frame(minHeight: 32)
         } else if let error = model.jiraState.loadMoreIssuesError {
             Button {
                 model.loadMoreJiraIssues()
             } label: {
                 Label("Не удалось загрузить ещё: \(error.safeRussianMessage)", systemImage: "arrow.clockwise")
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .font(.system(size: 9, weight: .semibold, design: .default))
                     .foregroundStyle(Color.signalAmber)
                     .lineLimit(1)
                     .frame(minHeight: 32)
@@ -936,7 +936,7 @@ struct JiraListContent: View {
             onRecovery?(presentation.intent)
         } label: {
             Label(presentation.actionTitle, systemImage: "gearshape")
-                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .font(.system(size: 9, weight: .semibold, design: .default))
                 .foregroundStyle(NotchPalette.accent)
         }
         .buttonStyle(NotchButtonStyle())
@@ -967,8 +967,8 @@ private struct JiraInlineNotice: View {
                 .lineLimit(1)
             Spacer(minLength: 0)
         }
-        .font(.system(size: 10, weight: .medium, design: .rounded))
-        .foregroundStyle(.white.opacity(0.6))
+        .font(.system(size: 10, weight: .medium, design: .default))
+        .foregroundStyle(NotchPalette.text.opacity(0.6))
         .padding(.horizontal, 2)
     }
 }
@@ -1004,7 +1004,7 @@ enum JiraStatusVisuals {
         case "new": Color.signalCyan
         case "indeterminate": Color.signalAmber
         case "done": NotchPalette.accent
-        default: Color.white.opacity(0.55)
+        default: NotchPalette.text.opacity(0.55)
         }
     }
 
@@ -1038,7 +1038,7 @@ struct JiraStatusBadge: View {
             Text(status.name)
                 .lineLimit(1)
         }
-        .font(.system(size: 9, weight: .semibold, design: .rounded))
+        .font(.system(size: 9, weight: .semibold, design: .default))
         .foregroundStyle(color)
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
@@ -1115,8 +1115,8 @@ private struct JiraIssueRow: View {
                     }
 
                     Text(issue.summary)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .font(.system(size: 11, weight: .semibold, design: .default))
+                        .foregroundStyle(NotchPalette.text)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
 
@@ -1125,7 +1125,7 @@ private struct JiraIssueRow: View {
                             issue.assignee?.displayName ?? "Без исполнителя",
                             systemImage: issue.assignee == nil ? "person.slash" : "person.fill"
                         )
-                        .foregroundStyle(Color.white.opacity(0.48))
+                        .foregroundStyle(NotchPalette.text.opacity(0.48))
 
                         if let priority = issue.priorityName {
                             Label(priority, systemImage: "flag.fill")
@@ -1139,11 +1139,11 @@ private struct JiraIssueRow: View {
                             .foregroundStyle(
                                 JiraIssuePresentation.isOverdue(dueDate)
                                     ? Color.signalCoral
-                                    : Color.white.opacity(0.4)
+                                    : NotchPalette.text.opacity(0.4)
                             )
                         }
                     }
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .font(.system(size: 9, weight: .medium, design: .default))
                     .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1159,10 +1159,10 @@ private struct JiraIssueRow: View {
                     Button(action: copyIssueKey) {
                         Image(systemName: didCopyKey ? "checkmark" : "doc.on.doc")
                             .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(didCopyKey ? NotchPalette.accent : .white.opacity(0.58))
+                            .foregroundStyle(didCopyKey ? NotchPalette.accent : NotchPalette.text.opacity(0.58))
                             .frame(width: 30, height: 30)
                             .background(
-                                Color.white.opacity(0.07),
+                                NotchPalette.text.opacity(0.07),
                                 in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                             )
                             .padding(5)
@@ -1189,7 +1189,7 @@ private struct JiraIssueRow: View {
                         .foregroundStyle(Color.signalCyan)
                         .frame(width: 30, height: 30)
                         .background(
-                            Color.white.opacity(0.07),
+                            NotchPalette.text.opacity(0.07),
                             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                         )
                         .padding(5)
@@ -1232,11 +1232,11 @@ private struct JiraIssueRow: View {
                             }
                         }
                         .foregroundStyle(
-                            didAddWorklog ? NotchPalette.accent : .white.opacity(0.58)
+                            didAddWorklog ? NotchPalette.accent : NotchPalette.text.opacity(0.58)
                         )
                         .frame(width: 30, height: 30)
                         .background(
-                            Color.white.opacity(0.07),
+                            NotchPalette.text.opacity(0.07),
                             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                         )
                         .padding(5)
@@ -1286,7 +1286,7 @@ private struct JiraIssueRow: View {
                         .foregroundStyle(statusCategoryColor)
                         .frame(width: 30, height: 30)
                         .background(
-                            Color.white.opacity(0.08),
+                            NotchPalette.text.opacity(0.08),
                             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                         )
                         .padding(5)
@@ -1314,7 +1314,7 @@ private struct JiraIssueRow: View {
         }
         .padding(10)
         .background(
-            Color.white.opacity(0.055),
+            NotchPalette.text.opacity(0.055),
             in: RoundedRectangle(cornerRadius: 15, style: .continuous)
         )
         .onChange(of: model.transientSurfaceDismissalRequest) { _, _ in
@@ -1343,8 +1343,8 @@ private struct JiraIssueRow: View {
         case "critical", "highest": Color.signalCoral
         case "high": Color.signalAmber
         case "medium": Color.signalCyan
-        case "low", "lowest": Color.white.opacity(0.34)
-        default: Color.white.opacity(0.44)
+        case "low", "lowest": NotchPalette.text.opacity(0.34)
+        default: NotchPalette.text.opacity(0.44)
         }
     }
 
@@ -1381,7 +1381,7 @@ struct JiraDurationWheel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .font(.system(size: 9, weight: .semibold, design: .default))
                 .foregroundStyle(.secondary)
 
             ZStack {
@@ -1403,10 +1403,10 @@ struct JiraDurationWheel: View {
                                     Text(String(format: "%02d", value))
                                         .monospacedDigit()
                                     Text(unit)
-                                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                                        .font(.system(size: 9, weight: .semibold, design: .default))
                                         .foregroundStyle(.secondary)
                                 }
-                                .font(.system(size: valueFontSize, weight: .semibold, design: .rounded))
+                                .font(.system(size: valueFontSize, weight: .semibold, design: .default))
                                 .foregroundStyle(value == selection ? .primary : .secondary)
                                 .opacity(value == selection ? 1 : 0.42)
                                 .scaleEffect(value == selection ? 1 : 0.88)
@@ -1548,7 +1548,7 @@ struct JiraWorklogPopover: View {
                     .foregroundStyle(NotchPalette.accent)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Списать время")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .font(.system(size: 12, weight: .semibold, design: .default))
                     Text(issue.key)
                         .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundStyle(.secondary)
@@ -1572,20 +1572,20 @@ struct JiraWorklogPopover: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Что сделано")
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .font(.system(size: 9, weight: .semibold, design: .default))
                     .foregroundStyle(.secondary)
 
                 ZStack(alignment: .topLeading) {
                     if description.isEmpty {
                         Text("Кратко опишите выполненную работу")
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(.secondary.opacity(0.7))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 9)
                             .allowsHitTesting(false)
                     }
                     TextEditor(text: $description)
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .scrollContentBackground(.hidden)
                         .padding(4)
                         .focused($isDescriptionFocused)
@@ -1601,7 +1601,7 @@ struct JiraWorklogPopover: View {
 
             if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .font(.system(size: 9, weight: .medium, design: .default))
                     .foregroundStyle(Color.signalCoral)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1615,8 +1615,8 @@ struct JiraWorklogPopover: View {
                     }
                     Text(isSubmitting ? "Списываю…" : "Списать время")
                 }
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(draft.isValid ? Color.black.opacity(0.82) : .secondary)
+                .font(.system(size: 10, weight: .semibold, design: .default))
+                .foregroundStyle(draft.isValid ? Color.white : .secondary)
                 .frame(maxWidth: .infinity, minHeight: 40)
                 .background(
                     draft.isValid ? NotchPalette.accent : Color.primary.opacity(0.08),
@@ -1697,14 +1697,14 @@ struct JiraAssigneePopover: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Текущий исполнитель")
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .font(.system(size: 9, weight: .medium, design: .default))
                     .foregroundStyle(.secondary)
 
                 Label(
                     issue.assignee?.displayName ?? "Без исполнителя",
                     systemImage: issue.assignee == nil ? "person.slash" : "person.fill"
                 )
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(Color.signalCyan)
                 .lineLimit(1)
                 .padding(.horizontal, 8)
@@ -1729,13 +1729,13 @@ struct JiraAssigneePopover: View {
 
             TextField("Поиск по имени", text: $query)
                 .textFieldStyle(.roundedBorder)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .font(.system(size: 11, weight: .medium, design: .default))
                 .focused($isSearchFocused)
                 .disabled(isSubmitting)
 
             if let error {
                 Text(error.safeRussianMessage)
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .font(.system(size: 9, weight: .medium, design: .default))
                     .foregroundStyle(Color.signalCoral)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1744,13 +1744,13 @@ struct JiraAssigneePopover: View {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("Ищу доступных пользователей…")
-                        .font(.system(size: 9, weight: .medium, design: .rounded))
+                        .font(.system(size: 9, weight: .medium, design: .default))
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
             } else if visibleUsers.isEmpty {
                 Text(query.isEmpty ? "Доступных пользователей нет" : "Ничего не найдено")
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .font(.system(size: 9, weight: .medium, design: .default))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
             } else {
@@ -1795,10 +1795,10 @@ struct JiraAssigneePopover: View {
             submit(selection)
         } label: {
             Label(title, systemImage: icon)
-                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .font(.system(size: 9, weight: .semibold, design: .default))
                 .frame(maxWidth: .infinity, minHeight: 40)
                 .background(
-                    Color.white.opacity(0.07),
+                    NotchPalette.text.opacity(0.07),
                     in: RoundedRectangle(cornerRadius: 9, style: .continuous)
                 )
                 .contentShape(Rectangle())
@@ -1819,7 +1819,7 @@ struct JiraAssigneePopover: View {
                     .foregroundStyle(isCurrent ? NotchPalette.accent : Color.signalCyan)
 
                 Text(user.displayName)
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .font(.system(size: 10, weight: .semibold, design: .default))
                     .lineLimit(1)
 
                 Spacer(minLength: 4)
@@ -1828,7 +1828,7 @@ struct JiraAssigneePopover: View {
             .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
             .padding(.horizontal, 9)
             .background(
-                Color.white.opacity(isCurrent ? 0.09 : 0.055),
+                NotchPalette.text.opacity(isCurrent ? 0.09 : 0.055),
                 in: RoundedRectangle(cornerRadius: 9, style: .continuous)
             )
             .contentShape(Rectangle())
@@ -1882,14 +1882,14 @@ struct JiraTransitionPopover: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Текущий статус")
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .font(.system(size: 9, weight: .medium, design: .default))
                     .foregroundStyle(.secondary)
 
                 JiraStatusBadge(status: issue.status, showsCurrentMark: true)
             }
 
             Divider()
-                .overlay(Color.white.opacity(0.08))
+                .overlay(NotchPalette.text.opacity(0.08))
 
             switch state {
             case .idle, .loading:
@@ -1901,7 +1901,7 @@ struct JiraTransitionPopover: View {
                 transitionButtons(transitions, disabled: true)
             case .failed(let error, let previous):
                 Text(error.safeRussianMessage)
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
                 if let previous {
@@ -1917,7 +1917,7 @@ struct JiraTransitionPopover: View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
             Text(text)
-                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .font(.system(size: 10, weight: .medium, design: .default))
         }
     }
 
@@ -1933,11 +1933,11 @@ struct JiraTransitionPopover: View {
 
         if presentation.availableTransitions.isEmpty {
             Text("Других доступных статусов нет")
-                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .font(.system(size: 10, weight: .medium, design: .default))
                 .foregroundStyle(.secondary)
         } else {
             Text("Перевести в")
-                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .font(.system(size: 9, weight: .medium, design: .default))
                 .foregroundStyle(.secondary)
 
             ForEach(presentation.availableTransitions) { transition in
@@ -1957,11 +1957,11 @@ struct JiraTransitionPopover: View {
 
                         VStack(alignment: .leading, spacing: 1) {
                             Text(transition.toStatus.name)
-                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .font(.system(size: 11, weight: .semibold, design: .default))
 
                             if transition.name != transition.toStatus.name {
                                 Text(transition.name)
-                                    .font(.system(size: 8, weight: .medium, design: .rounded))
+                                    .font(.system(size: 8, weight: .medium, design: .default))
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -1976,7 +1976,7 @@ struct JiraTransitionPopover: View {
                     .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
                     .padding(.horizontal, 9)
                     .background(
-                        Color.white.opacity(0.06),
+                        NotchPalette.text.opacity(0.06),
                         in: RoundedRectangle(cornerRadius: 9, style: .continuous)
                     )
                     .contentShape(Rectangle())
@@ -1996,8 +1996,8 @@ private struct JiraProgressMessage: View {
         VStack(spacing: 10) {
             ProgressView()
             Text(text)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.52))
+                .font(.system(size: 11, weight: .medium, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.52))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -2016,22 +2016,22 @@ private struct JiraPanelMessage: View {
                 .font(.system(size: 25, weight: .light))
                 .foregroundStyle(NotchPalette.accent)
             Text(title)
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
+                .font(.system(size: 15, weight: .semibold, design: .default))
+                .foregroundStyle(NotchPalette.text)
             Text(detail)
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.45))
+                .font(.system(size: 10, weight: .medium, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.45))
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 290)
             if let actionTitle, let action {
                 Button(action: action) {
                     Label(actionTitle, systemImage: "arrow.right.circle.fill")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .font(.system(size: 10, weight: .semibold, design: .default))
                         .foregroundStyle(NotchPalette.accent)
                         .padding(.horizontal, 12)
                         .frame(minHeight: 34)
                         .background(
-                            Color.white.opacity(0.07),
+                            NotchPalette.text.opacity(0.07),
                             in: Capsule()
                         )
                 }

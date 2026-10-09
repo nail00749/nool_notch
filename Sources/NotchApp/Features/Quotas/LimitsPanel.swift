@@ -4,7 +4,8 @@ import NotchCore
 struct LimitsPanel: View {
     @ObservedObject var model: NotchViewModel
     @StateObject private var codexResetForecast = CodexResetForecastProvider()
-    @State private var showsResetForecast = false
+    @State private var expandedProviderID: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let chatGPTProviderID = "chatgpt-subscription"
 
@@ -12,7 +13,7 @@ struct LimitsPanel: View {
         CodexResetForecastVisibility.shouldLoad(
             isExpanded: model.isExpanded,
             selectedPanel: model.selectedPanel,
-            selectedAISection: model.selectedAISection,
+            isForecastExpanded: true,
             isShowingSettings: model.isShowingSettings,
             isUtilityPresented: model.activeUtility != nil,
             isChatGPTProviderVisible: model.visibleQuotaProviders.contains {
@@ -22,54 +23,43 @@ struct LimitsPanel: View {
     }
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 10) {
                 LazyVGrid(
                     columns: [
-                        GridItem(.flexible(), spacing: 24, alignment: .top),
-                        GridItem(.flexible(), spacing: 24, alignment: .top)
+                        GridItem(.flexible(), spacing: 10, alignment: .top),
+                        GridItem(.flexible(), spacing: 10, alignment: .top)
                     ],
                     alignment: .leading,
-                    spacing: 22
+                    spacing: 10
                 ) {
-                    ForEach(Array(model.visibleQuotaProviders.enumerated()), id: \.element.id) { index, provider in
-                        ProviderQuotaCard(
-                            providerName: provider.displayName,
-                            sourceURL: provider.sourceURL,
-                            snapshot: model.snapshot(for: provider.id),
-                            onConnect: { model.beginAuthentication(for: provider.id) }
-                        )
-                        .overlay(alignment: .leading) {
-                            if index.isMultiple(of: 2) == false {
-                                Rectangle().fill(NotchPalette.separator)
-                                    .frame(width: 1)
-                                    .offset(x: -12)
-                                    .allowsHitTesting(false)
+                    ForEach(model.visibleQuotaProviders, id: \.id) { provider in
+                        Button {
+                            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                                expandedProviderID = expandedProviderID == provider.id ? nil : provider.id
                             }
+                        } label: {
+                            CompactProviderQuota(
+                                name: provider.id == chatGPTProviderID ? "Codex" : provider.displayName,
+                                snapshot: model.snapshot(for: provider.id),
+                                resetForecast: provider.id == chatGPTProviderID ? codexResetForecast : nil,
+                                isExpanded: expandedProviderID == provider.id
+                            )
                         }
+                        .buttonStyle(NotchButtonStyle())
+                        .accessibilityHint("Показать или скрыть лимиты провайдера")
                     }
                 }
 
-                if model.visibleQuotaProviders.contains(where: { $0.id == chatGPTProviderID }) {
-                    DisclosureGroup(isExpanded: $showsResetForecast) {
-                        CodexResetForecastView(provider: codexResetForecast)
-                            .padding(.top, 8)
-                    } label: {
-                        Label("Прогноз глобального reset", systemImage: "sparkles")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(NotchPalette.secondary)
-                    }
-                    .tint(NotchPalette.accent)
-                    .padding(.top, 12)
-                    .overlay(alignment: .top) {
-                        Rectangle().fill(NotchPalette.separator).frame(height: 1)
-                    }
+                if let provider = model.visibleQuotaProviders.first(where: { $0.id == expandedProviderID }) {
+                    ProviderQuotaCard(
+                        providerName: provider.displayName,
+                        sourceURL: provider.sourceURL,
+                        snapshot: model.snapshot(for: provider.id),
+                        resetForecast: provider.id == chatGPTProviderID ? codexResetForecast : nil,
+                        onConnect: { model.beginAuthentication(for: provider.id) }
+                    )
                 }
             }
-            .padding(.horizontal, 22)
-            .padding(.top, 2)
-            .padding(.bottom, 12)
-        }
         .task(id: shouldLoadCodexResetForecast) {
             guard shouldLoadCodexResetForecast else { return }
             await codexResetForecast.refresh()
@@ -77,15 +67,111 @@ struct LimitsPanel: View {
     }
 }
 
+private struct CompactProviderQuota: View {
+    let name: String
+    let snapshot: QuotaSnapshot?
+    let resetForecast: CodexResetForecastProvider?
+    let isExpanded: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 5) {
+                Image(systemName: name == "Codex" ? "chevron.left.forwardslash.chevron.right" : "sparkles")
+                    .foregroundStyle(NotchPalette.accent)
+                Text(name).lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(NotchPalette.text)
+
+            if let snapshot, !snapshot.windows.isEmpty {
+                HStack(alignment: .top, spacing: 14) {
+                    ForEach(snapshot.windows) { window in
+                        MiniQuotaRing(window: window)
+                    }
+                    Spacer(minLength: 0)
+                    if let resetForecast {
+                        CompactResetForecast(provider: resetForecast)
+                    }
+                }
+            } else if let resetForecast {
+                CompactResetForecast(provider: resetForecast)
+            }
+
+            if let statusMessage {
+                Text(statusMessage)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(NotchPalette.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, minHeight: 90, alignment: .topLeading)
+        .background(isExpanded ? NotchPalette.accent.opacity(0.08) : NotchPalette.text.opacity(0.035),
+                    in: RoundedRectangle(cornerRadius: 12))
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+    }
+
+    private var statusMessage: String? {
+        switch snapshot?.connection {
+        case .requiresAuthentication: "Нужен вход"
+        case .stale: "Данные устарели"
+        case .unavailable, .none: "Нет подключения"
+        case .live: snapshot?.windows.isEmpty == true ? "Нет данных" : nil
+        }
+    }
+}
+
+private struct MiniQuotaRing: View {
+    let window: QuotaWindow
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var remainingLabel: String {
+        if let ratio = window.remainingRatio { return "\(Int((ratio * 100).rounded()))%" }
+        if let remaining = window.remaining { return formatQuotaValue(remaining) }
+        return "—"
+    }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack {
+                Circle().stroke(NotchPalette.track, lineWidth: 3)
+                if let ratio = window.remainingRatio {
+                    Circle()
+                        .trim(from: 0, to: ratio)
+                        .stroke(ratio < 0.2 ? Color.signalCoral : NotchPalette.accent,
+                                style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                Text(window.label == "5h" ? "5ч" : window.label)
+                    .font(.system(size: 9, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                    .padding(4)
+            }
+            .frame(width: 32, height: 32)
+            .padding(2)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: window.remainingRatio)
+
+            Text(remainingLabel)
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(NotchPalette.secondary)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(window.label), осталось \(remainingLabel)")
+    }
+}
+
 private struct ProviderQuotaCard: View {
     let providerName: String
     let sourceURL: URL?
     let snapshot: QuotaSnapshot?
+    let resetForecast: CodexResetForecastProvider?
     let onConnect: () -> Void
-
-    private var primaryWindow: QuotaWindow? {
-        snapshot?.windows.first
-    }
 
     private var connectionColor: Color {
         switch snapshot?.connection {
@@ -128,26 +214,47 @@ private struct ProviderQuotaCard: View {
                 }
             }
 
-            if let snapshot, snapshot.windows.isEmpty == false {
-                HStack(alignment: .center, spacing: 12) {
-                    if let primaryWindow {
-                        QuotaSummaryRing(window: primaryWindow)
-                    }
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(snapshot.windows) { window in
-                            QuotaWindowRow(window: window)
+            if let snapshot, !snapshot.windows.isEmpty {
+                ForEach(snapshot.windows) { window in
+                    HStack(spacing: 8) {
+                        Text(window.label).fontWeight(.semibold)
+                        if let remaining = window.remaining {
+                            Text("\(formatQuotaValue(remaining)) \(window.unit == .percentage ? "% осталось" : window.unit.shortLabel)")
+                                .monospacedDigit()
+                        }
+                        Spacer(minLength: 0)
+                        if let resetAt = window.resetAt {
+                            TimelineView(.periodic(from: .now, by: 30)) { context in
+                                if resetAt > context.date {
+                                    HStack(spacing: 3) {
+                                        Image(systemName: "arrow.counterclockwise")
+                                        Text(resetAt, style: .relative).monospacedDigit()
+                                    }
+                                } else {
+                                    Text("Ожидаем обновление")
+                                }
+                            }
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .font(.system(size: 10))
+                    .foregroundStyle(NotchPalette.secondary)
+                    .accessibilityElement(children: .combine)
                 }
             } else {
                 HStack(spacing: 8) {
                     Image(systemName: "person.crop.circle.badge.questionmark")
                     Text(snapshot?.message ?? "Ожидаю подключение аккаунта…")
                 }
-                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .font(.system(size: 11, weight: .medium, design: .default))
                 .foregroundStyle(NotchPalette.secondary)
                 .frame(minHeight: 88, alignment: .topLeading)
+            }
+
+            if let resetForecast {
+                Link("Источник прогноза сбросов ↗", destination: CodexResetForecastClient.sourceURL)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(NotchPalette.accent)
+                    .help(resetForecast.errorMessage ?? "Независимый прогноз сообщества codex-reset.com")
             }
 
             HStack(spacing: 8) {
@@ -157,264 +264,83 @@ private struct ProviderQuotaCard: View {
                 Spacer()
                 if snapshot?.connection == .requiresAuthentication {
                     Button("Войти", action: onConnect)
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .font(.system(size: 10, weight: .semibold, design: .default))
                         .foregroundStyle(NotchPalette.accent)
                         .frame(minWidth: 40, minHeight: 40)
                         .buttonStyle(NotchButtonStyle())
                         .accessibilityLabel("Войти в \(providerName)")
                 } else if let url = snapshot?.sourceURL ?? sourceURL {
                     Link("Открыть", destination: url)
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .font(.system(size: 10, weight: .semibold, design: .default))
                         .foregroundStyle(NotchPalette.accent)
                 }
             }
-            .font(.system(size: 10, weight: .medium, design: .rounded))
+            .font(.system(size: 10, weight: .medium, design: .default))
             .foregroundStyle(NotchPalette.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-    }
-}
-
-private struct QuotaSummaryRing: View {
-    let window: QuotaWindow
-
-    var body: some View {
-        VStack(spacing: 6) {
-            ZStack {
-                Circle().stroke(NotchPalette.track, lineWidth: 7)
-                if let ratio = window.remainingRatio {
-                    Circle()
-                        .trim(from: 0, to: ratio)
-                        .stroke(
-                            ratio < 0.2 ? Color.signalCoral : NotchPalette.accent,
-                            style: StrokeStyle(lineWidth: 7, lineCap: .round)
-                        )
-                        .rotationEffect(.degrees(-90))
-                    Text("\(Int((ratio * 100).rounded()))%")
-                        .font(.system(size: 19, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(NotchPalette.text)
-                        .minimumScaleFactor(0.8)
-                        .lineLimit(1)
-                        .padding(8)
-                } else {
-                    Text("—")
-                        .font(.system(size: 19, weight: .medium))
-                        .foregroundStyle(NotchPalette.secondary)
-                }
-            }
-            .padding(4)
-            .frame(width: 82, height: 82)
-
-            Text(window.label)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(NotchPalette.secondary)
-                .lineLimit(1)
+        .padding(12)
+        .background(NotchPalette.raised, in: RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(NotchPalette.separator, lineWidth: 1)
+                .allowsHitTesting(false)
         }
-        // The adjacent row contains the exact value, unit and reset time.
-        .accessibilityHidden(true)
     }
 }
 
-private struct CodexResetForecastView: View {
+private struct CompactResetForecast: View {
     @ObservedObject var provider: CodexResetForecastProvider
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 5) {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(NotchPalette.accent)
-
-                Text("Глобальный reset")
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundStyle(NotchPalette.text.opacity(0.85))
-
-                Spacer(minLength: 4)
-
-                if provider.isStale {
-                    Text("STALE")
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
-                        .tracking(0.5)
-                        .foregroundStyle(Color.signalAmber)
-                }
-
-                Link(destination: CodexResetForecastClient.sourceURL) {
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(NotchPalette.accent)
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plain)
-                .help("Открыть независимый источник codex-reset.com")
-                .accessibilityLabel("Открыть источник прогноза Codex reset")
-            }
-
+        VStack(alignment: .leading, spacing: 3) {
+            Text(provider.isStale ? "Прогноз · устарел" : "Сброс · прогноз")
+                .font(.system(size: 8, weight: .medium))
+                .foregroundStyle(provider.isStale ? Color.signalAmber : NotchPalette.secondary)
             if let forecast = provider.forecast {
-                Text("Прогноз сообщества, не персональный таймер")
-                    .font(.system(size: 8, weight: .medium, design: .rounded))
-                    .foregroundStyle(NotchPalette.secondary)
-
-                HStack(spacing: 6) {
-                    ForecastProbability(
-                        label: "в 24 часа",
-                        value: forecast.probability24Hours
-                    )
-                    ForecastProbability(
-                        label: "в 48 часов",
-                        value: forecast.probability48Hours
-                    )
-                }
-
-                HStack(spacing: 5) {
-                    if let lastResetAt = forecast.lastResetAt {
-                        Image(systemName: "arrow.counterclockwise")
-                        Text("последний")
-                        Text(lastResetAt, style: .relative)
-                    }
-
-                    Spacer(minLength: 4)
-
-                    Text(confidenceLabel(forecast.confidence))
-                }
-                .font(.system(size: 8, weight: .medium, design: .rounded))
-                .foregroundStyle(NotchPalette.secondary)
-                .lineLimit(1)
-
-                if provider.isLoading {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .tint(NotchPalette.accent)
-                        .accessibilityLabel("Обновление прогноза Codex reset")
-                }
-            } else if provider.isLoading {
-                HStack(spacing: 7) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(NotchPalette.accent)
-                    Text("Проверяю прогноз сообщества…")
-                }
-                .font(.system(size: 9, weight: .medium, design: .rounded))
-                .foregroundStyle(NotchPalette.secondary)
+                probability("24ч", value: forecast.probability24Hours)
+                probability("48ч", value: forecast.probability48Hours)
             } else {
-                HStack(spacing: 7) {
-                    Text(provider.errorMessage ?? "Прогноз пока не загружен")
-                        .lineLimit(1)
-
-                    Spacer(minLength: 4)
-
-                    Button {
-                        Task { await provider.refresh() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(NotchButtonStyle())
-                    .foregroundStyle(NotchPalette.accent)
-                    .accessibilityLabel("Повторить загрузку прогноза Codex reset")
-                }
-                .font(.system(size: 9, weight: .medium, design: .rounded))
-                .foregroundStyle(NotchPalette.secondary)
+                Text(provider.isLoading ? "Загрузка…" : "Недоступен")
+                    .font(.system(size: 9))
+                    .foregroundStyle(NotchPalette.secondary)
             }
         }
-    }
-
-    private func confidenceLabel(_ confidence: CodexResetForecastConfidence) -> String {
-        switch confidence {
-        case .low: "низкая уверенность"
-        case .medium: "средняя уверенность"
-        case .high: "высокая уверенность"
-        case .unknown: "уверенность не указана"
-        }
-    }
-}
-
-private struct ForecastProbability: View {
-    let label: String
-    let value: Int
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.system(size: 8, weight: .medium, design: .rounded))
-                .foregroundStyle(NotchPalette.secondary)
-
-            Text("\(value)%")
-                .font(.system(size: 14, weight: .bold, design: .monospaced))
-                .monospacedDigit()
-                .foregroundStyle(NotchPalette.text)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Вероятность глобального сброса \(label): \(value) процентов")
-    }
-}
-
-private struct QuotaWindowRow: View {
-    let window: QuotaWindow
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(window.label)
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundStyle(NotchPalette.text.opacity(0.85))
-                    .lineLimit(1)
-
-                Spacer(minLength: 2)
-
-                HStack(alignment: .firstTextBaseline, spacing: 2) {
-                    if let remaining = window.remaining {
-                        Text(formatQuotaValue(remaining))
-                            .font(.system(size: 14, weight: .bold, design: .monospaced))
-                            .monospacedDigit()
-                            .foregroundStyle(NotchPalette.text)
-
-                        if window.unit == .percentage {
-                            Text("%")
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundStyle(.white.opacity(0.72))
-                        } else if let limit = window.limit {
-                            Text("/ \(formatQuotaValue(limit))")
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                                .foregroundStyle(NotchPalette.secondary)
-                        }
-                    } else {
-                        Text("—")
-                            .font(.system(size: 14, weight: .bold, design: .monospaced))
-                            .foregroundStyle(NotchPalette.secondary)
-                    }
-                }
-            }
-
-            if let ratio = window.remainingRatio {
-                GeometryReader { proxy in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(NotchPalette.track)
-                        Capsule()
-                            .fill(ratio < 0.2 ? Color.signalCoral : NotchPalette.accent)
-                            .frame(width: proxy.size.width * ratio)
-                    }
-                }
-                .frame(height: 4)
-            }
-
-            if let resetAt = window.resetAt {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.counterclockwise")
-                    Text("сброс")
-                    Text(resetAt, style: .relative)
-                }
-                .font(.system(size: 8, weight: .medium, design: .rounded))
-                .foregroundStyle(NotchPalette.secondary)
-                .lineLimit(1)
-            }
-        }
+        .frame(width: 76, alignment: .leading)
+        .help(helpText)
         .accessibilityElement(children: .combine)
     }
+
+    private func probability(_ label: String, value: Int) -> some View {
+        HStack(spacing: 7) {
+            Text(label).foregroundStyle(NotchPalette.secondary)
+            Text("\(value)%").foregroundStyle(NotchPalette.text)
+        }
+        .font(.system(size: 9, weight: .medium))
+        .monospacedDigit()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Вероятность глобального сброса за \(label): \(value) процентов")
+    }
+
+    private var helpText: String {
+        guard let forecast = provider.forecast else {
+            return provider.errorMessage ?? "Независимый прогноз сообщества, не персональный таймер"
+        }
+        let confidence: String
+        switch forecast.confidence {
+        case .low: confidence = "низкая"
+        case .medium: confidence = "средняя"
+        case .high: confidence = "высокая"
+        case .unknown: confidence = "не указана"
+        }
+        var text = "Прогноз сообщества codex-reset.com, не персональный таймер. Уверенность: \(confidence)."
+        if let lastReset = forecast.lastResetAt {
+            text += " Последний сброс: \(lastReset.formatted(date: .abbreviated, time: .shortened))."
+        }
+        return text
+    }
 }
+
 
 private func formatQuotaValue(_ value: Double) -> String {
     if value.rounded() == value {

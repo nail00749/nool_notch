@@ -6,6 +6,9 @@ enum HorizontalSwipeDirection {
     case next
 }
 
+/// Embedded controls can own both scroll axes instead of paging the notch.
+@MainActor protocol NotchScrollGestureConsumer: AnyObject {}
+
 struct HorizontalSwipeMonitor: NSViewRepresentable {
     let onChanged: (CGFloat) -> Void
     let onThresholdReached: (HorizontalSwipeDirection) -> Bool
@@ -145,6 +148,13 @@ struct HorizontalSwipeMonitor: NSViewRepresentable {
                 return false
             }
             let location = trackedView.convert(event.locationInWindow, from: nil)
+            if let content = event.window?.contentView {
+                var hit = content.hitTest(content.convert(event.locationInWindow, from: nil))
+                while let view = hit {
+                    if view is any NotchScrollGestureConsumer { return false }
+                    hit = view.superview
+                }
+            }
             return trackedView.bounds.contains(location)
         }
 
@@ -195,6 +205,7 @@ struct SwipeCarousel<Item: Hashable, Page: View>: View {
                     }
                     .frame(width: width, height: proxy.size.height)
                     .allowsHitTesting(index == selectedIndex)
+                    .accessibilityHidden(index != selectedIndex)
                 }
             }
             .frame(width: width * CGFloat(items.count), alignment: .leading)
@@ -207,7 +218,12 @@ struct SwipeCarousel<Item: Hashable, Page: View>: View {
 
 @MainActor
 enum NotchHaptics {
+    private static var isEnabled: Bool {
+        UserDefaults.standard.object(forKey: "notch.customization.hapticsEnabled.v1") as? Bool ?? true
+    }
+
     static func compactHoverEntered() {
+        guard isEnabled else { return }
         NSHapticFeedbackManager.defaultPerformer.perform(
             .alignment,
             performanceTime: .now
@@ -215,6 +231,7 @@ enum NotchHaptics {
     }
 
     static func notchExpanded() {
+        guard isEnabled else { return }
         NSHapticFeedbackManager.defaultPerformer.perform(
             .levelChange,
             performanceTime: .now
@@ -230,6 +247,7 @@ enum NotchHaptics {
     }
 
     static func wheelSelectionChanged(performPulse: (() -> Void)? = nil) {
+        guard isEnabled else { return }
         if let performPulse {
             performPulse()
             return
@@ -242,6 +260,7 @@ enum NotchHaptics {
     }
 
     static func selectionChanged() {
+        guard isEnabled else { return }
         performSelectionPulse()
 
         Task { @MainActor in
@@ -253,6 +272,7 @@ enum NotchHaptics {
     }
 
     private static func performSelectionPulse() {
+        guard isEnabled else { return }
         NSHapticFeedbackManager.defaultPerformer.perform(
             .generic,
             performanceTime: .now

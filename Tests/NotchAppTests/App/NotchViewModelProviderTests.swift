@@ -548,7 +548,8 @@ final class NotchViewModelProviderTests: XCTestCase {
         source.publish([first, second])
         await settleMainActorTasks()
         model.isExpanded = true
-        model.selectAISection(.sessions)
+        // The unified AI screen must refresh Git even with a saved limits selection.
+        model.selectAISection(.limits)
         for _ in 0..<20 where model.codeReviewState(for: first).snapshot == nil {
             await Task.yield()
         }
@@ -558,6 +559,113 @@ final class NotchViewModelProviderTests: XCTestCase {
         XCTAssertEqual(model.codeReviewState(for: second).snapshot, snapshot)
         let callCount = await provider.callCount
         XCTAssertEqual(callCount, 1)
+    }
+
+    func testPinCancelsPendingCollapseAndBlocksLaterAutomaticCollapse() async throws {
+        let model = makeModel()
+        model.isExpanded = true
+        model.scheduleCollapse(after: 0.01)
+        model.toggleExpansionPin()
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertTrue(model.isExpanded)
+        XCTAssertTrue(model.isExpansionPinned)
+
+        model.scheduleCollapse(after: 0)
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(model.isExpanded)
+
+        model.toggleExpansionPin()
+        model.scheduleCollapse(after: 0)
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertFalse(model.isExpanded)
+    }
+
+    func testExplicitCollapseUnpinsAndWaitsForEveryPopover() {
+        let model = makeModel()
+        model.isExpanded = true
+        model.toggleExpansionPin()
+        model.transientSurfaceDidPresent(.jiraFilters)
+        model.transientSurfaceDidPresent(.jiraSearch)
+        let dismissal = model.transientSurfaceDismissalRequest
+
+        model.requestCollapse()
+
+        XCTAssertFalse(model.isExpansionPinned)
+        XCTAssertTrue(model.isExpanded)
+        XCTAssertEqual(model.transientSurfaceDismissalRequest, dismissal + 1)
+        model.transientSurfaceDidDisappear(.jiraFilters)
+        XCTAssertTrue(model.isExpanded)
+        model.transientSurfaceDidDisappear(.jiraSearch)
+        XCTAssertFalse(model.isExpanded)
+    }
+
+    func testPinSurvivesContextMenuDismissalAndExplicitCollapseClosesSearch() async throws {
+        let model = makeModel()
+        model.isExpanded = true
+        model.toggleExpansionPin()
+        model.contextMenuDidBeginTracking()
+        model.contextMenuDidEndTracking()
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(model.isExpanded)
+        XCTAssertTrue(model.isExpansionPinned)
+
+        model.openUtility(.search)
+        model.requestCollapse()
+        XCTAssertFalse(model.isExpanded)
+        XCTAssertFalse(model.isExpansionPinned)
+        XCTAssertNil(model.activeUtility)
+        model.isExpanded = true
+        XCTAssertFalse(model.isExpansionPinned)
+    }
+
+    func testDirectCollapseClearsPinAndPendingExplicitRequest() {
+        let model = makeModel()
+        model.isExpanded = true
+        model.toggleExpansionPin()
+        model.transientSurfaceDidPresent(.jiraFilters)
+        model.requestCollapse()
+        model.isExpanded = false
+        model.isExpanded = true
+        model.transientSurfaceDidDisappear(.jiraFilters)
+        XCTAssertTrue(model.isExpanded)
+        XCTAssertFalse(model.isExpansionPinned)
+    }
+
+    func testStartupPanelIsAppliedOnEveryGenericExpansion() {
+        let preferences = MemoryAppPreferences()
+        let model = makeModel(preferences: preferences)
+        model.setStartupPanel(.calendar)
+        model.selectPanel(.music)
+        model.prepareDefaultExpansion()
+        XCTAssertEqual(model.selectedPanel, .calendar)
+        model.isExpanded = true
+        model.selectPanel(.music)
+        model.prepareDefaultExpansion()
+        XCTAssertEqual(model.selectedPanel, .music)
+        model.isExpanded = false
+        model.prepareDefaultExpansion()
+        XCTAssertEqual(model.selectedPanel, .calendar)
+    }
+
+    func testOverviewStartupPersistsAndExplicitDestinationsOverrideIt() {
+        let preferences = MemoryAppPreferences()
+        let model = makeModel(preferences: preferences)
+        model.setOverviewAsStartup()
+        XCTAssertTrue(preferences.opensOverviewOnExpansion)
+        let restored = makeModel(preferences: preferences)
+        restored.prepareDefaultExpansion()
+        XCTAssertEqual(restored.activeUtility, .overview)
+        restored.isExpanded = true
+        restored.requestCollapse()
+        XCTAssertFalse(restored.isExpanded)
+        XCTAssertNil(restored.activeUtility)
+        restored.openUtility(.search)
+        XCTAssertEqual(restored.activeUtility, .search)
+        restored.selectPanel(.music)
+        XCTAssertNil(restored.activeUtility)
+        XCTAssertEqual(restored.selectedPanel, .music)
+        restored.setStartupPanel(nil)
+        XCTAssertFalse(preferences.opensOverviewOnExpansion)
     }
 
     private func makeModel(

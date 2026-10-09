@@ -9,6 +9,7 @@ final class NotchAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        AppAppearanceSettings.shared.applyCurrentTheme()
         launcher = LauncherWindowCoordinator()
         coordinator = NotchWindowCoordinator(launcher: launcher)
         launcher.onOpenSettings = { [weak self] in self?.coordinator.showSettingsWindow(section: .launcher) }
@@ -49,11 +50,21 @@ final class NotchAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let launcher else { return .terminateNow }
-        coordinator?.stop()
-        launcher.stop()
         Task { @MainActor in
+            if let coordinator, !(await coordinator.saveScratchpadBeforeTermination()) {
+                sender.reply(toApplicationShouldTerminate: false)
+                let alert = NSAlert()
+                alert.messageText = "Не удалось сохранить черновик"
+                alert.informativeText = "NooL остаётся открытым, чтобы не потерять изменения. Откройте черновик и повторите сохранение."
+                alert.addButton(withTitle: "Понятно")
+                alert.runModal()
+                return
+            }
+            coordinator?.stop()
+            launcher.stop()
             await coordinator.waitForFileActions()
             await coordinator.waitForQuotaWidgetPersistence()
+            await coordinator.waitForLidEffect()
             await launcher.model.clipboard.waitForPersistence()
             await launcher.model.snippets.waitForPersistence()
             await launcher.model.aiChat.waitForPersistence()

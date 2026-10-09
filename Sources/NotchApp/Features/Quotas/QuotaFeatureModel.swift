@@ -17,15 +17,23 @@ final class QuotaFeatureModel: ObservableObject {
     private var quotaRefreshTasks: [String: Task<Void, Never>] = [:]
     private var quotaRefreshedAt: [String: Date] = [:]
     private var isStopped = false
+    private var isActive: Bool
+    private var lifecycleGeneration: UInt = 0
     private let widgetPublisher: QuotaWidgetPublisher?
+    let alerts: QuotaAlertController?
 
     init(providers: [any QuotaProvider], preferences: any AppPreferencesStoring,
          now: @escaping @MainActor () -> Date = Date.init,
-         widgetPublisher: QuotaWidgetPublisher? = nil) {
+         widgetPublisher: QuotaWidgetPublisher? = nil,
+         alerts: QuotaAlertController? = nil,
+         startsActive: Bool = true,
+         clearWidgetWhenInactive: Bool = false) {
         self.providers = providers
         self.preferences = preferences
         self.now = now
         self.widgetPublisher = widgetPublisher
+        self.alerts = alerts
+        self.isActive = startsActive
         let providerIDs = providers.map(\.id)
         let quotaProviderOrder = Self.normalizedQuotaProviderOrder(
             preferences.quotaProviderOrder,
@@ -66,6 +74,23 @@ final class QuotaFeatureModel: ObservableObject {
         preferences.compactQuotaDisplayMode = compactQuotaDisplayMode
         preferences.quotaPanelEdge = quotaPanelEdge
         preferences.quotaStackCorner = quotaStackCorner
+        if startsActive {
+            activate()
+        } else {
+            if clearWidgetWhenInactive { widgetPublisher?.publish([]) }
+            widgetPublisher?.suspend()
+            alerts?.suspend()
+        }
+    }
+
+    func resume() {
+        guard !isStopped, !isActive else { return }
+        isActive = true
+        activate()
+        refresh()
+    }
+
+    private func activate() {
         for provider in providers {
             guard let ollamaProvider = provider as? OllamaQuotaProvider else { continue }
             let providerID = ollamaProvider.id
@@ -76,6 +101,14 @@ final class QuotaFeatureModel: ObservableObject {
         widgetPublisher?.start { [weak self] in
             self?.refreshQuotaProviders(ifOlderThan: 5 * 60)
         }
+        alerts?.start { [weak self] ids in
+            guard let self else { return }
+            for provider in self.providers where ids.contains(provider.id) {
+                if let refreshedAt = self.quotaRefreshedAt[provider.id],
+                   self.now().timeIntervalSince(refreshedAt) < 5 * 60 { continue }
+                self.refresh(provider: provider)
+            }
+        }
     }
 
     func refresh() {
@@ -84,7 +117,21 @@ final class QuotaFeatureModel: ObservableObject {
 
     func stop() {
         isStopped = true
+        suspend()
         widgetPublisher?.stop()
+        alerts?.stop()
+    }
+
+    func suspend() {
+        guard isActive else { return }
+        isActive = false
+        lifecycleGeneration &+= 1
+        for provider in providers {
+            (provider as? OllamaQuotaProvider)?.suspend()
+        }
+        widgetPublisher?.publish([])
+        widgetPublisher?.suspend()
+        alerts?.suspend()
         quotaRefreshTasks.values.forEach { $0.cancel() }
         quotaRefreshTasks.removeAll()
     }
@@ -94,6 +141,7 @@ final class QuotaFeatureModel: ObservableObject {
     func waitForWidgetPersistence() async { await widgetPublisher?.waitForPersistence() }
 
     private func publishWidget() {
+        guard isActive else { return }
         widgetPublisher?.publish(visibleQuotaProviders.compactMap { provider in
             snapshots[provider.id].map(QuotaWidgetProvider.init(snapshot:))
         })
@@ -189,12 +237,15 @@ final class QuotaFeatureModel: ObservableObject {
     }
 
     func beginAuthentication(for providerID: String) {
+        guard isActive, !isStopped else { return }
         guard let provider = providers.first(where: { $0.id == providerID }) as? any QuotaProviderAuthenticating else {
             return
         }
 
+        let generation = lifecycleGeneration
         provider.beginAuthentication { [weak self] in
-            self?.refresh(providerID: providerID)
+            guard let self, self.isActive, self.lifecycleGeneration == generation else { return }
+            self.refresh(providerID: providerID)
         }
     }
 
@@ -220,14 +271,15 @@ final class QuotaFeatureModel: ObservableObject {
     }
 
     private func refresh(provider: any QuotaProvider) {
-        guard !isStopped, quotaRefreshTasks[provider.id] == nil else { return }
+        guard !isStopped, isActive, quotaRefreshTasks[provider.id] == nil else { return }
         quotaRefreshTasks[provider.id] = Task { @MainActor [weak self] in
             let snapshot = await provider.loadSnapshot()
-            guard !Task.isCancelled, let self, !self.isStopped else { return }
+            guard !Task.isCancelled, let self, !self.isStopped, self.isActive else { return }
             self.snapshots[provider.id] = snapshot
             self.quotaRefreshedAt[provider.id] = self.now()
             self.quotaRefreshTasks[provider.id] = nil
             self.publishWidget()
+            self.alerts?.consume(snapshot, now: self.now())
         }
     }
 

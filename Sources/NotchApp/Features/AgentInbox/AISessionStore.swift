@@ -37,6 +37,7 @@ final class AISessionStore: ObservableObject {
     }
 
     func stop() {
+        for source in sources.values { source.stop() }
         sourceTasks.values.forEach { $0.cancel() }
         sourceTasks.removeAll()
     }

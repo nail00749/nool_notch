@@ -17,9 +17,15 @@ enum LauncherSelection {
 @MainActor
 final class LauncherModel: ObservableObject {
     @Published var query = "" { didSet { queryChanged() } }
-    @Published var category: LauncherCategory = .all { didSet { queryChanged() } }
+    @Published var category: LauncherCategory = .all {
+        didSet {
+            if !availableCategories.contains(category) { category = .all }
+            queryChanged()
+        }
+    }
     @Published private(set) var results: [LauncherResult] = []
     @Published var selectedID: String?
+    @Published private(set) var previewKeyboardSelectionID: String?
     @Published var message: String?
     @Published var selectedNoolEvent: CalendarEvent?
     @Published private(set) var actionResult: LauncherResult?
@@ -37,9 +43,11 @@ final class LauncherModel: ObservableObject {
     let clipboard: LauncherClipboardStore
     let snippets: LauncherSnippetStore
     let settings: LauncherSettings
+    let modules: AppModuleStore
     let icons = LauncherIcons()
     let aiChat: AIChatStore
     let windowLayouts: WindowLayoutManager
+    let workspaces: WorkspaceStore
     let textSelection = LauncherTextSelection()
     private weak var noolSource: NotchViewModel?
     private var noolSubscription: AnyCancellable?
@@ -51,19 +59,31 @@ final class LauncherModel: ObservableObject {
     private var isVisible = false
     private var quickAITask: Task<Void, Never>?
     private var quickAIGeneration = 0
+    private var previouslyEnabledModules: Set<AppModuleID>
 
     init(settings: LauncherSettings, applications: LauncherApplicationProvider = LauncherApplicationProvider(),
          files: LauncherFileProvider = LauncherFileProvider(), clipboard: LauncherClipboardStore = LauncherClipboardStore(),
          aiChat: AIChatStore? = nil, windowLayouts: WindowLayoutManager? = nil,
-         snippets: LauncherSnippetStore? = nil) {
+         snippets: LauncherSnippetStore? = nil, workspaces: WorkspaceStore? = nil,
+         modules: AppModuleStore? = nil) {
+        let selectedModules = modules ?? AppModuleStore(defaults: nil)
         self.settings = settings
+        self.modules = selectedModules
+        previouslyEnabledModules = selectedModules.enabledModules
         self.applications = applications
         self.files = files
         self.clipboard = clipboard
         self.snippets = snippets ?? LauncherSnippetStore()
-        self.aiChat = aiChat ?? AIChatStore()
+        self.aiChat = aiChat ?? AIChatStore(loadHistoryImmediately: selectedModules.isEnabled(.aiChat))
         self.windowLayouts = windowLayouts ?? WindowLayoutManager()
+        self.workspaces = workspaces ?? WorkspaceStore()
+        if !selectedModules.isEnabled(.aiChat) { self.aiChat.suspend() }
         self.windowLayouts.objectWillChange.receive(on: RunLoop.main)
+            .sink { [weak self] in
+                guard let self, self.isVisible else { return }
+                self.rebuild()
+            }.store(in: &subscriptions)
+        self.workspaces.objectWillChange.receive(on: RunLoop.main)
             .sink { [weak self] in
                 guard let self, self.isVisible else { return }
                 self.rebuild()
@@ -78,17 +98,70 @@ final class LauncherModel: ObservableObject {
                 if let error = self.snippets.errorMessage { self.message = error }
                 self.rebuild()
             }.store(in: &subscriptions)
+        self.modules.changes.sink { [weak self] _ in self?.moduleAvailabilityChanged() }
+            .store(in: &subscriptions)
     }
 
-    var selectedResult: LauncherResult? { results.first { $0.id == selectedID } }
+    var availableCategories: [LauncherCategory] {
+        LauncherCategory.allCases.filter { category in
+            switch category {
+            case .ai: modules.isEnabled(.aiChat)
+            case .clipboard: modules.isEnabled(.clipboard)
+            case .all, .applications, .files: true
+            }
+        }
+    }
+
+    var selectedResult: LauncherResult? { results.first { $0.id == selectedID && isResultAvailable($0) } }
+
+    func isResultAvailable(_ result: LauncherResult) -> Bool {
+        switch result.payload {
+        case .clipboard, .snippet: modules.isEnabled(.clipboard)
+        case .nool(_, let kind):
+            switch kind {
+            case .jira: modules.isEnabled(.jira)
+            case .session: modules.isEnabled(.agentInbox)
+            case .event: modules.isEnabled(.calendar)
+            }
+        case .windowAction, .windowLayout, .windowLayoutManager, .workspace, .workspaceManager:
+            modules.isEnabled(.windowManagement)
+        case .speedTest, .networkDiagnostics: modules.isEnabled(.networkTools)
+        case .screenTextCapture: modules.isEnabled(.textRecognition)
+        case .application, .file, .calculation: true
+        }
+    }
+
+    var canPreviewWithSpace: Bool {
+        LauncherPreviewKeyboardPolicy.canUseSpace(
+            selected: selectedResult, navigatedID: previewKeyboardSelectionID, category: category,
+            hasDetail: actionResult != nil || jiraActionDestination != nil || selectedNoolEvent != nil || showsQuickAI
+        )
+    }
+
+    func clearPreviewKeyboardSelection() { previewKeyboardSelectionID = nil }
+
+    func selectResult(_ id: String) {
+        clearPreviewKeyboardSelection()
+        selectedID = id
+    }
 
     var actionSource: NotchViewModel? { noolSource }
 
     func resultActions(for result: LauncherResult) -> [LauncherResultAction] {
+        guard isResultAvailable(result) else { return [] }
         let item: LauncherClipboardItem?
         if case .clipboard(let id) = result.payload { item = clipboard.items.first { $0.id == id } }
         else { item = nil }
-        return LauncherResultAction.available(for: result, clipboardItem: item)
+        return LauncherResultAction.available(for: result, clipboardItem: item).filter { action in
+            switch action {
+            case .processFile, .renameFile: modules.isEnabled(.fileShelf)
+            case .recognizeText: modules.isEnabled(.textRecognition)
+            case .attachToAI, .prepareAI, .translate, .explain: modules.isEnabled(.aiChat)
+            case .saveSnippet, .removeSnippet: modules.isEnabled(.clipboard)
+            case .jiraStatus, .jiraWorklog: modules.isEnabled(.jira)
+            default: true
+            }
+        }
     }
 
     func toggleActions() {
@@ -108,6 +181,7 @@ final class LauncherModel: ObservableObject {
     }
 
     func actionText(for result: LauncherResult) -> String? {
+        guard isResultAvailable(result) else { return nil }
         switch result.payload {
         case .clipboard(let id): return clipboard.items.first { $0.id == id }?.text
         case .snippet(let id): return snippets.items.first { $0.id == id }?.text
@@ -121,6 +195,7 @@ final class LauncherModel: ObservableObject {
     }
 
     func showJiraAction(_ action: LauncherResultAction, result: LauncherResult) {
+        guard modules.isEnabled(.jira) else { return }
         guard case .nool(let id, .jira) = result.payload,
               case .issue(let issue) = noolResults[id], noolSource != nil else { return }
         jiraActionDestination = LauncherJiraDestination(issue: issue, action: action)
@@ -129,6 +204,7 @@ final class LauncherModel: ObservableObject {
     /// Starts a separate draft while preserving the previous conversation. Never sends.
     @discardableResult
     func prepareAIText(_ text: String, prompt: String = "") -> Bool {
+        guard modules.isEnabled(.aiChat) else { return false }
         guard !aiChat.isStreaming, !aiChat.isImportingAttachments else {
             message = "Дождитесь ответа AI или загрузки вложений."; return false
         }
@@ -143,6 +219,7 @@ final class LauncherModel: ObservableObject {
     }
 
     func prepareAIFile(_ url: URL) {
+        guard modules.isEnabled(.aiChat) else { return }
         guard !aiChat.isStreaming, !aiChat.isImportingAttachments else {
             message = "Дождитесь ответа AI или загрузки вложений."; return
         }
@@ -152,7 +229,7 @@ final class LauncherModel: ObservableObject {
     }
 
     var canAskAI: Bool {
-        category == .all && selectedNoolEvent == nil && actionResult == nil && jiraActionDestination == nil && !isPreparingQuickAI
+        modules.isEnabled(.aiChat) && category == .all && selectedNoolEvent == nil && actionResult == nil && jiraActionDestination == nil && !isPreparingQuickAI
             && !aiChat.isStreaming && !aiChat.isImportingAttachments
             && !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && query.count <= 8_000
     }
@@ -211,7 +288,8 @@ final class LauncherModel: ObservableObject {
 
     /// Returns true when opening an external destination should dismiss Launcher.
     func openNoolResult(_ id: String) -> Bool {
-        guard let result = noolResults[id], let source = noolSource else { return false }
+        guard let result = noolResults[id], let source = noolSource,
+              isResultAvailable(LauncherResult(nool: result)) else { return false }
         switch result {
         case .issue(let issue): source.openJiraIssue(issue); return true
         case .session(let session): source.openAISession(session); return true
@@ -228,7 +306,7 @@ final class LauncherModel: ObservableObject {
         message = nil
         if category != .ai { category = .all }
         query = ""
-        clipboard.captureIfChanged()
+        if modules.isEnabled(.clipboard) { clipboard.captureIfChanged() }
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in await self?.applications.refresh() }
         rebuild()
@@ -243,8 +321,45 @@ final class LauncherModel: ObservableObject {
     }
 
     func settingsChanged() {
-        clipboard.configure(enabled: settings.clipboardEnabled, limit: settings.clipboardLimit, retentionDays: settings.retentionDays)
+        if modules.isEnabled(.clipboard) {
+            clipboard.configure(enabled: settings.clipboardEnabled, limit: settings.clipboardLimit, retentionDays: settings.retentionDays)
+        } else {
+            clipboard.stop()
+        }
         queryChanged()
+    }
+
+    private func moduleAvailabilityChanged() {
+        let changed = previouslyEnabledModules.symmetricDifference(modules.enabledModules)
+        previouslyEnabledModules = modules.enabledModules
+        guard !changed.isEmpty else { return }
+        if changed.contains(.clipboard) {
+            if modules.isEnabled(.clipboard) {
+                clipboard.configure(enabled: settings.clipboardEnabled, limit: settings.clipboardLimit, retentionDays: settings.retentionDays)
+            } else {
+                clipboard.stop()
+            }
+        }
+        if changed.contains(.aiChat), !modules.isEnabled(.aiChat) {
+            closeQuickAI()
+            aiChat.suspend()
+            textSelection.clear()
+        } else if changed.contains(.aiChat) {
+            aiChat.resume()
+        }
+        let launcherModules: Set<AppModuleID> = [
+            .aiChat, .clipboard, .fileShelf, .textRecognition, .networkTools,
+            .windowManagement, .agentInbox, .jira, .calendar
+        ]
+        guard !changed.isDisjoint(with: launcherModules) else { return }
+        if !availableCategories.contains(category) { category = .all; return }
+        if !modules.isEnabled(.jira) { jiraActionDestination = nil }
+        if !modules.isEnabled(.calendar) { selectedNoolEvent = nil }
+        clearPreviewKeyboardSelection()
+        closeActions()
+        results = []
+        selectedID = nil
+        rebuild()
     }
 
     func move(_ offset: Int) {
@@ -252,15 +367,21 @@ final class LauncherModel: ObservableObject {
         guard jiraActionDestination == nil else { return }
         guard !showsQuickAI else { return }
         selectedID = LauncherSelection.moved(current: selectedID, offset: offset, ids: results.map(\.id))
+        if let selectedResult, case .file = selectedResult.payload {
+            previewKeyboardSelectionID = selectedResult.id
+        } else {
+            clearPreviewKeyboardSelection()
+        }
     }
 
     func cycleCategory(backwards: Bool = false) {
-        let categories = LauncherCategory.allCases
+        let categories = availableCategories
         guard let index = categories.firstIndex(of: category) else { return }
         category = categories[(index + (backwards ? categories.count - 1 : 1)) % categories.count]
     }
 
     private func queryChanged() {
+        clearPreviewKeyboardSelection()
         closeActions()
         jiraActionDestination = nil
         closeQuickAI()
@@ -280,16 +401,21 @@ final class LauncherModel: ObservableObject {
 
     private func rebuild() {
         var matches: [LauncherResult] = []
-        matches += LauncherResult.windowCommands(layouts: windowLayouts.layouts, query: query, category: category)
+        if modules.isEnabled(.windowManagement) {
+            matches += LauncherResult.windowCommands(layouts: windowLayouts.layouts, query: query, category: category)
+            matches += LauncherResult.workspaceCommands(workspaces: workspaces.workspaces, query: query, category: category)
+        }
+        if modules.isEnabled(.networkTools) { matches += LauncherResult.speedTestCommands(query: query, category: category) }
+        if modules.isEnabled(.textRecognition) { matches += LauncherResult.screenTextCommands(query: query, category: category) }
         if category == .all || category == .applications { matches += applications.results }
         if category == .all || category == .files { matches += files.results }
-        if category == .all || category == .clipboard {
+        if modules.isEnabled(.clipboard) && (category == .all || category == .clipboard) {
             matches += snippets.items.map {
                 LauncherResult(id: "snippet:\($0.id)", title: $0.title,
                                subtitle: "Шаблон · " + $0.text, payload: .snippet($0.id))
             }
         }
-        let clipboardItems = settings.clipboardEnabled && (category == .clipboard || (category == .all && !query.isEmpty))
+        let clipboardItems = modules.isEnabled(.clipboard) && settings.clipboardEnabled && (category == .clipboard || (category == .all && !query.isEmpty))
             ? clipboard.items : []
         rankingTask?.cancel()
         rankingGeneration += 1
@@ -297,7 +423,7 @@ final class LauncherModel: ObservableObject {
         let input = query
         let scope = category
         let matchesInNool = category == .all && query.count <= 512
-            ? (noolSource?.searchResults(query: query) ?? []) : []
+            ? (noolSource?.searchResults(query: query) ?? []).filter { isResultAvailable(LauncherResult(nool: $0)) } : []
         noolResults = Dictionary(matchesInNool.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let noolCandidates = matchesInNool.map { LauncherResult(nool: $0) }
         let candidates = matches
@@ -309,6 +435,7 @@ final class LauncherModel: ObservableObject {
             guard !Task.isCancelled, let self, self.rankingGeneration == generation else { return }
             self.results = found
             self.selectedID = LauncherSelection.preserved(current: self.selectedID, ids: found.map(\.id))
+            if self.previewKeyboardSelectionID != self.selectedID { self.clearPreviewKeyboardSelection() }
             if let target = self.actionResult, !found.contains(target) { self.closeActions() }
         }
         isSearching = ((category == .all || category == .files) && files.isSearching)
@@ -316,8 +443,8 @@ final class LauncherModel: ObservableObject {
         var errors: [String] = []
         if category == .all || category == .files, let error = files.errorMessage { errors.append(error) }
         if category == .all || category == .applications, let error = applications.errorMessage { errors.append(error) }
-        if category == .clipboard, let error = clipboard.errorMessage { errors.append(error) }
-        if category == .all || category == .clipboard, let error = snippets.errorMessage { errors.append(error) }
+        if modules.isEnabled(.clipboard), category == .clipboard, let error = clipboard.errorMessage { errors.append(error) }
+        if modules.isEnabled(.clipboard), category == .all || category == .clipboard, let error = snippets.errorMessage { errors.append(error) }
         sourceError = errors.first
     }
 

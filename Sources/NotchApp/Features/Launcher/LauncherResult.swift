@@ -37,6 +37,11 @@ enum LauncherPayload: Hashable, Sendable {
     case windowAction(WindowLayoutAction)
     case windowLayout(UUID)
     case windowLayoutManager
+    case workspace(UUID)
+    case workspaceManager
+    case speedTest
+    case networkDiagnostics
+    case screenTextCapture
 }
 
 enum LauncherNoolKind: String, Hashable, Sendable {
@@ -50,6 +55,23 @@ enum LauncherNoolKind: String, Hashable, Sendable {
 }
 
 extension LauncherResult {
+    static func screenTextCommands(query: String, category: LauncherCategory) -> [LauncherResult] {
+        guard category == .all, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+        return [LauncherResult(id: "screen:text", title: "Текст с экрана",
+                               subtitle: "Выделить область · скриншот · распознать · OCR · screen capture · перевод · AI",
+                               payload: .screenTextCapture)]
+    }
+
+    static func speedTestCommands(query: String, category: LauncherCategory) -> [LauncherResult] {
+        guard category == .all, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+        return [LauncherResult(id: "speedtest:open", title: "Speedtest — проверка скорости",
+                               subtitle: "Интернет · сеть · Москва · Германия · Франкфурт · пинг · speed test",
+                               payload: .speedTest),
+                LauncherResult(id: "network:diagnostics", title: "Диагностика интернета",
+                               subtitle: "Шлюз · роутер · DNS · задержка · потери · ping · network diagnostics",
+                               payload: .networkDiagnostics)]
+    }
+
     static func windowCommands(layouts: [SavedWindowLayout], query: String,
                                category: LauncherCategory) -> [LauncherResult] {
         guard category == .all, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
@@ -63,6 +85,21 @@ extension LauncherResult {
               LauncherResult(id: "layout:\(layout.id)", title: "Раскладка: \(layout.name)",
                              subtitle: "Восстановить открытые окна · layout", payload: .windowLayout(layout.id))
           }
+    }
+
+    static func workspaceCommands(workspaces: [SavedWorkspace], query: String,
+                                  category: LauncherCategory) -> [LauncherResult] {
+        guard category == .all, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+        let manager = LauncherResult(id: "workspace:manager", title: "Рабочие пространства",
+                                     subtitle: "Создать или изменить набор приложений, папок и сайтов · workspaces",
+                                     payload: .workspaceManager)
+        return [manager] + workspaces.map { workspace in
+            let contents = workspace.entries.map(\.title).joined(separator: " · ")
+            return LauncherResult(id: "workspace:\(workspace.id)",
+                                  title: "Пространство: \(workspace.name)",
+                                  subtitle: "Запустить всё вместе · \(contents)",
+                                  payload: .workspace(workspace.id))
+        }
     }
 
     init(nool result: UnifiedSearchResult) {

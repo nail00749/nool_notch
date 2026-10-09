@@ -91,6 +91,17 @@ final class CompactAgentSignalController {
         publishBestSignal()
     }
 
+    func reset() {
+        completionTasks.values.forEach { $0.cancel() }
+        completionTasks.removeAll()
+        hasSeeded = false
+        knownStatuses.removeAll()
+        currentSessions.removeAll()
+        terminalSignals.removeAll()
+        currentSignal = nil
+        onChange?(nil)
+    }
+
     private func waitingSignal(for id: AISessionID, state: SessionState) -> CompactAgentSignal? {
         guard state.isFresh else { return nil }
         let kind: CompactAgentSignalKind

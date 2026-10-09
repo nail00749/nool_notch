@@ -5,6 +5,7 @@ import SwiftUI
 enum QuotaCornerStackLayout {
     static let itemWidth: CGFloat = 252
     static let itemHeight: CGFloat = 76
+    static let contentPadding: CGFloat = 8
     static let ringSize: CGFloat = 48
     static let labelWidth: CGFloat = 180
     static let itemStep: CGFloat = 72
@@ -118,7 +119,7 @@ struct CompactQuotaCornerTrigger: View {
             Color.clear
 
             Capsule(style: .continuous)
-                .fill(.black)
+                .fill(NotchPalette.accent)
                 .frame(
                     width: QuotaCornerStackLayout.triggerIndicatorWidth,
                     height: QuotaCornerStackLayout.triggerIndicatorHeight
@@ -201,13 +202,15 @@ struct CompactQuotaCornerStackItem: View {
                 }
             }
             .frame(
-                width: QuotaCornerStackLayout.itemWidth,
-                height: QuotaCornerStackLayout.itemHeight,
+                width: QuotaCornerStackLayout.itemWidth - QuotaCornerStackLayout.contentPadding * 2,
+                height: QuotaCornerStackLayout.itemHeight - QuotaCornerStackLayout.contentPadding * 2,
                 alignment: cornerAlignment
             )
             .rotationEffect(.degrees(QuotaCornerStackLayout.restingRotation(index: index, corner: corner)))
             .scaleEffect(isHovered ? 1.025 : 1)
             .animation(.easeOut(duration: 0.14), value: isHovered)
+            // Keep transformed content inside the transparent hosting window.
+            .padding(QuotaCornerStackLayout.contentPadding)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -233,11 +236,10 @@ struct CompactQuotaCornerStackItem: View {
         let visuals = QuotaProviderVisuals(providerID: providerID)
         return ZStack {
             Circle()
-                .fill(.black.opacity(0.90))
-                .shadow(color: .black.opacity(0.52), radius: 9, y: 5)
+                .fill(NotchPalette.surface.opacity(0.96))
 
             Circle()
-                .stroke(.white.opacity(0.13), lineWidth: QuotaProviderRingStyle.trackLineWidth)
+                .stroke(NotchPalette.track, lineWidth: QuotaProviderRingStyle.trackLineWidth)
                 .padding(3)
 
             if let remainingRatio {
@@ -251,22 +253,18 @@ struct CompactQuotaCornerStackItem: View {
                         )
                     )
                     .rotationEffect(.degrees(-90))
-                    .shadow(
-                        color: visuals.color.opacity(QuotaProviderRingStyle.glowOpacity),
-                        radius: QuotaProviderRingStyle.glowRadius
-                    )
                     .padding(3)
             }
 
             QuotaProviderBrandIcon(
                 providerID: providerID,
                 size: 18,
-                color: .white.opacity(0.94)
+                color: NotchPalette.text.opacity(0.94)
             )
         }
         .frame(width: QuotaCornerStackLayout.ringSize, height: QuotaCornerStackLayout.ringSize)
         .overlay {
-            Circle().stroke(.white.opacity(0.09), lineWidth: 0.75)
+            Circle().stroke(NotchPalette.separator, lineWidth: 0.75)
         }
     }
 
@@ -274,12 +272,12 @@ struct CompactQuotaCornerStackItem: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(provider?.displayName ?? snapshot?.providerName ?? "Лимит")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.94))
+                    .font(.system(size: 12, weight: .semibold, design: .default))
+                    .foregroundStyle(NotchPalette.text.opacity(0.94))
                     .lineLimit(1)
                 Text(resetHint)
-                    .font(.system(size: 8, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.42))
+                    .font(.system(size: 8, weight: .medium, design: .default))
+                    .foregroundStyle(NotchPalette.secondary)
                     .lineLimit(1)
             }
 
@@ -288,20 +286,21 @@ struct CompactQuotaCornerStackItem: View {
             Text(percentageText)
                 .font(.system(size: 15, weight: .bold, design: .monospaced))
                 .monospacedDigit()
-                .foregroundStyle(.white.opacity(remainingRatio == nil ? 0.38 : 0.92))
+                .foregroundStyle(NotchPalette.text.opacity(remainingRatio == nil ? 0.38 : 0.92))
         }
         .padding(.leading, corner.edge == .left ? 18 : 14)
         .padding(.trailing, corner.edge == .right ? 18 : 14)
         .frame(width: QuotaCornerStackLayout.labelWidth, height: 48)
-        .background(
-            Color.black.opacity(0.82),
-            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
-        )
+        .background {
+            // A shape fill stays inside the pill; no backing material or clipped
+            // shadow should expose the rectangular transparent hosting window.
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(NotchPalette.surface.opacity(0.96))
+        }
         .overlay {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(.white.opacity(isHovered ? 0.14 : 0.08), lineWidth: 0.75)
+                .stroke(NotchPalette.separator.opacity(isHovered ? 1.4 : 0.75), lineWidth: 0.75)
         }
-        .shadow(color: .black.opacity(0.34), radius: 10, y: 5)
     }
 
     private var accessibilityLabel: String {

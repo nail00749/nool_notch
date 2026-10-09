@@ -120,7 +120,7 @@ struct CompactQuotaEdgeTrigger: View {
             Color.clear
 
             Capsule(style: .continuous)
-                .fill(.black)
+                .fill(NotchPalette.accent)
                 .frame(
                     width: QuotaEdgePanelLayout.triggerIndicatorWidth,
                     height: QuotaEdgePanelLayout.triggerIndicatorHeight
@@ -156,13 +156,17 @@ struct CompactQuotaSidebar: View {
             height: QuotaEdgePanelLayout.railSize(providerCount: providers.count).height
         )
         .background {
-            QuotaEdgeWaveShape(edge: edge)
-                .fill(.black)
-                .shadow(color: .black.opacity(0.34), radius: 12, x: edge == .left ? 5 : -5, y: 4)
+            ZStack {
+                NativePanelBackground(material: .popover)
+                QuotaEdgeWaveShape(edge: edge)
+                    .fill(NotchPalette.surface.opacity(0.78))
+            }
+            .clipShape(QuotaEdgeWaveShape(edge: edge))
+            .shadow(color: .black.opacity(0.34), radius: 12, x: edge == .left ? 5 : -5, y: 4)
         }
         .overlay {
             QuotaEdgeWaveShape(edge: edge)
-                .stroke(.white.opacity(0.09), lineWidth: 0.5)
+                .stroke(NotchPalette.separator, lineWidth: 0.5)
         }
         .onHover(perform: onPanelHover)
         .onDisappear {
@@ -183,7 +187,7 @@ struct CompactQuotaSidebar: View {
                 ZStack {
                     Circle()
                         .stroke(
-                            .white.opacity(0.14),
+                            NotchPalette.track,
                             lineWidth: QuotaProviderRingStyle.trackLineWidth
                         )
 
@@ -207,7 +211,7 @@ struct CompactQuotaSidebar: View {
                     QuotaProviderBrandIcon(
                         providerID: provider.id,
                         size: 15,
-                        color: .white.opacity(0.9)
+                        color: NotchPalette.text.opacity(0.9)
                     )
                 }
                 .frame(width: 34, height: 34)
@@ -219,7 +223,7 @@ struct CompactQuotaSidebar: View {
                 Text(percentageText(remainingRatio))
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .monospacedDigit()
-                    .foregroundStyle(.white.opacity(remainingRatio == nil ? 0.38 : 0.82))
+                    .foregroundStyle(NotchPalette.text.opacity(remainingRatio == nil ? 0.38 : 0.82))
             }
             .frame(width: 58, height: QuotaEdgePanelLayout.rowHeight)
             .contentShape(Rectangle())
@@ -277,11 +281,11 @@ struct CompactQuotaDetailPanel: View {
                 QuotaProviderBrandIcon(
                     providerID: providerID,
                     size: 13,
-                    color: .white.opacity(0.9)
+                    color: NotchPalette.text.opacity(0.9)
                 )
                 Text(provider?.displayName ?? snapshot?.providerName ?? "Лимит")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 11, weight: .semibold, design: .default))
+                    .foregroundStyle(NotchPalette.text)
                 Spacer(minLength: 4)
                 Text(snapshot?.connection.label ?? "ОЖИДАНИЕ")
                     .font(.system(size: 7, weight: .bold, design: .monospaced))
@@ -305,13 +309,13 @@ struct CompactQuotaDetailPanel: View {
 
                 if snapshot.windows.count > 4 {
                     Text("Еще \(snapshot.windows.count - 4) — в полной панели")
-                        .font(.system(size: 7, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.34))
+                        .font(.system(size: 7, weight: .medium, design: .default))
+                        .foregroundStyle(NotchPalette.secondary.opacity(0.72))
                 }
             } else {
                 Text(snapshot?.message ?? "Обновляю данные…")
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.46))
+                    .font(.system(size: 9, weight: .medium, design: .default))
+                    .foregroundStyle(NotchPalette.secondary)
                     .lineLimit(2)
             }
         }
@@ -321,13 +325,17 @@ struct CompactQuotaDetailPanel: View {
         .frame(width: QuotaEdgePanelLayout.detailContentWidth)
         .fixedSize(horizontal: false, vertical: true)
         .background {
-            QuotaDetailBubbleShape(edge: edge)
-                .fill(.black)
-                .shadow(color: .black.opacity(0.40), radius: 12, y: 6)
+            ZStack {
+                NativePanelBackground(material: .popover)
+                QuotaDetailBubbleShape(edge: edge)
+                    .fill(NotchPalette.surface.opacity(0.82))
+            }
+            .clipShape(QuotaDetailBubbleShape(edge: edge))
+            .shadow(color: .black.opacity(0.40), radius: 12, y: 6)
         }
         .overlay {
             QuotaDetailBubbleShape(edge: edge)
-                .stroke(.white.opacity(0.10), lineWidth: 0.5)
+                .stroke(NotchPalette.separator, lineWidth: 0.5)
         }
         .padding(QuotaEdgePanelLayout.detailShadowPadding)
         .frame(
@@ -341,7 +349,7 @@ struct CompactQuotaDetailPanel: View {
         switch snapshot?.connection {
         case .live: .signalMint
         case .stale, .requiresAuthentication: .signalAmber
-        case .unavailable, nil: .white.opacity(0.34)
+        case .unavailable, nil: NotchPalette.secondary.opacity(0.72)
         }
     }
 }
@@ -427,20 +435,20 @@ private struct CompactQuotaHoverWindow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(window.label)
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.68))
+                    .font(.system(size: 9, weight: .semibold, design: .default))
+                    .foregroundStyle(NotchPalette.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 Text(percentage.map { "\($0)%" } ?? "--")
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.90))
+                    .foregroundStyle(NotchPalette.text.opacity(0.90))
             }
 
             if let remainingRatio = window.remainingRatio {
                 GeometryReader { proxy in
                     ZStack(alignment: .leading) {
-                        Capsule().fill(.white.opacity(0.10))
+                        Capsule().fill(NotchPalette.track)
                         Capsule()
                             .fill(remainingRatio < 0.2 ? Color.signalCoral : accent)
                             .frame(width: proxy.size.width * min(max(remainingRatio, 0), 1))
@@ -451,8 +459,8 @@ private struct CompactQuotaHoverWindow: View {
 
             if let resetAt = window.resetAt {
                 (Text("Сброс ") + Text(resetAt, style: .relative))
-                    .font(.system(size: 7, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.34))
+                    .font(.system(size: 7, weight: .medium, design: .default))
+                    .foregroundStyle(NotchPalette.secondary.opacity(0.72))
                     .lineLimit(1)
             }
         }

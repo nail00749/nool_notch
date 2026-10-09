@@ -3,8 +3,25 @@ import SwiftUI
 
 enum NotchMotion {
     static let compactResizeDuration: TimeInterval = 0.36
-    static let expansionDuration: TimeInterval = 0.54
-    static let collapseDuration: TimeInterval = 0.30
+    static let expansionDuration: TimeInterval = 0.42
+    static let collapseDuration: TimeInterval = 0.28
+    static let panelChangeDuration: TimeInterval = 0.24
+
+    static func panelAnimation(reduceMotion: Bool) -> Animation {
+        reduceMotion ? .linear(duration: 0.01)
+            : .interpolatingSpring(stiffness: 260, damping: 32)
+    }
+
+    static func contentAnimation(reduceMotion: Bool) -> Animation {
+        reduceMotion ? .linear(duration: 0.01)
+            : .easeOut(duration: 0.20)
+    }
+
+    static func sideControlAnimation(isExpanded: Bool, delay: TimeInterval, reduceMotion: Bool) -> Animation {
+        guard !reduceMotion else { return .linear(duration: 0.01) }
+        return .easeOut(duration: isExpanded ? 0.22 : 0.12)
+            .delay(isExpanded ? delay : 0)
+    }
 
     static func layoutAnimation(isExpanded: Bool, reduceMotion: Bool) -> Animation {
         reduceMotion

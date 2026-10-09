@@ -3,6 +3,7 @@ import SwiftUI
 
 struct TextRecognitionView: View {
     @ObservedObject var store: TextRecognitionStore
+    @ObservedObject var modules: AppModuleStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
@@ -29,7 +30,6 @@ struct TextRecognitionView: View {
         .background(NotchPalette.surface)
         .foregroundStyle(NotchPalette.text)
         .tint(NotchPalette.accent)
-        .preferredColorScheme(.dark)
     }
 
     private var header: some View {
@@ -42,12 +42,12 @@ struct TextRecognitionView: View {
                             in: RoundedRectangle(cornerRadius: 13, style: .continuous))
             VStack(alignment: .leading, spacing: 4) {
                 Text("Распознавание текста")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .font(.system(size: 18, weight: .bold, design: .default))
                 Text(fileSummary)
                     .font(.system(size: 11))
                     .foregroundStyle(NotchPalette.secondary)
                     .lineLimit(2)
-                    .help(store.urls.map(\.lastPathComponent).joined(separator: ", "))
+                    .help(fileSummary)
             }
             Spacer(minLength: 0)
             Button { store.close() } label: {
@@ -61,7 +61,8 @@ struct TextRecognitionView: View {
     }
 
     private var fileSummary: String {
-        store.urls.count == 1
+        if let title = store.sourceTitle { return title }
+        return store.urls.count == 1
             ? store.urls[0].lastPathComponent
             : "\(store.urls.count) файлов: " + store.urls.map(\.lastPathComponent).joined(separator: ", ")
     }
@@ -164,10 +165,16 @@ struct TextRecognitionView: View {
                 Button("Скопировать", action: store.copyText)
                     .buttonStyle(.bordered)
                     .disabled(store.text.isEmpty)
-                Button("В AI-черновик", action: store.prepareAIDraft)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(store.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityHint("Откроет текст в AI без отправки сообщения")
+                if modules.isEnabled(.aiChat) {
+                    Button("Перевести с AI…", action: store.prepareTranslationDraft)
+                        .buttonStyle(.bordered)
+                        .disabled(store.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .help("Подготовить перевод на русский в AI-чате, без отправки")
+                    Button("В AI-черновик", action: store.prepareAIDraft)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(store.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityHint("Откроет текст в AI без отправки сообщения")
+                }
             }
         }
     }
@@ -192,8 +199,8 @@ private struct TextRecognitionEditor: NSViewRepresentable {
         editor.isSelectable = true
         editor.isRichText = false
         editor.drawsBackground = false
-        editor.textColor = NSColor(NotchPalette.text)
-        editor.insertionPointColor = NSColor(NotchPalette.accent)
+        editor.textColor = .labelColor
+        editor.insertionPointColor = .controlAccentColor
         editor.font = .systemFont(ofSize: 12)
         editor.textContainerInset = NSSize(width: 12, height: 12)
         editor.textContainer?.lineFragmentPadding = 0

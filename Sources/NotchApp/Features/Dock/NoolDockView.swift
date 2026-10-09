@@ -14,7 +14,7 @@ struct NoolDockView: View {
         HStack(spacing: 6) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(settings.items) { item in
+                    ForEach(settings.items.filter { $0.isAvailable(in: model.modules) }) { item in
                         itemView(item)
                             .frame(width: item.baseWidth, height: 72)
                             .draggable(item.id)
@@ -43,19 +43,19 @@ struct NoolDockView: View {
 
             VStack(spacing: 2) {
                 controlButton("magnifyingglass", label: "Открыть Launcher", action: openLauncher)
-                controlButton("gearshape", label: "Настроить Nool Dock", action: openSettings)
+                controlButton("gearshape", label: "Настроить NooL Dock", action: openSettings)
             }
             .frame(width: 31)
         }
         .padding(8)
         .frame(height: 88)
         .background {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(NotchPalette.surface.opacity(settings.opacity))
-                }
+            ZStack {
+                NativePanelBackground(material: .popover)
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(NotchPalette.surface.opacity(settings.opacity))
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
         .overlay {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -64,7 +64,6 @@ struct NoolDockView: View {
         .shadow(color: .black.opacity(0.32), radius: 22, y: 7)
         .foregroundStyle(NotchPalette.text)
         .tint(NotchPalette.accent)
-        .preferredColorScheme(.dark)
     }
 
     @ViewBuilder
@@ -231,7 +230,7 @@ private struct NoolDockCalendarWidget: View {
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(NotchPalette.accent)
                         Text(context.date.formatted(.dateTime.day()))
-                            .font(.system(size: 21, weight: .medium, design: .rounded))
+                            .font(.system(size: 21, weight: .medium, design: .default))
                             .foregroundStyle(NotchPalette.text)
                     }
                     .frame(width: 36, height: 45)
@@ -279,7 +278,7 @@ private struct NoolDockTimerWidget: View {
             if let snapshot = source.snapshot {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(snapshot.countdownText)
-                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .font(.system(size: 15, weight: .semibold, design: .default))
                         .monospacedDigit()
                     Text(snapshot.state == .paused ? "Пауза" :
                          snapshot.state == .completed ? "Готово" : "Таймер")

@@ -21,7 +21,7 @@ final class LaunchAtLoginManager: ObservableObject {
 
         switch status {
         case .requiresApproval:
-            return "Подтвердите запуск NotchApp в настройках Login Items."
+            return "Подтвердите запуск NooL App в настройках Login Items."
         case .notFound:
             return "Автозапуск недоступен для этого bundle."
         case .enabled, .notRegistered:

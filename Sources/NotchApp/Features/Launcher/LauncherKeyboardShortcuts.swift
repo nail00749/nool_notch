@@ -7,6 +7,16 @@ enum LauncherTabAction: Equatable {
 }
 
 enum LauncherKeyboardShortcuts {
+    static func isPreview(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Bool {
+        keyCode == UInt16(kVK_ANSI_Y)
+            && modifiers.intersection([.command, .control, .option, .shift]) == .command
+    }
+
+    static func isPlainSpace(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Bool {
+        keyCode == UInt16(kVK_Space)
+            && modifiers.intersection([.command, .control, .option, .shift]).isEmpty
+    }
+
     static func isActions(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Bool {
         keyCode == UInt16(kVK_ANSI_K)
             && modifiers.intersection([.command, .control, .option, .shift]) == .command

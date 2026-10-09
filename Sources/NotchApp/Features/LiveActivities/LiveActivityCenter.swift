@@ -9,6 +9,7 @@ final class LiveActivityCenter: ObservableObject {
     let timerSource: NoolTimerSource
     private let sources: [any LiveActivitySource]
     private var activitiesBySource: [String: [LiveActivity]] = [:]
+    private var isStarted = false
 
     init(
         timerSource: NoolTimerSource = NoolTimerSource(),
@@ -32,14 +33,22 @@ final class LiveActivityCenter: ObservableObject {
     }
 
     func start() {
+        guard !isStarted else { return }
+        isStarted = true
         sources.forEach { $0.start() }
     }
 
     func stop() {
+        guard isStarted else { return }
+        isStarted = false
         sources.forEach { $0.stop() }
+        activitiesBySource.removeAll()
+        activities = []
+        updatedAt = nil
     }
 
     private func receive(_ activities: [LiveActivity], from sourceID: String) {
+        guard isStarted else { return }
         activitiesBySource[sourceID] = activities
         self.activities = sources
             .flatMap { activitiesBySource[$0.id] ?? [] }

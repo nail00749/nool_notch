@@ -2,86 +2,132 @@ import SwiftUI
 
 struct AISessionsPanel: View {
     @ObservedObject var model: NotchViewModel
+    var embedded = false
+
+    @State private var showsRecentSessions = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(spacing: 7) {
+        VStack(spacing: 9) {
+            sessionContent
+                .padding(.horizontal, embedded ? 0 : 15)
+                .frame(maxWidth: .infinity, alignment: .top)
+
             if let notice = healthNotice {
                 HStack(spacing: 6) {
                     Circle()
                         .fill(notice.color)
-                        .frame(width: 6, height: 6)
+                        .frame(width: 4, height: 4)
                     Text(notice.message)
-                        .lineLimit(1)
+                        .lineLimit(2)
                     Spacer(minLength: 0)
                 }
-                .font(.system(size: 9, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.48))
-                .padding(.horizontal, 18)
+                .font(.system(size: 9, weight: .medium, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.4))
+                .padding(.horizontal, embedded ? 2 : 17)
             }
-
-            sessionContent
-                .padding(.horizontal, 14)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
     }
 
     @ViewBuilder
     private var sessionContent: some View {
-        if model.aiSessions.isEmpty {
-            emptyState
+        if embedded {
+            sessionGroups
         } else {
             ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 10) {
-                    ForEach(InboxGroup.allCases) { group in
-                        let sessions = group.sessions(from: model.aiSessions)
-                        if sessions.isEmpty == false {
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack(spacing: 5) {
-                                    Text(group.title)
-                                    Text("\(sessions.count)")
-                                        .monospacedDigit()
-                                        .foregroundStyle(group.color)
-                                }
-                                .font(.system(size: 9, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.38))
-                                .padding(.horizontal, 4)
-
-                                ForEach(sessions) { session in
-                                    AISessionRow(
-                                        model: model,
-                                        session: session,
-                                        sourceName: model.aiSourceName(for: session),
-                                        isResponding: model.respondingAISessionIDs.contains(session.id),
-                                        responseError: model.aiResponseErrors[session.id],
-                                        onOpen: { model.openAISession(session) },
-                                        onRespond: { model.respondToAISession(session, response: $0) }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(.bottom, 4)
+                sessionGroups
             }
         }
     }
 
-    private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "tray")
-                .font(.system(size: 22, weight: .medium))
-                .foregroundStyle(Color.signalMint.opacity(0.72))
-            Text(emptyTitle)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.8))
-            Text("Запусти задачу в подключённом coding agent — она появится здесь автоматически.")
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.4))
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
+    private var sessionGroups: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Сейчас", systemImage: "waveform.path")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(NotchPalette.text.opacity(0.72))
+
+                ForEach([InboxGroup.attention, .active]) { group in
+                    let sessions = group.sessions(from: model.aiSessions)
+                    if !sessions.isEmpty {
+                        VStack(alignment: .leading, spacing: 7) {
+                            groupHeader(group, count: sessions.count)
+                            sessionRows(sessions)
+                        }
+                    }
+                }
+
+                if !model.aiSessions.contains(where: { $0.status.isActive }) {
+                    Label("Сейчас нет активных сессий", systemImage: "checkmark.circle")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(NotchPalette.text.opacity(0.4))
+                        .padding(.vertical, 4)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(NotchPalette.text.opacity(0.035), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            let recent = InboxGroup.recent.sessions(from: model.aiSessions)
+            if !recent.isEmpty {
+                VStack(alignment: .leading, spacing: 7) {
+                    Button {
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) {
+                            showsRecentSessions.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            groupHeader(.recent, count: recent.count)
+                            Image(systemName: showsRecentSessions ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(NotchPalette.secondary)
+                        }
+                        .frame(minHeight: 40)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(NotchButtonStyle())
+                    .disabled(model.isTransientSurfaceVisible)
+                    .accessibilityLabel("Недавние сессии, \(recent.count)")
+                    .accessibilityValue(showsRecentSessions ? "Развёрнуто" : "Свёрнуто")
+
+                    if showsRecentSessions { sessionRows(recent) }
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, showsRecentSessions ? 12 : 0)
+                .background(NotchPalette.text.opacity(0.025), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 28)
+        .padding(.bottom, 4)
+    }
+
+    private func groupHeader(_ group: InboxGroup, count: Int) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: group.icon)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(group.color)
+            Text(group.title)
+            Text("\(count)")
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .monospacedDigit()
+                .foregroundStyle(group.color)
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 9, weight: .medium))
+        .foregroundStyle(NotchPalette.text.opacity(0.38))
+    }
+
+    private func sessionRows(_ sessions: [AISession]) -> some View {
+        ForEach(sessions) { session in
+            AISessionRow(
+                model: model,
+                session: session,
+                sourceName: model.aiSourceName(for: session),
+                isResponding: model.respondingAISessionIDs.contains(session.id),
+                responseError: model.aiResponseErrors[session.id],
+                onOpen: { model.openAISession(session) },
+                onRespond: { model.respondToAISession(session, response: $0) }
+            )
+        }
     }
 
     private var healthNotice: (message: String, color: Color)? {
@@ -101,9 +147,6 @@ struct AISessionsPanel: View {
         return model.aiSourceNames.isEmpty ? ("Нет подключённых источников агентов", .signalCoral) : nil
     }
 
-    private var emptyTitle: String {
-        model.aiSourceNames.isEmpty ? "Подключи coding agent" : "Inbox пуст"
-    }
 }
 
 private enum InboxGroup: CaseIterable, Identifiable {
@@ -115,9 +158,17 @@ private enum InboxGroup: CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .attention: "НУЖНО ВНИМАНИЕ"
-        case .active: "В РАБОТЕ"
-        case .recent: "НЕДАВНИЕ"
+        case .attention: "Нужно внимание"
+        case .active: "В работе"
+        case .recent: "Недавние"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .attention: "exclamationmark.circle.fill"
+        case .active: "waveform.path"
+        case .recent: "clock.arrow.circlepath"
         }
     }
 
@@ -125,7 +176,7 @@ private enum InboxGroup: CaseIterable, Identifiable {
         switch self {
         case .attention: .signalAmber
         case .active: .signalMint
-        case .recent: .white.opacity(0.4)
+        case .recent: NotchPalette.text.opacity(0.4)
         }
     }
 
@@ -150,95 +201,67 @@ private struct AISessionRow: View {
     let onRespond: (AISessionResponse) -> Void
 
     @State private var answers: [String: String] = [:]
+    @State private var showsIntegrationDetails = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 6) {
                 Button(action: onOpen) {
-                    HStack(spacing: 10) {
-                        ZStack {
-                            Circle()
-                                .fill(statusColor.opacity(0.15))
-                                .frame(width: 28, height: 28)
-                            Circle()
-                                .fill(statusColor)
-                                .frame(width: 8, height: 8)
-                        }
-
+                    HStack(alignment: .top, spacing: 7) {
+                        Image(systemName: sourceIcon)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(statusColor.opacity(0.7))
+                            .frame(width: 16, height: 16)
                         VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 7) {
-                                Text(statusLabel)
-                                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                                    .foregroundStyle(statusColor)
-                                Text(sourceName.uppercased())
-                                    .font(.system(size: 7, weight: .bold, design: .rounded))
-                                    .foregroundStyle(.white.opacity(0.3))
-                                if session.isStale {
-                                    Text("STALE")
-                                        .font(.system(size: 7, weight: .bold, design: .monospaced))
-                                        .foregroundStyle(Color.signalAmber.opacity(0.8))
-                                }
-                            }
-
-                            Text(session.title)
-                                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.9))
-                                .lineLimit(1)
-
-                            if let jiraTitle = model.linkedJiraIssue(for: session)?.summary {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "link")
-                                        .foregroundStyle(Color.signalCyan.opacity(0.72))
-                                    Text(jiraTitle)
-                                        .lineLimit(1)
-                                }
-                                .font(.system(size: 9, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.5))
+                            HStack(spacing: 6) {
+                                Text(session.title)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(NotchPalette.text.opacity(0.85))
+                                    .lineLimit(1)
+                                statusBadge
+                                if session.isStale { staleBadge }
                             }
 
                             HStack(spacing: 5) {
+                                Text(sourceName)
                                 if let workspace = session.workspaceName {
-                                    Image(systemName: "folder")
+                                    Text("·")
                                     Text(workspace)
                                 }
                                 if let modelName = session.modelName, modelName.isEmpty == false {
-                                    if session.workspaceName != nil { Text("·") }
+                                    Text("·")
                                     Text(modelName)
                                 }
                             }
-                            .font(.system(size: 9, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.36))
+                            .font(.system(size: 9, weight: .medium, design: .default))
+                            .foregroundStyle(NotchPalette.text.opacity(0.36))
                             .lineLimit(1)
                         }
                     }
-                    .padding(.leading, 11)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 5)
                     .frame(
                         maxWidth: .infinity,
-                        minHeight: model.jiraIssueKey(for: session) == nil ? 62 : 108,
+                        minHeight: 40,
                         alignment: .topLeading
                     )
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(NotchButtonStyle())
-                .accessibilityLabel("\(statusLabel), \(session.title)")
+                .accessibilityLabel(sessionAccessibilityLabel)
                 .accessibilityHint("Открыть сессию в \(sourceName)")
 
-                sessionActivityColumn
-
-                if let issueKey = model.jiraIssueKey(for: session) {
-                    AISessionJiraAccessory(
-                        model: model,
-                        session: session,
-                        issueKey: issueKey
-                    )
-                }
+                sessionDuration
+                    .padding(.top, 7)
             }
-            .padding(.trailing, 7)
+
+            if hasIntegrationDetails {
+                integrationDetails
+            }
 
             if let request = session.attentionRequest {
                 Divider()
-                    .overlay(.white.opacity(0.06))
+                    .overlay(NotchPalette.text.opacity(0.06))
                     .padding(.horizontal, 10)
                 attentionControls(request)
                     .padding(8)
@@ -248,15 +271,15 @@ private struct AISessionRow: View {
                     Text("Открой \(sourceName), чтобы ответить")
                     Spacer(minLength: 0)
                 }
-                .font(.system(size: 9, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.38))
+                .font(.system(size: 9, weight: .medium, design: .default))
+                .foregroundStyle(NotchPalette.text.opacity(0.38))
                 .padding(.horizontal, 11)
                 .padding(.bottom, 9)
             }
 
             if let responseError {
                 Text(responseError)
-                    .font(.system(size: 8, weight: .medium, design: .rounded))
+                    .font(.system(size: 8, weight: .medium, design: .default))
                     .foregroundStyle(Color.signalCoral)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 11)
@@ -264,20 +287,50 @@ private struct AISessionRow: View {
             }
 
         }
-        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 15))
+        .animation(
+            reduceMotion ? .linear(duration: 0.01) : .easeOut(duration: 0.18),
+            value: session.status
+        )
+    }
+
+    private var sourceIcon: String {
+        let source = sourceName.lowercased()
+        if source.contains("codex") { return "chevron.left.forwardslash.chevron.right" }
+        if source.contains("claude") { return "sparkles" }
+        return "terminal.fill"
+    }
+
+    private var sessionAccessibilityLabel: String {
+        var context = [sourceName, statusLabel, session.title]
+        if session.isStale { context.append("Данные неактуальны") }
+        if let workspace = session.workspaceName { context.append("Проект: \(workspace)") }
+        if let modelName = session.modelName, !modelName.isEmpty {
+            context.append("Модель: \(modelName)")
+        }
+        return context.joined(separator: ", ")
+    }
+
+    private var statusBadge: some View {
+        Text(statusLabel)
+            .font(.system(size: 8, weight: .medium))
+            .foregroundStyle(session.status.needsAttention ? Color.signalAmber : NotchPalette.text.opacity(0.35))
+            .lineLimit(1)
+    }
+
+    private var staleBadge: some View {
+        Image(systemName: "clock.badge.exclamationmark")
+            .font(.system(size: 8, weight: .medium))
+            .foregroundStyle(Color.signalAmber.opacity(0.7))
+            .help("Данные неактуальны")
     }
 
     private var sessionActivityColumn: some View {
         VStack(spacing: 3) {
             HStack(spacing: 3) {
                 Text(codeReviewLabel)
-                    .font(.system(size: 7, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.3))
+                    .font(.system(size: 7, weight: .bold, design: .default))
+                    .foregroundStyle(NotchPalette.text.opacity(0.3))
                 Spacer(minLength: 2)
-                Text(session.lastActivity, style: .relative)
-                    .font(.system(size: 8, weight: .medium, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.34))
             }
 
             if showsCodeReviewAccessory {
@@ -291,12 +344,98 @@ private struct AISessionRow: View {
         .padding(4)
         .frame(width: 118, alignment: .top)
         .frame(minHeight: 60, alignment: .top)
-        .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(NotchPalette.text.opacity(0.035), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(.white.opacity(0.055), lineWidth: 1)
+                .stroke(NotchPalette.text.opacity(0.055), lineWidth: 1)
         }
         .padding(.vertical, 6)
+    }
+
+    @ViewBuilder
+    private var sessionDuration: some View {
+        if session.accumulatedActiveDuration != nil {
+            TimelineView(.animation(minimumInterval: 1, paused: session.status != .running)) { context in
+                let seconds = Int(max(0, session.activeDuration(at: context.date) ?? 0))
+                let formattedDuration = seconds >= 3600
+                    ? String(format: "%d:%02d:%02d", seconds / 3600, (seconds / 60) % 60, seconds % 60)
+                    : String(format: "%02d:%02d", seconds / 60, seconds % 60)
+                Text(formattedDuration)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(NotchPalette.text.opacity(0.5))
+                    .help("Время активной работы")
+                    .accessibilityLabel("Время активной работы")
+                    .accessibilityValue(formattedDuration)
+            }
+        } else {
+            Text(session.lastActivity, style: .relative)
+                .font(.system(size: 9, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(NotchPalette.text.opacity(0.36))
+                .help("Последняя активность")
+        }
+    }
+
+    private var hasIntegrationDetails: Bool {
+        showsCodeReviewAccessory || model.jiraIssueKey(for: session) != nil
+    }
+
+    private var integrationDetails: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) {
+                    showsIntegrationDetails.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    if showsCodeReviewAccessory {
+                        Image(systemName: "arrow.triangle.branch")
+                        Text(codeReviewLabel)
+                        if model.newReviewActivityCount(for: session) > 0 {
+                            Circle().fill(Color.signalAmber).frame(width: 5, height: 5)
+                        }
+                    }
+                    if let issueKey = model.jiraIssueKey(for: session) {
+                        if showsCodeReviewAccessory { Text("·") }
+                        Image(systemName: "link")
+                        Text(issueKey).foregroundStyle(Color.signalCyan)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: showsIntegrationDetails ? "chevron.up" : "chevron.down")
+                }
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(NotchPalette.text.opacity(0.55))
+                .padding(.leading, 23)
+                .padding(.trailing, 2)
+                .frame(maxWidth: .infinity, minHeight: 40)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(NotchButtonStyle())
+            .disabled(model.isTransientSurfaceVisible)
+            .accessibilityHint("Показать или скрыть действия Git и Jira")
+            .accessibilityValue(showsIntegrationDetails ? "Развёрнуто" : "Свёрнуто")
+
+            if showsIntegrationDetails {
+                VStack(alignment: .leading, spacing: 3) {
+                    if let jiraTitle = model.linkedJiraIssue(for: session)?.summary {
+                        Text(jiraTitle)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(NotchPalette.secondary)
+                            .lineLimit(2)
+                    }
+                    HStack(alignment: .top, spacing: 10) {
+                        if showsCodeReviewAccessory { sessionActivityColumn }
+                        if let issueKey = model.jiraIssueKey(for: session) {
+                            AISessionJiraAccessory(model: model, session: session, issueKey: issueKey)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
+            }
+        }
     }
 
     private var codeReviewLabel: String {
@@ -325,24 +464,24 @@ private struct AISessionRow: View {
                     Spacer(minLength: 4)
                     ProgressView()
                         .controlSize(.small)
-                        .tint(.white.opacity(0.7))
+                        .tint(NotchPalette.text.opacity(0.7))
                 }
             }
-            .font(.system(size: 10, weight: .bold, design: .rounded))
-            .foregroundStyle(.white.opacity(0.82))
+            .font(.system(size: 10, weight: .bold, design: .default))
+            .foregroundStyle(NotchPalette.text.opacity(0.82))
 
             if let detail = request.detail, detail.isEmpty == false {
                 Text(detail)
                     .font(.system(size: 9, weight: .medium, design: request.kind == .approval ? .monospaced : .rounded))
-                    .foregroundStyle(.white.opacity(0.58))
+                    .foregroundStyle(NotchPalette.text.opacity(0.58))
                     .lineLimit(3)
                     .textSelection(.enabled)
             }
 
             if let context = request.context, context.isEmpty == false {
                 Label(URL(fileURLWithPath: context).lastPathComponent, systemImage: "folder")
-                    .font(.system(size: 8, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.32))
+                    .font(.system(size: 8, weight: .medium, design: .default))
+                    .foregroundStyle(NotchPalette.text.opacity(0.32))
             }
 
             switch request.kind {
@@ -353,7 +492,7 @@ private struct AISessionRow: View {
             }
         }
         .padding(8)
-        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+        .background(NotchPalette.text.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func approvalButtons(_ request: AISessionAttentionRequest) -> some View {
@@ -378,8 +517,8 @@ private struct AISessionRow: View {
                 VStack(alignment: .leading, spacing: 5) {
                     if request.questions.count > 1 {
                         Text(question.prompt)
-                            .font(.system(size: 9, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.52))
+                            .font(.system(size: 9, weight: .medium, design: .default))
+                            .foregroundStyle(NotchPalette.text.opacity(0.52))
                     }
 
                     if question.options.isEmpty == false {
@@ -402,11 +541,11 @@ private struct AISessionRow: View {
                             )
                         )
                         .textFieldStyle(.plain)
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.86))
+                        .font(.system(size: 10, weight: .medium, design: .default))
+                        .foregroundStyle(NotchPalette.text.opacity(0.86))
                         .padding(.horizontal, 9)
                         .frame(minHeight: 34)
-                        .background(.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
+                        .background(NotchPalette.raised, in: RoundedRectangle(cornerRadius: 8))
                         .onSubmit { submitAnswers(request) }
                     }
                 }
@@ -449,9 +588,9 @@ private struct AISessionRow: View {
         case .running: .signalMint
         case .waitingForApproval: .signalAmber
         case .waitingForInput: .signalCyan
-        case .completed: .white.opacity(0.42)
+        case .completed: NotchPalette.text.opacity(0.42)
         case .failed: .signalCoral
-        case .unknown: .white.opacity(0.28)
+        case .unknown: NotchPalette.text.opacity(0.28)
         }
     }
 }
@@ -477,7 +616,7 @@ private struct AISessionCodeReviewAccessory: View {
                 )
                 statusIcon(
                     "text.bubble",
-                    color: newActivityCount > 0 ? .signalAmber : .white.opacity(0.38),
+                    color: newActivityCount > 0 ? .signalAmber : NotchPalette.text.opacity(0.38),
                     help: newActivityCount > 0
                         ? "Новая reviewer activity"
                         : "Нет новой reviewer activity",
@@ -497,13 +636,13 @@ private struct AISessionCodeReviewAccessory: View {
             case .loading:
                 ProgressView()
                     .controlSize(.mini)
-                    .tint(.white.opacity(0.46))
+                    .tint(NotchPalette.text.opacity(0.46))
                     .frame(width: 40, height: 40)
                     .accessibilityLabel("Загружаю PR или MR")
             case .loaded(let snapshot):
                 statusIcon(
                     "arrow.triangle.branch",
-                    color: .white.opacity(0.3),
+                    color: NotchPalette.text.opacity(0.3),
                     help: "Для ветки \(snapshot.repository.branch) нет открытого PR или MR"
                 )
                 .frame(width: 40, height: 40)
@@ -548,10 +687,10 @@ private struct AISessionCodeReviewAccessory: View {
         Button(action: action) {
             Image(systemName: name)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(0.7))
+                .foregroundStyle(NotchPalette.text.opacity(0.7))
                 .frame(width: 26, height: 26)
                 .background(
-                    Color.white.opacity(0.065),
+                    NotchPalette.text.opacity(0.065),
                     in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                 )
                 .frame(width: 40, height: 40)
@@ -573,7 +712,7 @@ private struct AISessionCodeReviewAccessory: View {
 
     private func ciColor(_ state: CodeCICheckState) -> Color {
         switch state {
-        case .none: .white.opacity(0.32)
+        case .none: NotchPalette.text.opacity(0.32)
         case .pending: .signalAmber
         case .passed: .signalMint
         case .failed: .signalCoral
@@ -599,7 +738,7 @@ private struct AISessionCodeReviewAccessory: View {
 
     private func mergeColor(_ state: CodeMergeState) -> Color {
         switch state {
-        case .unknown: .white.opacity(0.32)
+        case .unknown: NotchPalette.text.opacity(0.32)
         case .ready: .signalMint
         case .conflicting: .signalCoral
         }
@@ -663,7 +802,7 @@ private struct AISessionJiraAccessory: View {
         VStack(spacing: 4) {
             HStack(spacing: 3) {
                 Text("JIRA")
-                    .foregroundStyle(.white.opacity(0.3))
+                    .foregroundStyle(NotchPalette.text.opacity(0.3))
                 Text(issueKey)
                     .fontDesign(.monospaced)
                     .foregroundStyle(Color.signalCyan)
@@ -677,7 +816,7 @@ private struct AISessionJiraAccessory: View {
                         .accessibilityLabel("Статус Jira: \(issue.status.name)")
                 }
             }
-            .font(.system(size: 7, weight: .bold, design: .rounded))
+            .font(.system(size: 7, weight: .bold, design: .default))
             .frame(width: 82)
 
             jiraContent
@@ -687,7 +826,7 @@ private struct AISessionJiraAccessory: View {
         .frame(minHeight: 108, alignment: .top)
         .background(
             LinearGradient(
-                colors: [Color.signalCyan.opacity(0.09), Color.white.opacity(0.03)],
+                colors: [Color.signalCyan.opacity(0.09), NotchPalette.text.opacity(0.03)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             ),
@@ -751,7 +890,7 @@ private struct AISessionJiraAccessory: View {
                 jiraActionButton(
                     title: "Исп.",
                     icon: "person.crop.circle",
-                    tint: .white.opacity(0.64),
+                    tint: NotchPalette.text.opacity(0.64),
                     help: "Изменить исполнителя"
                 ) {
                     model.transientSurfaceDidPresent(.jiraAssignee(issue.key))
@@ -776,7 +915,7 @@ private struct AISessionJiraAccessory: View {
         } else if model.isLinkedJiraIssueLoading(for: session) {
             ProgressView()
                 .controlSize(.mini)
-                .tint(.white.opacity(0.46))
+                .tint(NotchPalette.text.opacity(0.46))
                 .frame(width: 82, height: 82)
                 .accessibilityLabel("Загружаю задачу Jira")
         } else if let error = model.linkedJiraError(for: session) {
@@ -866,8 +1005,8 @@ private struct ActionButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 9, weight: .bold, design: .rounded))
-                .foregroundStyle(disabled ? .white.opacity(0.28) : color)
+                .font(.system(size: 9, weight: .bold, design: .default))
+                .foregroundStyle(disabled ? NotchPalette.text.opacity(0.28) : color)
                 .frame(maxWidth: .infinity, minHeight: 34)
                 .background(color.opacity(disabled ? 0.04 : 0.12), in: RoundedRectangle(cornerRadius: 8))
                 .contentShape(Rectangle())
@@ -882,12 +1021,12 @@ private struct AnswerOptionStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 9, weight: .semibold, design: .rounded))
-            .foregroundStyle(isSelected ? Color.black : Color.white.opacity(0.58))
+            .font(.system(size: 9, weight: .semibold, design: .default))
+            .foregroundStyle(isSelected ? Color.black : NotchPalette.text.opacity(0.58))
             .padding(.horizontal, 9)
             .frame(minHeight: 30)
             .background(
-                isSelected ? Color.signalCyan : Color.white.opacity(configuration.isPressed ? 0.1 : 0.055),
+                isSelected ? Color.signalCyan : NotchPalette.text.opacity(configuration.isPressed ? 0.1 : 0.055),
                 in: Capsule()
             )
             .scaleEffect(configuration.isPressed ? 0.96 : 1)

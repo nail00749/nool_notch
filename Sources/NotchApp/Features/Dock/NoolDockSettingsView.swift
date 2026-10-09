@@ -13,7 +13,7 @@ struct NoolDockSettingsView: View {
         VStack(spacing: 12) {
             SettingsCard(title: "Отдельный Dock", icon: "dock.rectangle") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Toggle("Показывать Nool Dock", isOn: $settings.isEnabled)
+                    Toggle("Показывать NooL Dock", isOn: $settings.isEnabled)
                         .toggleStyle(.switch)
 
                     Text("Панель с приложениями и виджетами у нижнего края экрана.")
@@ -32,7 +32,7 @@ struct NoolDockSettingsView: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .accessibilityLabel("Дисплей Nool Dock")
+                    .accessibilityLabel("Дисплей NooL Dock")
 
                     labeledSlider("Размер", value: $settings.scale,
                                   range: 0.8...1.2,
@@ -52,7 +52,7 @@ struct NoolDockSettingsView: View {
                         Label("Добавить приложение", systemImage: "plus")
                     }
                     .buttonStyle(.bordered)
-                    .accessibilityLabel("Добавить приложение в Nool Dock")
+                    .accessibilityLabel("Добавить приложение в NooL Dock")
 
                     if let pickerError {
                         Text(pickerError)

@@ -60,8 +60,8 @@ final class NoolDockWindowCoordinator {
                               backing: .buffered, defer: false)
         trigger = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                           backing: .buffered, defer: false)
-        configure(panel, title: "Nool Dock")
-        configure(trigger, title: "Показать Nool Dock")
+        configure(panel, title: "NooL Dock")
+        configure(trigger, title: "Показать NooL Dock")
         let hosting = NSHostingView(rootView: NoolDockContainer(
             settings: settings, model: model, presentation: presentation,
             openSettings: openSettings, openLauncher: openLauncher,
@@ -114,7 +114,7 @@ final class NoolDockWindowCoordinator {
         window.isFloatingPanel = true
         window.level = .floating
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = nil
         window.isMovable = false
     }
 
@@ -141,7 +141,8 @@ final class NoolDockWindowCoordinator {
             trigger.orderOut(nil)
             return
         }
-        let width = settings.items.reduce(NoolDockLayout.controlsWidth + 16) { $0 + $1.baseWidth + 6 }
+        let availableItems = settings.items.filter { $0.isAvailable(in: model.modules) }
+        let width = availableItems.reduce(NoolDockLayout.controlsWidth + 16) { $0 + $1.baseWidth + 6 }
         let frame = NoolDockLayout.frame(visibleFrame: screen.visibleFrame, contentWidth: width, scale: settings.scale)
         if targetFrame != frame {
             targetFrame = frame
@@ -158,8 +159,8 @@ final class NoolDockWindowCoordinator {
             if !trigger.isVisible { trigger.orderFrontRegardless() }
         }
         model.setDockWidgets(
-            musicVisible: showingContent && settings.items.contains { $0.kind == .music },
-            calendarEnabled: settings.items.contains { $0.kind == .calendar }
+            musicVisible: showingContent && availableItems.contains { $0.kind == .music },
+            calendarEnabled: availableItems.contains { $0.kind == .calendar }
         )
         if settings.autoHide && showingContent { scheduleHide() }
     }
@@ -288,7 +289,7 @@ final class NoolDockWindowCoordinator {
         setInteracting(true)
         let alert = NSAlert()
         alert.messageText = "Не удалось открыть \(title)"
-        alert.informativeText = "Возможно, приложение перемещено или удалено. Добавьте его заново в настройках Nool Dock."
+        alert.informativeText = "Возможно, приложение перемещено или удалено. Добавьте его заново в настройках NooL Dock."
         alert.beginSheetModal(for: panel) { [weak self] _ in
             self?.setInteracting(false)
         }
@@ -306,13 +307,14 @@ private struct NoolDockContainer: View {
     let hoverChanged: (Bool) -> Void
 
     var body: some View {
-        NoolDockView(settings: settings, model: model, openSettings: openSettings, openLauncher: openLauncher,
-                     openApplication: openApplication, interactionChanged: interactionChanged)
-            .frame(width: presentation.logicalWidth, height: NoolDockLayout.contentHeight)
-            .scaleEffect(settings.scale)
-            .frame(width: presentation.logicalWidth * settings.scale, height: NoolDockLayout.contentHeight * settings.scale)
-            .onHover(perform: hoverChanged)
-            .preferredColorScheme(.dark)
+        if model.modules.isEnabled(.dock), settings.isEnabled {
+            NoolDockView(settings: settings, model: model, openSettings: openSettings, openLauncher: openLauncher,
+                         openApplication: openApplication, interactionChanged: interactionChanged)
+                .frame(width: presentation.logicalWidth, height: NoolDockLayout.contentHeight)
+                .scaleEffect(settings.scale)
+                .frame(width: presentation.logicalWidth * settings.scale, height: NoolDockLayout.contentHeight * settings.scale)
+                .onHover(perform: hoverChanged)
+        }
     }
 }
 
@@ -328,7 +330,7 @@ private struct NoolDockHandle: View {
                 .overlay(Capsule().strokeBorder(NotchPalette.separator, lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Показать Nool Dock")
+        .accessibilityLabel("Показать NooL Dock")
         .onHover(perform: hoverChanged)
     }
 }
