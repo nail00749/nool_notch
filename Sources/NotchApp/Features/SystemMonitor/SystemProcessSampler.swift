@@ -78,6 +78,10 @@ struct SystemProcessCalculator {
     private var previousUptime: TimeInterval?
     let nanosecondsPerTick: Double
 
+    init(nanosecondsPerTick: Double) {
+        self.nanosecondsPerTick = nanosecondsPerTick
+    }
+
     mutating func reset() {
         previous.removeAll(keepingCapacity: true)
         previousUptime = nil
