@@ -46,6 +46,7 @@ final class NotchWindowCoordinator: NSObject {
     private let launchAtLogin: LaunchAtLoginManager
     private let dockSettings: NoolDockSettings
     private let lidEffect = LidEffectController()
+    private let liveWallpaper = LiveWallpaperController()
     private let systemMonitor = SystemMonitorStore()
     private var systemMonitorWindow: SystemMonitorWindowCoordinator?
     private var dock: NoolDockWindowCoordinator?
@@ -117,6 +118,7 @@ final class NotchWindowCoordinator: NSObject {
             launcher: launcher,
             dockSettings: dockSettings,
             lidEffect: lidEffect,
+            liveWallpaper: liveWallpaper,
             systemMonitor: systemMonitor
         )
 
@@ -252,6 +254,8 @@ final class NotchWindowCoordinator: NSObject {
                                stop: { [weak self] in self?.dock?.stop() })
         moduleRuntime.register(.lidEffect, start: { [weak self] in self?.lidEffect.start() },
                                stop: { [weak self] in self?.lidEffect.pause() })
+        moduleRuntime.register(.liveWallpaper, start: { [weak self] in self?.liveWallpaper.start() },
+                               stop: { [weak self] in self?.liveWallpaper.pause() })
         moduleRuntime.register(.textRecognition, start: {}, stop: { [weak self] in
             self?.screenTextCapture.cancel()
             self?.textRecognition.stop()
@@ -320,6 +324,7 @@ final class NotchWindowCoordinator: NSObject {
         systemMonitorWindow?.stop()
         settingsCoordinator.stop()
         lidEffect.stop()
+        liveWallpaper.stop()
         fileActions.stop()
         screenTextCapture.cancel()
         launcher.onCaptureScreenText = nil
@@ -345,6 +350,7 @@ final class NotchWindowCoordinator: NSObject {
 
     func reposition() {
         guard isStarted else { return }
+        configureDisplayFollowing()
         dock?.reposition()
         displaySettings.refreshConnectedDisplays()
         let screen = displaySettings.selectedScreen(
@@ -463,9 +469,12 @@ final class NotchWindowCoordinator: NSObject {
 
     private func configureDisplayFollowing() {
         guard isStarted else { return }
+        // With a single screen there is nothing to follow; screen changes call this again.
+        let follows = displaySettings.mode == .followPointer && NSScreen.screens.count > 1
+        guard follows != (displayFollowTimer != nil) else { return }
         displayFollowTimer?.invalidate()
         displayFollowTimer = nil
-        guard displaySettings.mode == .followPointer else { return }
+        guard follows else { return }
 
         let timer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in

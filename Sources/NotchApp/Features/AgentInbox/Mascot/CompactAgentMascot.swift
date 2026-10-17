@@ -275,11 +275,16 @@ private struct NoolMascotSceneView: NSViewRepresentable {
             waveNode.eulerAngles = coordinator.neutralRotation
             sceneView.isPlaying = false
         } else {
+            // A few waves, then the view stops rendering: a pinned-open notch must not keep
+            // SceneKit drawing at full frame rate for a static mascot.
+            guard coordinator.hasWaved == false else { return }
             if waveNode.action(forKey: Coordinator.waveActionKey) == nil {
-                waveNode.runAction(
-                    Coordinator.waveAction,
-                    forKey: Coordinator.waveActionKey
-                )
+                waveNode.runAction(Coordinator.waveAction, forKey: Coordinator.waveActionKey) { [weak sceneView] in
+                    DispatchQueue.main.async {
+                        coordinator.hasWaved = true
+                        sceneView?.isPlaying = false
+                    }
+                }
             }
             sceneView.isPlaying = true
         }
@@ -300,18 +305,19 @@ private struct NoolMascotSceneView: NSViewRepresentable {
                 return action
             }
 
-            return .repeatForever(.sequence([
+            return .repeat(.sequence([
                 .wait(duration: 2.0),
                 turn(-0.24, duration: 0.16),
                 turn(0.48, duration: 0.22),
                 turn(-0.48, duration: 0.22),
                 turn(0.48, duration: 0.22),
                 turn(-0.24, duration: 0.16)
-            ]))
+            ]), count: 3)
         }()
 
         var waveNode: SCNNode?
         var neutralRotation = SCNVector3Zero
         var isConfigured = false
+        var hasWaved = false
     }
 }

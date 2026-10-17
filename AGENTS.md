@@ -39,6 +39,14 @@ target, не отдельные Swift-модули. Shared не зависит �
 - `Sources/NotchApp/Features/WindowLayouts` — геометрия, сохранение и AX-управление
   окнами; Accessibility запрашивается только явным действием пользователя.
 - `Sources/NotchApp/Features/Dock` — дополнительная панель NooL Dock.
+- `Sources/NotchApp/Features/LiveWallpaper` — видео-обои: click-through окна на
+  уровне desktop под иконками, свой видеоролик для каждого дисплея (ключ — UUID
+  экрана) с общим по умолчанию; экраны с одним роликом делят AVPlayer; локальная
+  библиотека в Application Support и пауза по сну, питанию и перекрытию окнами.
+  Системные обои меняются только по явному переключателю пользователя.
+  Сцены и картинки рисует SpriteKit (`LiveWallpaperParticleScene`) в тех же
+  click-through окнах; курсор читается через `NSEvent.mouseLocation`, без
+  глобальных мониторов и Accessibility. Пауза останавливает `SKView`.
 - `Sources/NotchApp/Features/TextRecognition` — локальный OCR изображений и
   PDF через Vision, ограниченное чтение вне main actor, отмена запроса при
   закрытии окна; AI получает только явно подготовленный черновик.

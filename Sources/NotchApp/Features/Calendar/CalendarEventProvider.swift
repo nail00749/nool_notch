@@ -112,6 +112,11 @@ enum CalendarLoadState: Equatable, Sendable {
     case denied
 }
 
+/// EKEventStore queries are documented as safe off the main thread; only value types leave the queue.
+private struct CalendarStoreBox: @unchecked Sendable {
+    let store: EKEventStore
+}
+
 @MainActor
 private final class CalendarAccessRequest {
     private var continuation: CheckedContinuation<Bool, Never>?
@@ -133,6 +138,7 @@ private final class CalendarAccessRequest {
 @MainActor
 final class CalendarEventProvider: CalendarProviding {
     private let store = EKEventStore()
+    private let fetchQueue = DispatchQueue(label: "nool.calendar.fetch", qos: .userInitiated)
 
     var canLoadWithoutPrompt: Bool {
         EKEventStore.authorizationStatus(for: .event) == .fullAccess
@@ -149,15 +155,9 @@ final class CalendarEventProvider: CalendarProviding {
         }
 
         let month = CalendarMonthKey(date: startDate)
-        let upcomingEvents = events(from: startDate, to: endDate)
-            .sorted { $0.startDate < $1.startDate }
-
-        return .loaded(
-            CalendarSnapshot(
-                upcomingEvents: upcomingEvents,
-                monthEvents: events(from: month.startDate, to: month.endDate)
-            )
-        )
+        let upcomingEvents = await events(from: startDate, to: endDate)
+        let monthEvents = await events(from: month.startDate, to: month.endDate)
+        return .loaded(CalendarSnapshot(upcomingEvents: upcomingEvents, monthEvents: monthEvents))
     }
 
     func loadEvents(for month: Date) async -> [CalendarEvent] {
@@ -166,10 +166,21 @@ final class CalendarEventProvider: CalendarProviding {
         }
 
         let monthKey = CalendarMonthKey(date: month)
-        return events(from: monthKey.startDate, to: monthKey.endDate)
+        return await events(from: monthKey.startDate, to: monthKey.endDate)
     }
 
-    private func events(from startDate: Date, to endDate: Date) -> [CalendarEvent] {
+    /// `events(matching:)` is synchronous and can take hundreds of milliseconds with Exchange or
+    /// subscribed calendars, so the query and link parsing run on a serial background queue.
+    private func events(from startDate: Date, to endDate: Date) async -> [CalendarEvent] {
+        let store = CalendarStoreBox(store: store)
+        return await withCheckedContinuation { continuation in
+            fetchQueue.async {
+                continuation.resume(returning: Self.fetchEvents(in: store.store, from: startDate, to: endDate))
+            }
+        }
+    }
+
+    nonisolated private static func fetchEvents(in store: EKEventStore, from startDate: Date, to endDate: Date) -> [CalendarEvent] {
         let predicate = store.predicateForEvents(
             withStart: startDate,
             end: endDate,

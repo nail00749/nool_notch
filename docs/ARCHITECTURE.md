@@ -54,6 +54,7 @@ Sources/
       Launcher/             Поиск, навигация и окно Launcher
       LidEffect/            Датчик крышки, локальное размытие экрана и настройки
       LiveActivities/       Агрегация активностей и системные Sources
+      LiveWallpaper/        Видео-обои на уровне рабочего стола, библиотека и политика паузы
       Music/                Now Playing и Accessibility fallback
       Quotas/               Лимиты провайдеров и их представление
       Search/               Поиск по загруженным данным NooL App

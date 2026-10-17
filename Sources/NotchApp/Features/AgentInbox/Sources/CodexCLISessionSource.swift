@@ -200,6 +200,9 @@ final class LocalAgentSessionSource: AISessionSource {
                 questions: []
             )
             pendingResponders[requestID] = responder
+            responder.onCancel = { [weak self] in
+                self?.withdrawRequest(requestID, sessionID: compositeSessionID)
+            }
         } else {
             request = nil
             switch event.eventName.lowercased() {
@@ -225,6 +228,24 @@ final class LocalAgentSessionSource: AISessionSource {
             lastActivity: .now,
             isStale: false,
             attentionRequest: request
+        )
+        publishCurrentSessions()
+    }
+
+    /// The CLI stopped waiting, so its approval buttons must disappear.
+    private func withdrawRequest(_ requestID: String, sessionID: String) {
+        pendingResponders.removeValue(forKey: requestID)
+        guard let previous = hookSessions[sessionID], previous.attentionRequest?.id == requestID else { return }
+        hookSessions[sessionID] = AISession(
+            id: previous.id,
+            agentName: previous.agentName,
+            title: previous.title,
+            workspacePath: previous.workspacePath,
+            modelName: previous.modelName,
+            status: .running,
+            startedAt: previous.startedAt,
+            lastActivity: .now,
+            isStale: false
         )
         publishCurrentSessions()
     }

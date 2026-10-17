@@ -586,8 +586,9 @@ final class NowPlayingProvider: NowPlayingProviding {
         pollingTask = Task { @MainActor [weak self] in
             while Task.isCancelled == false {
                 try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
-                guard Task.isCancelled == false else { return }
-                self?.refresh()
+                // The loop ends with its owner, not only when stop() cancels it.
+                guard Task.isCancelled == false, let self else { return }
+                self.refresh()
             }
         }
     }

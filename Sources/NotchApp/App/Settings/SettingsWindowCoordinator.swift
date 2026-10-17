@@ -13,6 +13,7 @@ final class SettingsWindowCoordinator: NSObject, NSWindowDelegate {
     private let launcher: LauncherWindowCoordinator
     private let dockSettings: NoolDockSettings
     private let lidEffect: LidEffectController
+    private let liveWallpaper: LiveWallpaperController
     private let systemMonitor: SystemMonitorStore
     private(set) var isStarted = false
 
@@ -28,6 +29,7 @@ final class SettingsWindowCoordinator: NSObject, NSWindowDelegate {
         launcher: LauncherWindowCoordinator,
         dockSettings: NoolDockSettings,
         lidEffect: LidEffectController,
+        liveWallpaper: LiveWallpaperController,
         systemMonitor: SystemMonitorStore
     ) {
         self.model = model
@@ -38,6 +40,7 @@ final class SettingsWindowCoordinator: NSObject, NSWindowDelegate {
         self.launcher = launcher
         self.dockSettings = dockSettings
         self.lidEffect = lidEffect
+        self.liveWallpaper = liveWallpaper
         self.systemMonitor = systemMonitor
         window = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 880, height: 740),
@@ -99,6 +102,7 @@ final class SettingsWindowCoordinator: NSObject, NSWindowDelegate {
             launcher: launcher,
             dockSettings: dockSettings,
             lidEffect: lidEffect,
+            liveWallpaper: liveWallpaper,
             systemMonitor: systemMonitor,
             initialSection: section
         ))

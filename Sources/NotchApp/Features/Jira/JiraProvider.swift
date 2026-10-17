@@ -34,6 +34,11 @@ final class JiraProvider: JiraProviding {
     private var pinnedSourceGeneration: UInt = 0
     private var pendingPinIssueKeys: Set<String> = []
     private var nextIssueStartAt = 0
+    /// When the list last loaded; re-expanding the notch within `visibleRefreshInterval` reuses it.
+    private var listLoadedAt: Date?
+    /// The Keychain token, kept in memory so each refresh does not hit Keychain on the main actor.
+    private var cachedToken: String?
+    static let visibleRefreshInterval: TimeInterval = 45
 
     private static let issuePageSize = 50
 
@@ -100,6 +105,11 @@ final class JiraProvider: JiraProviding {
             return
         }
         guard isStarted, isConfigured else { return }
+        if let listLoadedAt, Date().timeIntervalSince(listLoadedAt) < Self.visibleRefreshInterval,
+           case .loaded = state.list {
+            startPolling()
+            return
+        }
         refresh()
         startPolling()
     }
@@ -147,6 +157,7 @@ final class JiraProvider: JiraProviding {
                       self.refreshGeneration == generation else { return }
                 self.state.projects = projects
                 self.state.list = .loaded(issues: page.issues, total: page.total)
+                self.listLoadedAt = Date()
                 self.nextIssueStartAt = page.issues.count
                 self.state.canLoadMoreIssues = page.issues.isEmpty == false
                     && self.nextIssueStartAt < page.total
@@ -194,6 +205,7 @@ final class JiraProvider: JiraProviding {
 
         do {
             try credentialStore.saveToken(token)
+            cachedToken = token
         } catch {
             return .failure(.network)
         }
@@ -225,6 +237,8 @@ final class JiraProvider: JiraProviding {
         cancelPinnedTasks()
         do {
             try credentialStore.deleteToken()
+            cachedToken = nil
+            listLoadedAt = nil
         } catch {
             state.connection = .failed(.network)
             publish()
@@ -245,6 +259,7 @@ final class JiraProvider: JiraProviding {
     func setSelectedProjectKeys(_ keys: Set<String>) {
         preferences.jiraSelectedProjectKeys = keys
         state.selectedProjectKeys = keys
+        listLoadedAt = nil
         publish()
         if isStarted, isVisible, isConfigured {
             refresh()
@@ -861,8 +876,9 @@ final class JiraProvider: JiraProviding {
     }
 
     private func configuredCredentials() throws -> (baseURL: URL, token: String)? {
-        guard let baseURLText = preferences.jiraBaseURLString,
-              let token = try credentialStore.loadToken() else { return nil }
+        guard let baseURLText = preferences.jiraBaseURLString else { return nil }
+        if cachedToken == nil { cachedToken = try credentialStore.loadToken() }
+        guard let token = cachedToken else { return nil }
         guard let baseURL = parseBaseURL(baseURLText) else {
             throw JiraAPIError.invalidBaseURL
         }

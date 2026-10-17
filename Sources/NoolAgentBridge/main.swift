@@ -3,7 +3,24 @@ import Foundation
 
 signal(SIGPIPE, SIG_IGN)
 
-private let socketPath = "/tmp/nool-notch-\(getuid()).sock"
+/// Must match `CodexCLIHookServer.socketPath`: the per-user temporary directory, mode 0700.
+private let socketPath: String = {
+    var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+    let length = confstr(_CS_DARWIN_USER_TEMP_DIR, &buffer, buffer.count)
+    let directory = length > 0 ? String(cString: buffer) : NSTemporaryDirectory()
+    return (directory as NSString).appendingPathComponent("nool-notch.sock")
+}()
+
+/// Refuses a socket that another user created or serves, so approvals never come from them.
+private func isOwnedByCurrentUser(path: String, descriptor: Int32) -> Bool {
+    var info = stat()
+    guard lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFSOCK, info.st_uid == getuid() else {
+        return false
+    }
+    var peerUID: uid_t = 0
+    var peerGID: gid_t = 0
+    return getpeereid(descriptor, &peerUID, &peerGID) == 0 && peerUID == getuid()
+}
 
 private func connectToSocket(at path: String) -> Int32? {
     let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -96,10 +113,17 @@ if payload["cwd"] == nil {
     payload["cwd"] = FileManager.default.currentDirectoryPath
 }
 
-guard let data = try? JSONSerialization.data(withJSONObject: payload),
+guard var data = try? JSONSerialization.data(withJSONObject: payload),
       let descriptor = connectToSocket(at: socketPath) else {
     exit(0)
 }
+guard isOwnedByCurrentUser(path: socketPath, descriptor: descriptor) else {
+    close(descriptor)
+    exit(0)
+}
+// Compact JSON has no raw newlines, so one marks the end of the message. The write side stays open:
+// NooL treats the socket closing as the CLI going away and withdraws the pending request.
+data.append(0x0A)
 
 let eventName = payload["hook_event_name"] as? String ?? ""
 let isBlocking = eventName.caseInsensitiveCompare("PermissionRequest") == .orderedSame
@@ -116,7 +140,6 @@ guard sendAll(data, to: descriptor) else {
     close(descriptor)
     exit(0)
 }
-shutdown(descriptor, SHUT_WR)
 
 let response = receiveAll(from: descriptor)
 close(descriptor)

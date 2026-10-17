@@ -41,7 +41,53 @@ enum AISessionJiraLink {
 }
 
 private enum GitBranchReader {
+    private struct Entry {
+        /// The resolved HEAD file, or nil when no repository was found.
+        let headURL: URL?
+        let headModified: Date?
+        let branch: String?
+        let checkedAt: Date
+    }
+
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var cache: [String: Entry] = [:]
+    private static let missingRepositoryRetryInterval: TimeInterval = 60
+
+    /// Sessions republish every few seconds, so the repository walk runs once per workspace and
+    /// later lookups only compare HEAD's modification date.
     static func branchName(at workspacePath: String) -> String? {
+        let now = Date()
+        lock.lock()
+        let cached = cache[workspacePath]
+        lock.unlock()
+        if let cached {
+            if let headURL = cached.headURL {
+                let modified = modificationDate(of: headURL)
+                if modified == cached.headModified { return cached.branch }
+                let branch = branchName(inHead: headURL)
+                store(Entry(headURL: headURL, headModified: modified, branch: branch, checkedAt: now), for: workspacePath)
+                return branch
+            }
+            if now.timeIntervalSince(cached.checkedAt) < missingRepositoryRetryInterval { return nil }
+        }
+        let headURL = locateHead(from: workspacePath)
+        let branch = headURL.flatMap(branchName(inHead:))
+        store(Entry(headURL: headURL, headModified: headURL.flatMap(modificationDate(of:)), branch: branch, checkedAt: now),
+              for: workspacePath)
+        return branch
+    }
+
+    private static func store(_ entry: Entry, for workspacePath: String) {
+        lock.lock()
+        cache[workspacePath] = entry
+        lock.unlock()
+    }
+
+    private static func modificationDate(of url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+    }
+
+    private static func locateHead(from workspacePath: String) -> URL? {
         let fileManager = FileManager.default
         var directory = URL(fileURLWithPath: workspacePath, isDirectory: true)
 
@@ -56,8 +102,8 @@ private enum GitBranchReader {
                     gitDirectory = gitDirectoryReferenced(by: dotGit, relativeTo: directory)
                 }
                 if let gitDirectory,
-                   let branch = branchName(in: gitDirectory) {
-                    return branch
+                   branchName(inHead: gitDirectory.appendingPathComponent("HEAD")) != nil {
+                    return gitDirectory.appendingPathComponent("HEAD")
                 }
             }
             let parent = directory.deletingLastPathComponent()
@@ -79,8 +125,7 @@ private enum GitBranchReader {
         return root.appendingPathComponent(path, isDirectory: true).standardizedFileURL
     }
 
-    private static func branchName(in gitDirectory: URL) -> String? {
-        let headURL = gitDirectory.appendingPathComponent("HEAD")
+    private static func branchName(inHead headURL: URL) -> String? {
         guard let head = try? String(contentsOf: headURL, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines),
               head.hasPrefix("ref: refs/heads/") else { return nil }
