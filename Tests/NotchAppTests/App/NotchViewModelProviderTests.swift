@@ -682,6 +682,7 @@ final class NotchViewModelProviderTests: XCTestCase {
             providers: providers,
             calendarProvider: calendarProvider,
             nowPlayingProvider: nowPlayingProvider,
+            liveActivityCenter: LiveActivityCenter(additionalSources: []),
             jiraProvider: jiraProvider,
             aiSessionStore: aiSessionStore,
             codeReviewProvider: codeReviewProvider,
