@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-17
+
 ### Added
 
 - Живые обои: зацикленное видео MP4/MOV/M4V под иконками рабочего стола: общее видео для всех дисплеев или своё для каждого экрана, локальная библиотека с превью, добавление через окно выбора или перетаскивание, режимы масштаба, громкость и скорость. Видео останавливается во сне и на экране блокировки, по выбору — от батареи, в режиме энергосбережения и на каждом экране, рабочий стол которого закрыт окнами. Кадр видео можно поставить системными обоями.
@@ -366,7 +368,8 @@
 - Добавлены панели лимитов, календаря, Now Playing и Jira.
 - Добавлены arm64 release packaging, checksum и ad-hoc подпись.
 
-[Unreleased]: https://github.com/nail00749/nool_notch/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/nail00749/nool_notch/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/nail00749/nool_notch/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/nail00749/nool_notch/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/nail00749/nool_notch/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/nail00749/nool_notch/compare/v0.6.0...v0.7.0
