@@ -529,7 +529,8 @@ final class JiraProviderTests: XCTestCase {
 
         provider.setVisible(false)
         provider.setVisible(true)
-        await waitUntil { client.issueCallCount == 2 && sleeper.callCount == 2 }
+        await waitUntil { sleeper.callCount == 2 }
+        XCTAssertEqual(client.issueCallCount, 1, "Re-showing right after a load reuses the fresh list")
         let issueCountAfterShowing = client.issueCallCount
 
         sleeper.resume(1)

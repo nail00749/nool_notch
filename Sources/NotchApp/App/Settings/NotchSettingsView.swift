@@ -8,6 +8,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
     case modules
     case gestures
     case lidEffect
+    case liveWallpaper
     case systemMonitor
     case launcher
     case dock
@@ -27,6 +28,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         case .modules: "Модули"
         case .gestures: "Жесты"
         case .lidEffect: "Крышка MacBook"
+        case .liveWallpaper: "Живые обои"
         case .systemMonitor: "Мониторинг"
         case .launcher: "Launcher"
         case .dock: "NooL Dock"
@@ -46,6 +48,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         case .modules: "Выберите нужные функции"
         case .gestures: "Громкость и действия на чёлке"
         case .lidEffect: "Размытие и затемнение экрана"
+        case .liveWallpaper: "Видео на рабочем столе"
         case .systemMonitor: "CPU, память, диск и сеть"
         case .launcher: "Поиск и буфер обмена"
         case .dock: "Приложения и виджеты"
@@ -65,6 +68,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         case .modules: "square.grid.2x2"
         case .gestures: "hand.draw"
         case .lidEffect: "laptopcomputer"
+        case .liveWallpaper: "play.rectangle"
         case .systemMonitor: "chart.xyaxis.line"
         case .launcher: "magnifyingglass"
         case .dock: "dock.rectangle"
@@ -81,6 +85,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .gestures: .gestures
         case .lidEffect: .lidEffect
+        case .liveWallpaper: .liveWallpaper
         case .systemMonitor: .systemMonitor
         case .dock: .dock
         case .limits: .quotas
@@ -101,6 +106,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         case .systemMonitor: .systemMonitor
         case .dock: .dock
         case .lidEffect: .lidEffect
+        case .liveWallpaper: .liveWallpaper
         case .gestures: .gestures
         case .calendar, .liveActivities, .fileShelf, .textRecognition,
              .networkTools, .windowManagement, .scratchpad, .recentCaptures: nil
@@ -119,6 +125,7 @@ struct NotchSettingsView: View {
     let launcher: LauncherWindowCoordinator
     @ObservedObject var dockSettings: NoolDockSettings
     let lidEffect: LidEffectController
+    let liveWallpaper: LiveWallpaperController
     let systemMonitor: SystemMonitorStore
 
     @State private var selectedSection: NotchSettingsSection
@@ -151,6 +158,7 @@ struct NotchSettingsView: View {
         launcher: LauncherWindowCoordinator,
         dockSettings: NoolDockSettings,
         lidEffect: LidEffectController,
+        liveWallpaper: LiveWallpaperController,
         systemMonitor: SystemMonitorStore,
         initialSection: NotchSettingsSection = .general
     ) {
@@ -163,6 +171,7 @@ struct NotchSettingsView: View {
         self.launcher = launcher
         self.dockSettings = dockSettings
         self.lidEffect = lidEffect
+        self.liveWallpaper = liveWallpaper
         self.systemMonitor = systemMonitor
         let availableSection = initialSection.moduleID.map(model.modules.isEnabled) == false
             ? NotchSettingsSection.modules : initialSection
@@ -387,6 +396,8 @@ struct NotchSettingsView: View {
                 NotchGestureSettingsView(settings: .shared)
             case .lidEffect:
                 LidEffectSettingsView(controller: lidEffect)
+            case .liveWallpaper:
+                LiveWallpaperSettingsView(controller: liveWallpaper)
             case .systemMonitor:
                 SystemMonitorSettingsView(store: systemMonitor)
             case .launcher:

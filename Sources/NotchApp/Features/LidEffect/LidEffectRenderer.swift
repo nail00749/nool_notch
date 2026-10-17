@@ -80,10 +80,15 @@ final class ScreenLidEffectRenderer: LidEffectRendering {
             guard !ownApplications.isEmpty else {
                 throw LidEffectRendererError.captureUnavailable
             }
+            // Own desktop-level windows (live wallpaper) are part of the desktop the effect blurs.
+            let desktopLevel = Int(CGWindowLevelForKey(.desktopWindow))
+            let ownDesktopWindows = shareableContent.windows.filter { window in
+                window.windowLayer == desktopLevel && window.owningApplication?.processID == getpid()
+            }
             let filter = SCContentFilter(
                 display: display,
                 excludingApplications: ownApplications,
-                exceptingWindows: []
+                exceptingWindows: ownDesktopWindows
             )
             let configuration = Self.captureConfiguration(for: display)
             let output = LidEffectFrameOutput(

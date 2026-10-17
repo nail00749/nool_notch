@@ -41,7 +41,6 @@ final class NoolDockWindowCoordinator {
     private let panel: NSPanel
     private let trigger: NSPanel
     private let presentation = NoolDockPresentation()
-    private var screenTimer: Timer?
     private var keyMonitor: Any?
     private var menuObservers: [NSObjectProtocol] = []
     private var trackingMenus: Set<ObjectIdentifier> = []
@@ -89,8 +88,6 @@ final class NoolDockWindowCoordinator {
     func stop() {
         started = false
         hideTask?.cancel()
-        screenTimer?.invalidate()
-        screenTimer = nil
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
         removeMenuObservers()
@@ -122,8 +119,6 @@ final class NoolDockWindowCoordinator {
         guard started else { return }
         guard settings.isEnabled else {
             hideTask?.cancel()
-            screenTimer?.invalidate()
-            screenTimer = nil
             if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
             keyMonitor = nil
             removeMenuObservers()
@@ -198,12 +193,8 @@ final class NoolDockWindowCoordinator {
                 }
             })
         }
-        if screenTimer == nil {
-            // visibleFrame can change when the system Dock moves or resizes.
-            screenTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-                Task { @MainActor [weak self] in self?.reposition() }
-            }
-        }
+        // visibleFrame changes when the system Dock moves or resizes; macOS reports that as a
+        // screen parameter change, which the app forwards here through `reposition()`.
         if keyMonitor == nil {
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                     guard let self, let window = event.window, self.owns(window),

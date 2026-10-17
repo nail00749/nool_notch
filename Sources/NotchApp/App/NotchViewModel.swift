@@ -1384,8 +1384,8 @@ final class NotchViewModel: ObservableObject {
 
     private func refreshPanelBadges() {
         refreshQuotaProviders(ifOlderThan: 10)
-        if visiblePanels.contains(.calendar) {
-            refreshCalendar()
+        if visiblePanels.contains(.calendar), modules.isEnabled(.calendar) {
+            calendar.refreshCalendarKeepingContent()
         }
         if visiblePanels.contains(.music) {
             refreshNowPlaying()

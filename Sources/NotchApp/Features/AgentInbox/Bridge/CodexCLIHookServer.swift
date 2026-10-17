@@ -48,23 +48,41 @@ struct CodexCLIHookEvent: Sendable {
 final class CodexCLIHookResponder {
     private var hasResponded = false
     private let handler: (Bool) -> Void
+    /// Called once when the waiting CLI disconnects before anyone answered.
+    var onCancel: (() -> Void)?
 
     init(handler: @escaping (Bool) -> Void) {
         self.handler = handler
     }
+
+    var isResolved: Bool { hasResponded }
 
     func resolve(allowed: Bool) {
         guard hasResponded == false else { return }
         hasResponded = true
         handler(allowed)
     }
+
+    func cancel() {
+        guard hasResponded == false else { return }
+        hasResponded = true
+        onCancel?()
+    }
 }
 
 @MainActor
 final class CodexCLIHookServer {
+    /// Lives in the per-user temporary directory (mode 0700), so other local users can neither
+    /// pre-create the path nor connect to it. `nool-agent-bridge` resolves the same path.
     nonisolated static var socketPath: String {
-        "/tmp/nool-notch-\(getuid()).sock"
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        let length = confstr(_CS_DARWIN_USER_TEMP_DIR, &buffer, buffer.count)
+        let directory = length > 0 ? String(cString: buffer) : NSTemporaryDirectory()
+        return (directory as NSString).appendingPathComponent("nool-notch.sock")
     }
+
+    /// The pre-0.9 world-writable location, removed when the server starts.
+    nonisolated private static var legacySocketPath: String { "/tmp/nool-notch-\(getuid()).sock" }
 
     var onEvent: ((CodexCLIHookEvent, CodexCLIHookResponder?) -> Void)?
 
@@ -77,8 +95,8 @@ final class CodexCLIHookServer {
         generation &+= 1
         let generation = self.generation
         unlink(Self.socketPath)
+        unlink(Self.legacySocketPath)
 
-        let previousMask = umask(0o077)
         let parameters = NWParameters()
         parameters.defaultProtocolStack.transportProtocol = NWProtocolTCP.Options()
         parameters.requiredLocalEndpoint = .unix(path: Self.socketPath)
@@ -96,17 +114,9 @@ final class CodexCLIHookServer {
                 }
             }
             listener.stateUpdateHandler = { state in
-                if case .ready = state {
-                    umask(previousMask)
-                    chmod(Self.socketPath, 0o700)
-                } else if case .failed = state {
-                    umask(previousMask)
-                }
+                if case .ready = state { chmod(Self.socketPath, 0o600) }
             }
             listener.start(queue: .main)
-        } catch {
-            umask(previousMask)
-            throw error
         }
     }
 
@@ -137,8 +147,12 @@ final class CodexCLIHookServer {
                 if let content { data.append(content) }
                 if data.count > 1_048_576 {
                     self.sendEmptyResponse(to: connection)
+                } else if let newline = data.firstIndex(of: 0x0A) {
+                    // The bridge ends its message with a newline and keeps the socket open,
+                    // so a closed socket later means the waiting CLI is gone.
+                    self.process(data[..<newline], from: connection, watchesDisconnect: true, generation: generation)
                 } else if isComplete || error != nil {
-                    self.process(data, from: connection)
+                    self.process(data, from: connection, watchesDisconnect: false, generation: generation)
                 } else {
                     self.receiveAll(from: connection, accumulated: data, generation: generation)
                 }
@@ -146,8 +160,8 @@ final class CodexCLIHookServer {
         }
     }
 
-    private func process(_ data: Data, from connection: NWConnection) {
-        guard let event = CodexCLIHookEvent(data: data) else {
+    private func process(_ data: Data, from connection: NWConnection, watchesDisconnect: Bool, generation: UInt) {
+        guard let event = CodexCLIHookEvent(data: Data(data)) else {
             sendEmptyResponse(to: connection)
             return
         }
@@ -158,9 +172,22 @@ final class CodexCLIHookServer {
                 self.sendPermissionResponse(allowed: allowed, to: connection)
             }
             onEvent?(event, responder)
+            if watchesDisconnect { watchDisconnect(of: connection, responder: responder, generation: generation) }
         } else {
             onEvent?(event, nil)
             sendEmptyResponse(to: connection)
+        }
+    }
+
+    /// Any further read result means the bridge closed its end: the CLI was interrupted or exited.
+    private func watchDisconnect(of connection: NWConnection, responder: CodexCLIHookResponder, generation: UInt) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { [weak self] _, _, _, _ in
+            Task { @MainActor in
+                guard let self, self.generation == generation, !responder.isResolved else { return }
+                self.connections.removeValue(forKey: ObjectIdentifier(connection))
+                connection.cancel()
+                responder.cancel()
+            }
         }
     }
 

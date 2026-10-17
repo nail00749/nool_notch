@@ -4,7 +4,7 @@ import Foundation
 enum AppModuleID: String, CaseIterable, Identifiable, Sendable {
     case aiChat, agentInbox, quotas, calendar, music, jira, liveActivities
     case fileShelf, textRecognition, systemMonitor, networkTools, dock
-    case lidEffect, windowManagement, clipboard, gestures
+    case lidEffect, liveWallpaper, windowManagement, clipboard, gestures
     case scratchpad
     case recentCaptures
 
@@ -25,6 +25,7 @@ enum AppModuleID: String, CaseIterable, Identifiable, Sendable {
         case .networkTools: "Сеть и Speedtest"
         case .dock: "NooL Dock"
         case .lidEffect: "Эффект крышки"
+        case .liveWallpaper: "Живые обои"
         case .windowManagement: "Окна и рабочие пространства"
         case .clipboard: "Буфер и шаблоны"
         case .gestures: "Жесты"
@@ -48,6 +49,7 @@ enum AppModuleID: String, CaseIterable, Identifiable, Sendable {
         case .networkTools: "Замеры скорости, история и диагностика соединения"
         case .dock: "Панель приложений и виджетов"
         case .lidEffect: "Размытие и затемнение при закрытии MacBook"
+        case .liveWallpaper: "Видео на рабочем столе с паузой для экономии энергии"
         case .windowManagement: "Раскладки окон и сохранённые наборы приложений"
         case .clipboard: "Локальная история копирования и текстовые шаблоны"
         case .gestures: "Громкость и управление музыкой с чёлки"
@@ -71,6 +73,7 @@ enum AppModuleID: String, CaseIterable, Identifiable, Sendable {
         case .networkTools: "speedometer"
         case .dock: "dock.rectangle"
         case .lidEffect: "laptopcomputer"
+        case .liveWallpaper: "play.rectangle"
         case .windowManagement: "rectangle.split.2x1"
         case .clipboard: "doc.on.clipboard"
         case .gestures: "hand.draw"
@@ -101,6 +104,7 @@ enum AppModuleID: String, CaseIterable, Identifiable, Sendable {
         case .systemMonitor: ["Боковая панель", "Стек"]
         case .dock: ["Dock"]
         case .lidEffect: ["Экран MacBook"]
+        case .liveWallpaper: ["Рабочий стол"]
         case .gestures: ["Чёлка"]
         case .scratchpad: ["Чёлка"]
         case .recentCaptures: ["Чёлка"]

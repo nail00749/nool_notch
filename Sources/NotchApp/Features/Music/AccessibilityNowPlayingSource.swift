@@ -67,9 +67,18 @@ final class AccessibilityNowPlayingSource {
     private lazy var eventRelay = NowPlayingEventRelay { [weak self] in
         self?.onMetadataChange?()
     }
+    /// Apps whose UI had no recognizable player, skipped until the date so the fallback does not
+    /// walk a large Electron tree on every poll.
+    private var playerlessApplications: [pid_t: Date] = [:]
     private(set) var requiresAccessibilityAccess = false
     var onArtworkChange: ((String, Data) -> Void)?
     var onMetadataChange: (() -> Void)?
+
+    /// A hung app must not stall the main thread for the default ~6 s per Accessibility call.
+    private static let messagingTimeout: Float = 0.25
+    private static let playerlessRetryInterval: TimeInterval = 15
+    /// Upper bound for one tree walk; real player controls sit well within it.
+    private static let maximumVisitedElements = 2_000
 
     private static let observerCallback: AXObserverCallback = { _, _, _, refcon in
         guard let refcon else { return }
@@ -98,10 +107,14 @@ final class AccessibilityNowPlayingSource {
 
         resetPlayerSession()
 
-        for app in candidateApplications() {
+        let now = Date()
+        playerlessApplications = playerlessApplications.filter { $0.value > now }
+        for app in candidateApplications() where playerlessApplications[app.processIdentifier] == nil {
             let root = AXUIElementCreateApplication(app.processIdentifier)
+            AXUIElementSetMessagingTimeout(root, Self.messagingTimeout)
             guard let playerRoot = findPlayerRoot(in: root),
                   let player = snapshot(for: app, playerRoot: playerRoot) else {
+                playerlessApplications[app.processIdentifier] = now.addingTimeInterval(Self.playerlessRetryInterval)
                 continue
             }
             cachedApplication = app
@@ -636,7 +649,7 @@ final class AccessibilityNowPlayingSource {
         var stack = [root]
         var visited = Set<AXUIElement>()
 
-        while let element = stack.popLast() {
+        while let element = stack.popLast(), visited.count < Self.maximumVisitedElements {
             guard visited.insert(element).inserted else { continue }
             result.append(element)
             stack.append(contentsOf: children(of: element))
@@ -652,7 +665,7 @@ final class AccessibilityNowPlayingSource {
         var stack = [root]
         var visited = Set<AXUIElement>()
 
-        while let element = stack.popLast() {
+        while let element = stack.popLast(), visited.count < Self.maximumVisitedElements {
             guard visited.insert(element).inserted else { continue }
             if predicate(element) {
                 return element
@@ -671,7 +684,9 @@ final class AccessibilityNowPlayingSource {
 
         let array = unsafeDowncast(value, to: CFArray.self)
         return (0..<CFArrayGetCount(array)).map { index in
-            unsafeBitCast(CFArrayGetValueAtIndex(array, index), to: AXUIElement.self)
+            let child = unsafeBitCast(CFArrayGetValueAtIndex(array, index), to: AXUIElement.self)
+            AXUIElementSetMessagingTimeout(child, Self.messagingTimeout)
+            return child
         }
     }
 
