@@ -257,7 +257,10 @@ final class BluetoothAudioActivitySource: NSObject, LiveActivitySource {
         _ notification: IOBluetoothUserNotification?,
         device: IOBluetoothDevice
     ) {
-        let address = device.addressString
+        handleDeviceConnected(address: device.addressString)
+    }
+
+    nonisolated func handleDeviceConnected(address: String?) {
         Task { @MainActor [weak self] in
             guard let self, self.isStarted else { return }
             if let address, let localDevice = IOBluetoothDevice(addressString: address) {
@@ -271,7 +274,10 @@ final class BluetoothAudioActivitySource: NSObject, LiveActivitySource {
         _ notification: IOBluetoothUserNotification?,
         device: IOBluetoothDevice
     ) {
-        let address = device.addressString
+        handleDeviceDisconnected(address: device.addressString)
+    }
+
+    nonisolated func handleDeviceDisconnected(address: String?) {
         Task { @MainActor [weak self] in
             guard let self, self.isStarted else { return }
             if let id = address {
