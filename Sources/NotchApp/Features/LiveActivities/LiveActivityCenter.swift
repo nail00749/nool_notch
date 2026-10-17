@@ -49,8 +49,16 @@ final class LiveActivityCenter: ObservableObject {
 
     private func receive(_ activities: [LiveActivity], from sourceID: String) {
         guard isStarted else { return }
+        let now = Date.now
+        // Sources poll every few seconds. Publishing an identical feed re-renders every
+        // observing view, so only publish real changes. The freshness label shows
+        // minutes, so an unchanged feed refreshes updatedAt once per minute.
+        if activitiesBySource[sourceID] == activities, let updatedAt,
+           Calendar.current.isDate(updatedAt, equalTo: now, toGranularity: .minute) {
+            return
+        }
         activitiesBySource[sourceID] = activities
-        self.activities = sources
+        let merged = sources
             .flatMap { activitiesBySource[$0.id] ?? [] }
             .sorted {
                 if $0.kind.priority != $1.kind.priority {
@@ -58,6 +66,7 @@ final class LiveActivityCenter: ObservableObject {
                 }
                 return $0.updatedAt > $1.updatedAt
             }
-        updatedAt = .now
+        if merged != self.activities { self.activities = merged }
+        updatedAt = now
     }
 }

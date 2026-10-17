@@ -61,7 +61,9 @@ final class SettingsWindowCoordinator: NSObject, NSWindowDelegate {
         window.isOpaque = false
         window.titlebarAppearsTransparent = false
         window.titleVisibility = .visible
-        window.contentView = hostingView(section: .general)
+        // SwiftUI content is created on show and released on close: a hidden hosting
+        // view keeps observing every store and re-renders all settings pages.
+        window.contentView = NSView()
     }
 
     func start() {
@@ -73,6 +75,7 @@ final class SettingsWindowCoordinator: NSObject, NSWindowDelegate {
         guard isStarted else { return }
         isStarted = false
         window.orderOut(nil)
+        releaseContent()
         lidEffect.cancelPreview()
     }
 
@@ -90,6 +93,15 @@ final class SettingsWindowCoordinator: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         lidEffect.cancelPreview()
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.window.isVisible else { return }
+            self.releaseContent()
+        }
+    }
+
+    private func releaseContent() {
+        guard window.contentView is NSHostingView<NotchSettingsView> else { return }
+        window.contentView = NSView()
     }
 
     private func hostingView(section: NotchSettingsSection) -> NSHostingView<NotchSettingsView> {

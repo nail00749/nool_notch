@@ -211,8 +211,9 @@ final class NotchViewModel: ObservableObject {
             : visiblePanels.first ?? .ai
         self.hoverExpansionDelay = preferences.hoverExpansionDelay
         compactAgentSignalController.onChange = { [weak self] signal in
-            self?.compactAgentSignal = signal
-            self?.refreshCompactMascot()
+            guard let self else { return }
+            if self.compactAgentSignal != signal { self.compactAgentSignal = signal }
+            self.refreshCompactMascot()
         }
 
         nowPlayingProvider.onChange = { [weak self] snapshot in
@@ -232,13 +233,14 @@ final class NotchViewModel: ObservableObject {
         liveActivityCenter.$activities
             .sink { [weak self] activities in
                 guard let self, self.modules.isEnabled(.liveActivities) else { return }
-                self.liveActivities = activities
+                if self.liveActivities != activities { self.liveActivities = activities }
                 self.refreshCompactMascot()
             }
             .store(in: &cancellables)
         liveActivityCenter.$updatedAt
             .sink { [weak self] date in
-                guard let self, self.modules.isEnabled(.liveActivities) else { return }
+                guard let self, self.modules.isEnabled(.liveActivities),
+                      self.liveActivitiesUpdatedAt != date else { return }
                 self.liveActivitiesUpdatedAt = date
             }
             .store(in: &cancellables)
@@ -261,7 +263,7 @@ final class NotchViewModel: ObservableObject {
         aiSessionStore.$sessions
             .sink { [weak self] sessions in
                 guard let self, self.modules.isEnabled(.agentInbox) else { return }
-                self.aiSessions = sessions
+                if self.aiSessions != sessions { self.aiSessions = sessions }
                 self.updateAISessionJiraLinks(for: sessions)
                 self.codeReviews.updateSessions(sessions)
                 self.compactAgentSignalController.consume(
@@ -272,13 +274,15 @@ final class NotchViewModel: ObservableObject {
             .store(in: &cancellables)
         aiSessionStore.$sourceHealth
             .sink { [weak self] health in
-                guard let self, self.modules.isEnabled(.agentInbox) else { return }
+                guard let self, self.modules.isEnabled(.agentInbox),
+                      self.aiSourceHealth != health else { return }
                 self.aiSourceHealth = health
             }
             .store(in: &cancellables)
         aiSessionStore.$lastUpdatedAt
             .sink { [weak self] date in
-                guard let self, self.modules.isEnabled(.agentInbox) else { return }
+                guard let self, self.modules.isEnabled(.agentInbox),
+                      !Self.isSameDisplayedMinute(self.aiSessionsUpdatedAt, date) else { return }
                 self.aiSessionsUpdatedAt = date
             }
             .store(in: &cancellables)
@@ -719,6 +723,13 @@ final class NotchViewModel: ObservableObject {
         compactMascotPresentation?.notice
     }
 
+    /// Freshness labels show hours and minutes, so a newer timestamp within the
+    /// same minute does not need to re-render observers.
+    nonisolated static func isSameDisplayedMinute(_ lhs: Date?, _ rhs: Date?) -> Bool {
+        guard let lhs, let rhs else { return lhs == nil && rhs == nil }
+        return Calendar.current.isDate(lhs, equalTo: rhs, toGranularity: .minute)
+    }
+
     private func refreshCompactMascot() {
         let now = Date()
         var candidates: [CompactMascotNotice] = []
@@ -731,7 +742,9 @@ final class NotchViewModel: ObservableObject {
         }
         let previousID = compactMascotPresentation?.id
         compactMascotBatch.update(candidates, at: now)
-        compactMascotPresentation = compactMascotBatch.presentation
+        if compactMascotPresentation != compactMascotBatch.presentation {
+            compactMascotPresentation = compactMascotBatch.presentation
+        }
         guard previousID != compactMascotPresentation?.id else { return }
         compactMascotExpiryTask?.cancel()
         compactMascotExpiryTask = nil
@@ -1291,14 +1304,19 @@ final class NotchViewModel: ObservableObject {
             aiJiraIssueKeys = [:]
             return
         }
-        aiJiraIssueKeys = Dictionary(uniqueKeysWithValues: sessions.compactMap { session in
+        let issueKeys = Dictionary(uniqueKeysWithValues: sessions.compactMap { session in
             AISessionJiraLink.issueKey(for: session).map { (session.id, $0) }
         })
+        if aiJiraIssueKeys != issueKeys { aiJiraIssueKeys = issueKeys }
 
+        // Sessions refresh on a timer; assign only real changes to avoid needless re-renders.
         let visibleKeys = Set(aiJiraIssueKeys.values)
-        aiLinkedJiraIssues = aiLinkedJiraIssues.filter { visibleKeys.contains($0.key) }
-        aiLinkedJiraErrors = aiLinkedJiraErrors.filter { visibleKeys.contains($0.key) }
-        aiLinkedJiraLoadingKeys.formIntersection(visibleKeys)
+        let issues = aiLinkedJiraIssues.filter { visibleKeys.contains($0.key) }
+        if issues.count != aiLinkedJiraIssues.count { aiLinkedJiraIssues = issues }
+        let errors = aiLinkedJiraErrors.filter { visibleKeys.contains($0.key) }
+        if errors.count != aiLinkedJiraErrors.count { aiLinkedJiraErrors = errors }
+        let loadingKeys = aiLinkedJiraLoadingKeys.intersection(visibleKeys)
+        if loadingKeys != aiLinkedJiraLoadingKeys { aiLinkedJiraLoadingKeys = loadingKeys }
         loadMissingAISessionJiraIssues(retryingFailures: false)
     }
 
