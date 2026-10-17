@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import XCTest
 @testable import NotchApp
@@ -81,4 +82,42 @@ final class LiveActivityTests: XCTestCase {
         XCTAssertNil(LiveActivityFeed.primaryCompactActivity(in: [activity]))
         XCTAssertEqual(activity.remainingDuration(at: now.addingTimeInterval(20)), 0)
     }
+
+    @MainActor
+    func testCenterDoesNotRepublishUnchangedPolls() {
+        let source = StubLiveActivitySource()
+        let center = LiveActivityCenter(additionalSources: [source])
+        center.start()
+        var changes = 0
+        let subscription = center.objectWillChange.sink { changes += 1 }
+        defer { subscription.cancel() }
+        let activity = LiveActivity(
+            id: "delivery", sourceID: source.id, kind: .delivery, title: "Посылка",
+            detail: nil, state: .active, progress: nil, startedAt: nil, endsAt: nil,
+            updatedAt: Date(timeIntervalSince1970: 1_000), isCompactEligible: true
+        )
+
+        source.onChange?([activity])
+        XCTAssertEqual(center.activities, [activity])
+        let afterFirstPoll = changes
+        XCTAssertGreaterThan(afterFirstPoll, 0)
+
+        source.onChange?([activity])
+        source.onChange?([activity])
+        XCTAssertEqual(changes, afterFirstPoll)
+
+        source.onChange?([])
+        XCTAssertTrue(center.activities.isEmpty)
+        XCTAssertGreaterThan(changes, afterFirstPoll)
+        center.stop()
+    }
+}
+
+@MainActor
+private final class StubLiveActivitySource: LiveActivitySource {
+    let id = "stub"
+    let displayName = "Stub"
+    var onChange: (([LiveActivity]) -> Void)?
+    func start() {}
+    func stop() {}
 }

@@ -17,6 +17,7 @@ struct CodexStateReader: Sendable {
     let acceptedThreadSources: [String]
     let agentName: String
     let sessionIDPrefix: String
+    private let statusCache = RolloutStatusCache()
 
     init(
         databaseURL: URL = CodexStateReader.defaultDatabaseURL(),
@@ -107,6 +108,8 @@ struct CodexStateReader: Sendable {
         )
 
         var sessions: [AISession] = []
+        var rolloutPaths = Set<String>()
+        defer { statusCache.retain(only: rolloutPaths) }
         while sqlite3_step(statement) == SQLITE_ROW {
             guard let threadID = columnString(statement, index: 0),
                   threadID.isEmpty == false else { continue }
@@ -120,7 +123,8 @@ struct CodexStateReader: Sendable {
             let startedAt = createdTimestamp > 0
                 ? Date(timeIntervalSince1970: createdTimestamp)
                 : nil
-            let status = rolloutPath.map { latestStatus(rolloutPath: $0) } ?? .unknown
+            if let rolloutPath { rolloutPaths.insert(rolloutPath) }
+            let status = rolloutPath.map { cachedStatus(rolloutPath: $0) } ?? .unknown
             let title = workspace.flatMap { path -> String? in
                 let name = URL(fileURLWithPath: path).lastPathComponent
                 return name.isEmpty ? nil : name
@@ -146,6 +150,20 @@ struct CodexStateReader: Sendable {
             throw CodexStateReaderError.queryFailed
         }
         return sessions
+    }
+
+    /// Polling re-reads every candidate rollout; parse a file again only when it changed.
+    func cachedStatus(rolloutPath: String) -> AISessionStatus {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: rolloutPath),
+              let size = (attributes[.size] as? NSNumber)?.uint64Value,
+              let modifiedAt = attributes[.modificationDate] as? Date else {
+            return latestStatus(rolloutPath: rolloutPath)
+        }
+        let version = RolloutStatusCache.Version(size: size, modifiedAt: modifiedAt)
+        if let status = statusCache.status(for: rolloutPath, version: version) { return status }
+        let status = latestStatus(rolloutPath: rolloutPath)
+        statusCache.store(status, for: rolloutPath, version: version)
+        return status
     }
 
     func latestStatus(rolloutPath: String) -> AISessionStatus {
@@ -248,5 +266,30 @@ struct CodexStateReader: Sendable {
         guard sqlite3_column_type(statement, index) != SQLITE_NULL,
               let value = sqlite3_column_text(statement, index) else { return nil }
         return String(cString: value)
+    }
+}
+
+private final class RolloutStatusCache: @unchecked Sendable {
+    struct Version: Equatable {
+        let size: UInt64
+        let modifiedAt: Date
+    }
+
+    private let lock = NSLock()
+    private var entries: [String: (version: Version, status: AISessionStatus)] = [:]
+
+    func status(for path: String, version: Version) -> AISessionStatus? {
+        lock.withLock {
+            guard let entry = entries[path], entry.version == version else { return nil }
+            return entry.status
+        }
+    }
+
+    func store(_ status: AISessionStatus, for path: String, version: Version) {
+        lock.withLock { entries[path] = (version, status) }
+    }
+
+    func retain(only paths: Set<String>) {
+        lock.withLock { entries = entries.filter { paths.contains($0.key) } }
     }
 }

@@ -43,6 +43,7 @@ final class LidEffectController: ObservableObject {
     private var stopped = false
     private var suspended = false
     private var locked = false
+    private var screenSignature: ScreenSignature?
     private static let preferencesKey = "nool.lidEffect.preferences.v1"
 
     init(defaults: UserDefaults = .standard,
@@ -90,7 +91,9 @@ final class LidEffectController: ObservableObject {
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                                  object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                // macOS posts these in bursts; restart capture only when the built-in screen changed.
+                guard let self, self.screenSignature != self.currentScreenSignature() else { return }
+                self.screenSignature = self.currentScreenSignature()
                 self.invalidateCapture()
                 self.cancelPreview()
                 self.restartSensor()
@@ -107,8 +110,18 @@ final class LidEffectController: ObservableObject {
                 }
             })
         }
+        screenSignature = currentScreenSignature()
         restartSensor()
         configureMonitor()
+    }
+
+    private struct ScreenSignature: Equatable {
+        let frame: CGRect
+        let scale: CGFloat
+    }
+
+    private func currentScreenSignature() -> ScreenSignature? {
+        screenProvider().map { ScreenSignature(frame: $0.frame, scale: $0.backingScaleFactor) }
     }
 
     private func configureMonitor() {
@@ -262,9 +275,13 @@ final class LidEffectController: ObservableObject {
             case .angle(let angle):
                 guard angle.isFinite, (0...180).contains(angle) else { return }
                 self.sensorSearchStartedAt = nil
-                self.angle = angle
                 self.lastReading = .now
-                self.sensorStatus = "Датчик доступен · \(Int(angle.rounded()))°"
+                // The sensor is polled at 20 Hz; publish and render only when the lid moves,
+                // unless capture still has to start for the current angle.
+                guard self.angle != angle || (!self.captureActive && self.targetProgress > 0) else { return }
+                self.angle = angle
+                let status = "Датчик доступен · \(Int(angle.rounded()))°"
+                if self.sensorStatus != status { self.sensorStatus = status }
             case .unavailable(let reason):
                 self.sensorSearchStartedAt = nil
                 self.angle = nil

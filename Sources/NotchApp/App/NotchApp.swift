@@ -5,6 +5,7 @@ final class NotchAppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: NotchWindowCoordinator!
     private var launcher: LauncherWindowCoordinator!
     private var screenParametersObserver: NSObjectProtocol?
+    private var isRepositionScheduled = false
     private var pendingWidgetOpen = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -25,7 +26,13 @@ final class NotchAppDelegate: NSObject, NSApplicationDelegate {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.coordinator.reposition()
+                // Coalesce notification bursts into one reposition per main-queue turn.
+                guard let self, !self.isRepositionScheduled else { return }
+                self.isRepositionScheduled = true
+                DispatchQueue.main.async { [weak self] in
+                    self?.isRepositionScheduled = false
+                    self?.coordinator.reposition()
+                }
             }
         }
     }

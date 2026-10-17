@@ -58,6 +58,7 @@ final class NotchWindowCoordinator: NSObject {
     private var layoutAnimationGeneration = 0
     private var applicationBeforeSearch: NSRunningApplication?
     private var displayFollowTimer: Timer?
+    private var isQuotaSynchronizationScheduled = false
     private var modelChanges: AnyCancellable?
     private var customizationChanges: AnyCancellable?
     private(set) var isStarted = false
@@ -276,8 +277,13 @@ final class NotchWindowCoordinator: NSObject {
             NSSound(named: NSSound.Name("Glass"))?.play()
         }
         modelChanges = model.objectWillChange.sink { [weak self] _ in
+            // Coalesce bursts of model changes into one window synchronization.
+            guard let self, !self.isQuotaSynchronizationScheduled else { return }
+            self.isQuotaSynchronizationScheduled = true
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.isStarted else { return }
+                guard let self else { return }
+                self.isQuotaSynchronizationScheduled = false
+                guard self.isStarted else { return }
                 self.synchronizeQuotaPresentation()
             }
         }
@@ -366,12 +372,18 @@ final class NotchWindowCoordinator: NSObject {
         layoutAnimationGeneration += 1
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
+        // macOS can post screen-parameter changes in bursts; unchanged values must not
+        // re-render the notch on every notification.
         withTransaction(transaction) {
-            presentation.size = size
-            presentation.mountsExpandedContent = model.isExpanded
-            model.expansionSurfaceSettled = model.isExpanded
+            if presentation.size != size { presentation.size = size }
+            if presentation.mountsExpandedContent != model.isExpanded {
+                presentation.mountsExpandedContent = model.isExpanded
+            }
+            if model.expansionSurfaceSettled != model.isExpanded {
+                model.expansionSurfaceSettled = model.isExpanded
+            }
         }
-        window.setFrame(frame, display: true)
+        if window.frame != frame { window.setFrame(frame, display: true) }
         synchronizeQuotaPresentation()
     }
 

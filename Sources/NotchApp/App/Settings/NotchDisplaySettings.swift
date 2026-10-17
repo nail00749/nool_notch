@@ -130,7 +130,8 @@ final class NotchDisplaySettings: ObservableObject {
     }
 
     func refreshConnectedDisplays() {
-        connectedDisplays = NSScreen.screens.map(Self.descriptor(for:))
+        let displays = NSScreen.screens.map(Self.descriptor(for:))
+        if displays != connectedDisplays { connectedDisplays = displays }
     }
 
     func selectedScreen(
