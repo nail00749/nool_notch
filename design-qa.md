@@ -8,8 +8,6 @@ Date: 2026-09-15
   not included in the repository.
 - Finder Stack interaction reference: local screenshot (`1142x1872`),
   not included in the repository.
-- Implementation contract:
-  `docs/superpowers/specs/2026-09-15-quota-panel-presentation-modes-design.md`.
 
 ## Rendered implementation
 
