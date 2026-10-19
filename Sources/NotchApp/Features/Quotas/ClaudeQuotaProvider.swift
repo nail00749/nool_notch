@@ -7,14 +7,25 @@ struct ClaudeQuotaProvider: QuotaProvider, QuotaProviderAuthenticating, Sendable
     let sourceURL = URL(string: "https://claude.ai/settings/usage")
 
     func loadSnapshot() async -> QuotaSnapshot {
+        let now = Date()
+        if let cached = await ClaudeUsageGate.shared.cachedSnapshot(at: now) { return cached }
         do {
-            let accessToken = try await Task.detached {
-                try ClaudeCodeCredentialStore.loadAccessToken()
+            let credential = try await Task.detached {
+                try ClaudeCodeCredentialStore.loadCredential()
             }.value
-            return try await ClaudeUsageClient.loadSnapshot(
-                accessToken: accessToken,
+            // An expired token only earns 401/429 responses; Claude Code renews it on its next run.
+            if let expiresAt = credential.expiresAt, expiresAt <= now {
+                throw ClaudeQuotaError.tokenExpired
+            }
+            let snapshot = try await ClaudeUsageClient.loadSnapshot(
+                accessToken: credential.accessToken,
                 sourceURL: sourceURL
             )
+            await ClaudeUsageGate.shared.recordSuccess(snapshot, at: now)
+            return snapshot
+        } catch ClaudeQuotaError.rateLimited(let retryAfter) {
+            return await ClaudeUsageGate.shared.recordRateLimit(until: now.addingTimeInterval(retryAfter),
+                                                                 sourceURL: sourceURL)
         } catch let error as ClaudeQuotaError {
             return error.snapshot(sourceURL: sourceURL)
         } catch {
@@ -33,15 +44,75 @@ struct ClaudeQuotaProvider: QuotaProvider, QuotaProviderAuthenticating, Sendable
     }
 }
 
-private enum ClaudeQuotaError: Error {
+/// The usage endpoint rate-limits aggressively (one blocked hour after bursts), so NooL asks at most
+/// once a minute, honours `Retry-After`, and keeps showing the last limits while it waits.
+actor ClaudeUsageGate {
+    static let shared = ClaudeUsageGate()
+    static let minimumInterval: TimeInterval = 60
+    static let defaultRetryAfter: TimeInterval = 15 * 60
+
+    private var lastSnapshot: QuotaSnapshot?
+    private var lastFetchAt: Date?
+    private var blockedUntil: Date?
+
+    /// A snapshot to return instead of calling the API, or nil when a request is allowed.
+    func cachedSnapshot(at date: Date) -> QuotaSnapshot? {
+        if let blockedUntil, date < blockedUntil { return waitingSnapshot(until: blockedUntil, sourceURL: lastSnapshot?.sourceURL) }
+        if let lastFetchAt, let lastSnapshot, date.timeIntervalSince(lastFetchAt) < Self.minimumInterval {
+            return lastSnapshot
+        }
+        return nil
+    }
+
+    func recordSuccess(_ snapshot: QuotaSnapshot, at date: Date) {
+        lastSnapshot = snapshot
+        lastFetchAt = date
+        blockedUntil = nil
+    }
+
+    func recordRateLimit(until date: Date, sourceURL: URL?) -> QuotaSnapshot {
+        blockedUntil = date
+        return waitingSnapshot(until: date, sourceURL: sourceURL)
+    }
+
+    private func waitingSnapshot(until date: Date, sourceURL: URL?) -> QuotaSnapshot {
+        let time = date.formatted(date: .omitted, time: .shortened)
+        guard let lastSnapshot else {
+            return .unavailable(providerID: "claude-code-subscription", providerName: "Claude Code", sourceURL: sourceURL,
+                                message: "Anthropic временно ограничил запросы лимитов. Повтор после \(time).")
+        }
+        return QuotaSnapshot(providerID: lastSnapshot.providerID, providerName: lastSnapshot.providerName,
+                             windows: lastSnapshot.windows, connection: .stale, updatedAt: lastSnapshot.updatedAt,
+                             sourceURL: lastSnapshot.sourceURL,
+                             message: "Показаны последние лимиты: Anthropic ограничил запросы до \(time).")
+    }
+}
+
+enum ClaudeQuotaError: Error {
     case authenticationRequired
     case authenticationRejected
+    case tokenExpired
+    case rateLimited(retryAfter: TimeInterval)
     case commandUnavailable
     case invalidResponse
     case serviceUnavailable
 
     func snapshot(sourceURL: URL?) -> QuotaSnapshot {
         switch self {
+        case .tokenExpired:
+            return .requiresAuthentication(
+                providerID: "claude-code-subscription",
+                providerName: "Claude Code",
+                sourceURL: sourceURL,
+                message: "Вход Claude Code истёк. Запустите claude в терминале, и лимиты появятся снова."
+            )
+        case .rateLimited:
+            return .unavailable(
+                providerID: "claude-code-subscription",
+                providerName: "Claude Code",
+                sourceURL: sourceURL,
+                message: "Anthropic временно ограничил запросы лимитов."
+            )
         case .authenticationRequired, .authenticationRejected:
             return .requiresAuthentication(
                 providerID: "claude-code-subscription",
@@ -81,19 +152,26 @@ private enum ClaudeCodeCredentialStore {
 
     private struct OAuthCredential: Decodable {
         let accessToken: String
+        /// Milliseconds since 1970, as Claude Code writes it.
+        let expiresAt: Double?
     }
 
-    static func loadAccessToken() throws -> String {
+    struct Credential: Sendable {
+        let accessToken: String
+        let expiresAt: Date?
+    }
+
+    static func loadCredential() throws -> Credential {
         if let keychainData = readKeychainItem(),
-           let token = decodeAccessToken(from: keychainData) {
-            return token
+           let credential = decodeCredential(from: keychainData) {
+            return credential
         }
 
         let credentialsURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/.credentials.json")
         if let data = try? Data(contentsOf: credentialsURL),
-           let token = decodeAccessToken(from: data) {
-            return token
+           let credential = decodeCredential(from: data) {
+            return credential
         }
 
         throw ClaudeQuotaError.authenticationRequired
@@ -123,13 +201,13 @@ private enum ClaudeCodeCredentialStore {
         }
     }
 
-    private static func decodeAccessToken(from data: Data) -> String? {
-        guard let credentials = try? JSONDecoder().decode(CredentialsFile.self, from: data),
-              let token = credentials.claudeAiOauth?.accessToken,
-              token.isEmpty == false else {
+    private static func decodeCredential(from data: Data) -> Credential? {
+        guard let oauth = (try? JSONDecoder().decode(CredentialsFile.self, from: data))?.claudeAiOauth,
+              oauth.accessToken.isEmpty == false else {
             return nil
         }
-        return token
+        let expiresAt = oauth.expiresAt.flatMap { $0.isFinite && $0 > 0 ? Date(timeIntervalSince1970: $0 / 1000) : nil }
+        return Credential(accessToken: oauth.accessToken, expiresAt: expiresAt)
     }
 }
 
@@ -178,6 +256,9 @@ private enum ClaudeUsageClient {
             break
         case 401, 403:
             throw ClaudeQuotaError.authenticationRejected
+        case 429:
+            let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
+            throw ClaudeQuotaError.rateLimited(retryAfter: min(max(retryAfter ?? ClaudeUsageGate.defaultRetryAfter, 60), 6 * 3600))
         default:
             throw ClaudeQuotaError.serviceUnavailable
         }
