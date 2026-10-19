@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import NotchCore
 
 @MainActor
 protocol LiveWallpaperDesktopImageSetting {
@@ -37,6 +38,15 @@ final class LiveWallpaperController: ObservableObject {
     private var posterGeneration = 0
     private var started = false
     private var stopped = false
+    private let metricsSampler: any SystemMetricsSampling
+    private var overlayData = LiveWallpaperOverlayData()
+    private var overlayTask: Task<Void, Never>?
+    private var overlayTaskSamplesMetrics: Bool?
+    private var lastQuotaRefreshRequest: Date?
+    /// Asks the quota feature for fresh limits while the overlay shows them (at most every 5 minutes).
+    var onQuotaRefreshNeeded: (() -> Void)?
+    static let overlaySampleInterval: Duration = .seconds(2)
+    static let overlayQuotaRefreshInterval: TimeInterval = 5 * 60
     private static let preferencesKey = "nool.liveWallpaper.preferences.v1"
 
     init(defaults: UserDefaults = .standard,
@@ -44,12 +54,14 @@ final class LiveWallpaperController: ObservableObject {
          renderer: any LiveWallpaperRendering = DesktopLiveWallpaperRenderer(),
          power: any LiveWallpaperPowerMonitoring = SystemLiveWallpaperPowerMonitor(),
          desktopImage: any LiveWallpaperDesktopImageSetting = SystemLiveWallpaperDesktopImage(),
+         metricsSampler: any SystemMetricsSampling = SystemMetricsSampler(),
          screensProvider: @escaping @MainActor () -> [NSScreen] = { NSScreen.screens }) {
         self.defaults = defaults
         self.library = library
         self.renderer = renderer
         self.power = power
         self.desktopImage = desktopImage
+        self.metricsSampler = metricsSampler
         self.screensProvider = screensProvider
         preferences = defaults.data(forKey: Self.preferencesKey).flatMap {
             try? JSONDecoder().decode(LiveWallpaperPreferences.self, from: $0)
@@ -117,6 +129,7 @@ final class LiveWallpaperController: ObservableObject {
         observers = []
         workspaceObservers = []
         power.stop()
+        stopOverlayFeed()
         renderer.apply(nil)
     }
 
@@ -333,6 +346,65 @@ final class LiveWallpaperController: ObservableObject {
             displays: displays, preferences: preferences, environment: environment,
             resolve: { [items] name in items.first { $0.fileName == name }?.content }
         ))
+        reconcileOverlayFeed()
+    }
+
+    // MARK: Overlay
+
+    /// Latest limits from the quota feature; shown only when the overlay is enabled.
+    func setQuotaProviders(_ providers: [QuotaWidgetProvider]) {
+        guard overlayData.quotas != providers else { return }
+        overlayData.quotas = providers
+        renderer.updateOverlay(overlayData)
+    }
+
+    /// One loop per need: it samples hardware every 2 s only while the wallpaper plays and the
+    /// overlay or a load-reactive scene uses it, and it requests quota refreshes while limits show.
+    private func reconcileOverlayFeed() {
+        let overlay = preferences.overlay
+        let playing = playbackState == .playing
+        let samplesMetrics = playing && overlay.needsSystemMetrics
+        let wantsQuotas = playing && overlay.showsQuotas
+        guard samplesMetrics || wantsQuotas else {
+            stopOverlayFeed()
+            return
+        }
+        if !overlay.scenesReactToLoad { renderer.setSceneEnergy(0) }
+        guard overlayTask == nil || overlayTaskSamplesMetrics != samplesMetrics else { return }
+        overlayTask?.cancel()
+        overlayTaskSamplesMetrics = samplesMetrics
+        let sampler = metricsSampler
+        overlayTask = Task { [weak self] in
+            if samplesMetrics { await sampler.reset() }
+            while !Task.isCancelled {
+                let reading = samplesMetrics ? await sampler.sample() : nil
+                guard !Task.isCancelled, let self else { return }
+                self.consumeOverlayTick(reading)
+                do { try await Task.sleep(for: Self.overlaySampleInterval) } catch { return }
+            }
+        }
+    }
+
+    private func consumeOverlayTick(_ reading: SystemMetricsSnapshot?) {
+        let overlay = preferences.overlay
+        if overlay.showsQuotas,
+           lastQuotaRefreshRequest.map({ Date().timeIntervalSince($0) >= Self.overlayQuotaRefreshInterval }) ?? true {
+            lastQuotaRefreshRequest = Date()
+            onQuotaRefreshNeeded?()
+        }
+        guard let reading else { return }
+        renderer.setSceneEnergy(overlay.scenesReactToLoad ? reading.cpuFraction ?? 0 : 0)
+        if overlayData.system != reading {
+            overlayData.system = reading
+            renderer.updateOverlay(overlayData)
+        }
+    }
+
+    private func stopOverlayFeed() {
+        overlayTask?.cancel()
+        overlayTask = nil
+        overlayTaskSamplesMetrics = nil
+        renderer.setSceneEnergy(0)
     }
 
     /// Sets each display's system wallpaper, which macOS also shows on the lock screen, to a frame of

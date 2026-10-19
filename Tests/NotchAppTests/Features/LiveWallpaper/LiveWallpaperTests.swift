@@ -1,8 +1,36 @@
 import AppKit
+import NotchCore
 import XCTest
 @testable import NotchApp
 
 final class LiveWallpaperPolicyTests: XCTestCase {
+    func testOverlaySettingsDecodeSanitizeAndTargetMainDisplay() throws {
+        let decoded = try JSONDecoder().decode(LiveWallpaperOverlaySettings.self, from: Data(#"{"showsQuotas":true,"opacity":7,"metrics":["network","cpu"]}"#.utf8))
+        XCTAssertTrue(decoded.showsQuotas)
+        XCTAssertEqual(decoded.position, .bottomRight)
+        XCTAssertEqual(decoded.sanitized.opacity, 1)
+        XCTAssertEqual(decoded.sanitized.metrics, [.cpu, .network])
+        XCTAssertFalse(LiveWallpaperOverlaySettings().isVisible)
+        XCTAssertFalse(LiveWallpaperOverlaySettings().needsSystemMetrics)
+
+        var preferences = LiveWallpaperPreferences()
+        preferences.enabled = true
+        preferences.selectedFileName = "nool-scene-snow"
+        preferences.overlay.showsSystem = true
+        let displays = [
+            LiveWallpaperDisplay(key: "main", displayID: 1, name: "A", frame: .init(x: 0, y: 0, width: 100, height: 100)),
+            LiveWallpaperDisplay(key: "side", displayID: 2, name: "B", frame: .init(x: 100, y: 0, width: 100, height: 100))
+        ]
+        let resolve: (String) -> LiveWallpaperContent? = { LiveWallpaperScenePreset(key: $0).map(LiveWallpaperContent.scene) }
+        let mainOnly = LiveWallpaperPolicy.configuration(displays: displays, preferences: preferences,
+                                                        environment: LiveWallpaperEnvironment(), resolve: resolve)
+        XCTAssertEqual(mainOnly?.screens.map(\.showsOverlay), [true, false])
+        preferences.overlay.mainDisplayOnly = false
+        let everywhere = LiveWallpaperPolicy.configuration(displays: displays, preferences: preferences,
+                                                          environment: LiveWallpaperEnvironment(), resolve: resolve)
+        XCTAssertEqual(everywhere?.screens.map(\.showsOverlay), [true, true])
+    }
+
     func testStateRequiresEnabledVideoAndRespectsPauseReasons() {
         var preferences = LiveWallpaperPreferences()
         let environment = LiveWallpaperEnvironment()
@@ -247,6 +275,44 @@ final class LiveWallpaperControllerTests: XCTestCase {
         XCTAssertNotNil(fixture.controller.item(named: "nool-scene-fireflies"), "Built-in scenes cannot be removed")
     }
 
+    func testOverlayFeedRunsOnlyWhilePlayingAndDrivesSceneEnergy() async throws {
+        let fixture = try Fixture(files: [])
+        defer { fixture.cleanUp() }
+        var quotaRequests = 0
+        fixture.controller.onQuotaRefreshNeeded = { quotaRequests += 1 }
+        var preferences = LiveWallpaperPreferences()
+        preferences.enabled = true
+        preferences.selectedFileName = "nool-scene-plexus"
+        fixture.controller.setPreferences(preferences)
+        fixture.controller.start()
+        try await waitUntil { fixture.renderer.configurations.last??.isPlaying == true }
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(fixture.sampler.sampleCount, 0, "No overlay, no hardware sampling")
+
+        preferences.overlay.showsSystem = true
+        preferences.overlay.showsQuotas = true
+        preferences.overlay.scenesReactToLoad = true
+        fixture.controller.setPreferences(preferences)
+        try await waitUntil { fixture.renderer.overlayData.last?.system?.cpuFraction == 0.75 }
+        XCTAssertEqual(fixture.renderer.energies.last, 0.75)
+        XCTAssertEqual(quotaRequests, 1)
+        XCTAssertEqual(fixture.renderer.configurations.last??.screens.first?.showsOverlay, true)
+
+        let quota = QuotaWidgetProvider(snapshot: QuotaSnapshot(
+            providerID: "claude", providerName: "Claude",
+            windows: [QuotaWindow(id: "5h", label: "5h", limit: 100, remaining: 40, resetAt: nil, unit: .percentage)],
+            connection: .live, updatedAt: Date(), sourceURL: nil, message: nil))
+        fixture.controller.setQuotaProviders([quota])
+        XCTAssertEqual(fixture.renderer.overlayData.last?.quotas.first?.percentage(for: .fiveHours), 40)
+
+        fixture.power.isOnBattery = true
+        fixture.power.onChange?()
+        let samples = fixture.sampler.sampleCount
+        XCTAssertEqual(fixture.renderer.energies.last, 0, "Paused wallpaper drops the load reaction")
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(fixture.sampler.sampleCount, samples, "Sampling stops while paused")
+    }
+
     func testMissingSelectedFileHidesWallpaper() async throws {
         let fixture = try Fixture(files: [])
         defer { fixture.cleanUp() }
@@ -272,6 +338,7 @@ final class LiveWallpaperControllerTests: XCTestCase {
         let suiteName: String
         let renderer = FakeRenderer()
         let power = FakePower()
+        let sampler = FakeSampler()
         let controller: LiveWallpaperController
 
         init(files: [String]) throws {
@@ -284,7 +351,7 @@ final class LiveWallpaperControllerTests: XCTestCase {
             let screen = try XCTUnwrap(NSScreen.main ?? NSScreen.screens.first)
             controller = LiveWallpaperController(defaults: defaults, library: library, renderer: renderer,
                                                  power: power, desktopImage: FakeDesktopImage(),
-                                                 screensProvider: { [screen] })
+                                                 metricsSampler: sampler, screensProvider: { [screen] })
         }
 
         func cleanUp() {
@@ -298,8 +365,24 @@ final class LiveWallpaperControllerTests: XCTestCase {
     private final class FakeRenderer: LiveWallpaperRendering {
         var onCoverageChange: ((Bool) -> Void)?
         var configurations: [LiveWallpaperRenderConfiguration?] = []
+        var overlayData: [LiveWallpaperOverlayData] = []
+        var energies: [Double] = []
         func apply(_ configuration: LiveWallpaperRenderConfiguration?) { configurations.append(configuration) }
+        func updateOverlay(_ data: LiveWallpaperOverlayData) { overlayData.append(data) }
+        func setSceneEnergy(_ value: Double) { energies.append(value) }
         func sceneSnapshot(forDisplay displayID: CGDirectDisplayID) -> CGImage? { nil }
+    }
+
+    private final class FakeSampler: SystemMetricsSampling, @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        var sampleCount: Int { lock.withLock { count } }
+        func sample() async -> SystemMetricsSnapshot {
+            lock.withLock { count += 1 }
+            return SystemMetricsSnapshot(sampledAt: Date(), cpuFraction: 0.75,
+                                         memory: SystemResourceUsage(usedBytes: 4, totalBytes: 8), disk: nil, network: nil)
+        }
+        func reset() async {}
     }
 
     @MainActor

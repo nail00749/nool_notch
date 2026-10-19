@@ -34,6 +34,7 @@ final class NotchWindowCoordinator: NSObject {
     private let launcher: LauncherWindowCoordinator
     private let moduleRuntime: AppModuleRuntime
     private var moduleChanges: AnyCancellable?
+    private var wallpaperQuotaChanges: AnyCancellable?
     private let window: NotchPanel
     private let presentation: NotchWindowPresentation
     private let quotaEdgeCoordinator: QuotaEdgeWindowCoordinator
@@ -255,8 +256,19 @@ final class NotchWindowCoordinator: NSObject {
                                stop: { [weak self] in self?.dock?.stop() })
         moduleRuntime.register(.lidEffect, start: { [weak self] in self?.lidEffect.start() },
                                stop: { [weak self] in self?.lidEffect.pause() })
-        moduleRuntime.register(.liveWallpaper, start: { [weak self] in self?.liveWallpaper.start() },
-                               stop: { [weak self] in self?.liveWallpaper.pause() })
+        liveWallpaper.onQuotaRefreshNeeded = { [weak self] in self?.model.refreshQuotasForWallpaper() }
+        // objectWillChange fires before the new value lands, so read it on the next main-queue turn.
+        wallpaperQuotaChanges = model.quotaChanges.merge(with: model.modules.changes.map { _ in () })
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in
+                guard let self else { return }
+                self.liveWallpaper.setQuotaProviders(self.model.wallpaperQuotaProviders)
+            }
+        moduleRuntime.register(.liveWallpaper, start: { [weak self] in
+            guard let self else { return }
+            self.liveWallpaper.setQuotaProviders(self.model.wallpaperQuotaProviders)
+            self.liveWallpaper.start()
+        }, stop: { [weak self] in self?.liveWallpaper.pause() })
         moduleRuntime.register(.textRecognition, start: {}, stop: { [weak self] in
             self?.screenTextCapture.cancel()
             self?.textRecognition.stop()
@@ -316,6 +328,7 @@ final class NotchWindowCoordinator: NSObject {
         isStarted = false
         layoutAnimationGeneration += 1
         moduleChanges = nil
+        wallpaperQuotaChanges = nil
         moduleRuntime.stop()
         modelChanges?.cancel()
         modelChanges = nil

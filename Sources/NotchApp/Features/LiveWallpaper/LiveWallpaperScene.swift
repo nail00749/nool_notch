@@ -75,6 +75,12 @@ final class LiveWallpaperParticleScene: SKScene {
     private var nextShootingStar: CGFloat = 4
     private var image: CGImage?
     private var glows: [(node: SKSpriteNode, depth: CGFloat, base: CGPoint)] = []
+    /// CPU load the scene reacts to (0...1) and its smoothed value, so readings every few seconds
+    /// turn into gradual changes instead of jumps.
+    private var targetEnergy: CGFloat = 0
+    private var energy: CGFloat = 0
+    private var tintedEnergy: CGFloat = 0
+    private static let baseColorKey = "nool.baseColor"
 
     init(size: CGSize, screenFrame: CGRect, content: LiveWallpaperContent, settings: LiveWallpaperSceneSettings) {
         self.content = content
@@ -104,6 +110,11 @@ final class LiveWallpaperParticleScene: SKScene {
         if needsRebuild { rebuild() }
     }
 
+    /// Hardware load in 0...1; particles speed up and warm in color as it rises. 0 turns the reaction off.
+    func setEnergy(_ value: Double) {
+        targetEnergy = CGFloat(value.isFinite ? min(1, max(0, value)) : 0)
+    }
+
     /// Resets timing after a pause so particles do not jump.
     func resumeClock() { lastUpdate = nil }
 
@@ -114,8 +125,12 @@ final class LiveWallpaperParticleScene: SKScene {
     }
 
     override func update(_ currentTime: TimeInterval) {
-        let dt = CGFloat(min(1.0 / 15, max(0, currentTime - (lastUpdate ?? currentTime))))
+        let frameTime = CGFloat(min(1.0 / 15, max(0, currentTime - (lastUpdate ?? currentTime))))
         lastUpdate = currentTime
+        energy += (targetEnergy - energy) * (1 - exp(-frameTime * 1.5))
+        applyEnergyTint()
+        // Under load the whole scene runs faster: up to 2.8× at full CPU.
+        let dt = frameTime * (1 + energy * 1.8)
         elapsed += dt
         let cursor = localCursor()
 
@@ -155,9 +170,21 @@ final class LiveWallpaperParticleScene: SKScene {
         if style == .stars, case .scene = content { updateShootingStars(dt: dt) }
     }
 
+    /// Re-tints only after a visible change, since it touches every particle node.
+    private func applyEnergyTint() {
+        guard abs(energy - tintedEnergy) > 0.03 || (energy < 0.01 && tintedEnergy != 0) else { return }
+        tintedEnergy = energy < 0.01 ? 0 : energy
+        let warm = NSColor(red: 1, green: 0.45, blue: 0.25, alpha: 1)
+        for node in particles.map(\.node) + glows.map(\.node) {
+            guard let base = node.userData?[Self.baseColorKey] as? NSColor else { continue }
+            node.color = base.blended(withFraction: tintedEnergy * 0.7, of: warm) ?? base
+        }
+    }
+
     // MARK: Building
 
     private func rebuild() {
+        tintedEnergy = 0
         background?.removeFromParent()
         background = makeBackground()
         if let background { addChild(background) }
@@ -228,6 +255,7 @@ final class LiveWallpaperParticleScene: SKScene {
             let diameter = CGFloat.random(in: 0.5...0.9) * size.height * 1.4
             node.size = CGSize(width: diameter * CGFloat.random(in: 1.2...1.8), height: diameter)
             node.color = tints[index % tints.count]
+            node.userData = [Self.baseColorKey: node.color]
             node.colorBlendFactor = 1
             node.alpha = CGFloat.random(in: 0.10...0.18)
             node.blendMode = .add
@@ -278,6 +306,7 @@ final class LiveWallpaperParticleScene: SKScene {
         }
         node.size = CGSize(width: diameter, height: diameter)
         node.color = color
+        node.userData = [Self.baseColorKey: color]
         node.colorBlendFactor = 1
         node.alpha = alpha
         let position: CGPoint

@@ -1293,6 +1293,18 @@ final class NotchViewModel: ObservableObject {
         quotas.beginAuthentication(for: providerID)
     }
 
+    /// Display-only limits for the wallpaper overlay, in the user's provider order.
+    var wallpaperQuotaProviders: [QuotaWidgetProvider] {
+        visibleQuotaProviders.compactMap { snapshots[$0.id].map(QuotaWidgetProvider.init(snapshot:)) }
+    }
+
+    /// Fires before quota snapshots or their order change; read `wallpaperQuotaProviders` afterwards.
+    var quotaChanges: AnyPublisher<Void, Never> { quotas.objectWillChange.map { _ in () }.eraseToAnyPublisher() }
+
+    func refreshQuotasForWallpaper() {
+        refreshQuotaProviders(ifOlderThan: LiveWallpaperController.overlayQuotaRefreshInterval)
+    }
+
     private func refreshQuotaProviders(ifOlderThan maximumAge: TimeInterval) {
         guard modules.isEnabled(.quotas) else { return }
         quotas.refreshQuotaProviders(ifOlderThan: maximumAge)

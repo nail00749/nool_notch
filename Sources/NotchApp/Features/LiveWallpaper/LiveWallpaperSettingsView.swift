@@ -86,6 +86,8 @@ struct LiveWallpaperSettingsView: View {
 
             sceneCard
 
+            overlayCard
+
             SettingsCard(title: "Энергосбережение", icon: "leaf") {
                 VStack(alignment: .leading, spacing: 10) {
                     Toggle("Пауза от батареи и в режиме энергосбережения", isOn: preference(\.pausesOnBattery))
@@ -302,6 +304,59 @@ struct LiveWallpaperSettingsView: View {
                     .settingsHintStyle()
             }
         }
+    }
+
+    private var overlayCard: some View {
+        let overlay = controller.preferences.overlay
+        return SettingsCard(title: "Данные на обоях", icon: "gauge.with.dots.needle.33percent") {
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle("Нагрузка на железо", isOn: overlayPreference(\.showsSystem))
+                    .frame(minHeight: 32)
+                HStack(spacing: 6) {
+                    ForEach(SystemMonitorMetric.allCases) { metric in
+                        Toggle(isOn: metricBinding(metric)) {
+                            Label(metric.title, systemImage: metric.symbol)
+                        }
+                        .toggleStyle(.button)
+                    }
+                }
+                .disabled(!overlay.showsSystem)
+                Toggle("Лимиты AI-провайдеров", isOn: overlayPreference(\.showsQuotas))
+                    .frame(minHeight: 32)
+                Toggle("Сцены ускоряются и теплеют под нагрузкой CPU", isOn: overlayPreference(\.scenesReactToLoad))
+                    .frame(minHeight: 32)
+                Picker("Положение", selection: overlayPreference(\.position)) {
+                    ForEach(LiveWallpaperOverlayPosition.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                Picker("Размер", selection: overlayPreference(\.size)) {
+                    ForEach(LiveWallpaperOverlaySize.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                slider("Непрозрачность", value: overlayPreference(\.opacity), range: 0.3...1,
+                       valueLabel: "\(Int(overlay.opacity * 100))%")
+                Toggle("Только на главном экране", isOn: overlayPreference(\.mainDisplayOnly))
+                    .frame(minHeight: 32)
+                Text("Данные рисуются прямо в обоях под иконками рабочего стола и обновляются раз в 2 секунды, пока обои воспроизводятся. Лимиты берутся у включённых провайдеров модуля «Лимиты».")
+                    .settingsHintStyle()
+            }
+        }
+    }
+
+    private func overlayPreference<T>(_ keyPath: WritableKeyPath<LiveWallpaperOverlaySettings, T>) -> Binding<T> {
+        Binding(get: { controller.preferences.overlay[keyPath: keyPath] }, set: { value in
+            var preferences = controller.preferences
+            preferences.overlay[keyPath: keyPath] = value
+            controller.setPreferences(preferences)
+        })
+    }
+
+    private func metricBinding(_ metric: SystemMonitorMetric) -> Binding<Bool> {
+        Binding(get: { controller.preferences.overlay.metrics.contains(metric) }, set: { isOn in
+            var preferences = controller.preferences
+            preferences.overlay.metrics.removeAll { $0 == metric }
+            if isOn { preferences.overlay.metrics.append(metric) }
+            controller.setPreferences(preferences)
+        })
     }
 
     private func scenePreference<T>(_ keyPath: WritableKeyPath<LiveWallpaperSceneSettings, T>) -> Binding<T> {

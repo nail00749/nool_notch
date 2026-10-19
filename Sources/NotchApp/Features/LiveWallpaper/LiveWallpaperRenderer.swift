@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import IOKit.ps
 import SpriteKit
+import SwiftUI
 
 @MainActor
 protocol LiveWallpaperRendering: AnyObject {
@@ -11,6 +12,10 @@ protocol LiveWallpaperRendering: AnyObject {
     func apply(_ configuration: LiveWallpaperRenderConfiguration?)
     /// The current frame of a scene surface, used as the system and lock screen wallpaper.
     func sceneSnapshot(forDisplay displayID: CGDirectDisplayID) -> CGImage?
+    /// New limits and hardware readings for the overlay; cheap, no windows are rebuilt.
+    func updateOverlay(_ data: LiveWallpaperOverlayData)
+    /// Hardware load in 0...1 that scenes react to; 0 turns the reaction off.
+    func setSceneEnergy(_ value: Double)
 }
 
 /// Click-through windows at the desktop level, below Finder icons. Screens showing the same video share
@@ -26,11 +31,14 @@ final class DesktopLiveWallpaperRenderer: LiveWallpaperRendering {
     }
 
     private enum Surface {
-        case video(AVPlayerLayer)
+        case video(NSView, AVPlayerLayer)
         case scene(SKView, LiveWallpaperParticleScene)
     }
 
     private var windows: [CGDirectDisplayID: NSWindow] = [:]
+    private var overlayViews: [CGDirectDisplayID: NSView] = [:]
+    private let overlayModel = LiveWallpaperOverlayModel()
+    private var sceneEnergy = 0.0
     private var surfaces: [CGDirectDisplayID: Surface] = [:]
     private var windowContents: [CGDirectDisplayID: LiveWallpaperContent] = [:]
     private var occlusionObservers: [CGDirectDisplayID: NSObjectProtocol] = [:]
@@ -50,13 +58,14 @@ final class DesktopLiveWallpaperRenderer: LiveWallpaperRendering {
         }
         for url in playbacks.keys where !videoURLs.contains(url) { releasePlayback(url) }
         for url in videoURLs where playbacks[url] == nil { playbacks[url] = Self.makePlayback(url) }
+        if overlayModel.settings != configuration.overlay { overlayModel.settings = configuration.overlay }
         synchronizeWindows(configuration)
         lastConfiguration = configuration
 
         let gravity = Self.gravity(for: configuration.scaleMode)
         for surface in surfaces.values {
             switch surface {
-            case .video(let layer):
+            case .video(_, let layer):
                 if layer.videoGravity != gravity { layer.videoGravity = gravity }
             case .scene(let view, _):
                 view.preferredFramesPerSecond = configuration.scene.framesPerSecond
@@ -105,6 +114,15 @@ final class DesktopLiveWallpaperRenderer: LiveWallpaperRendering {
         }
     }
 
+    func updateOverlay(_ data: LiveWallpaperOverlayData) {
+        if overlayModel.data != data { overlayModel.data = data }
+    }
+
+    func setSceneEnergy(_ value: Double) {
+        sceneEnergy = value
+        for case .scene(_, let scene) in surfaces.values { scene.setEnergy(value) }
+    }
+
     func sceneSnapshot(forDisplay displayID: CGDirectDisplayID) -> CGImage? {
         guard case .scene(let view, let scene) = surfaces[displayID] else { return nil }
         return view.texture(from: scene)?.cgImage()
@@ -138,6 +156,7 @@ final class DesktopLiveWallpaperRenderer: LiveWallpaperRendering {
             } else if case .scene(_, let scene) = surfaces[screen.displayID] {
                 scene.update(settings: configuration.scene, screenFrame: screen.frame)
             }
+            synchronizeOverlay(screen, in: window)
         }
         reportCoverage()
     }
@@ -155,6 +174,12 @@ final class DesktopLiveWallpaperRenderer: LiveWallpaperRendering {
         window.animationBehavior = .none
         window.isExcludedFromWindowsMenu = true
         window.setFrame(screen.frame, display: false)
+        // Surface below, optional overlay above; both resize with the window.
+        let container = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.black.cgColor
+        container.autoresizesSubviews = true
+        window.contentView = container
         window.orderFrontRegardless()
         windows[screen.displayID] = window
         occlusionObservers[screen.displayID] = NotificationCenter.default.addObserver(
@@ -181,8 +206,8 @@ final class DesktopLiveWallpaperRenderer: LiveWallpaperRendering {
             layer.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
             layer.backgroundColor = NSColor.black.cgColor
             view.layer?.addSublayer(layer)
-            window.contentView = view
-            surfaces[screen.displayID] = .video(layer)
+            insertSurfaceView(view, in: window)
+            surfaces[screen.displayID] = .video(view, layer)
         case .image, .scene:
             let view = SKView(frame: bounds)
             view.ignoresSiblingOrder = true
@@ -191,18 +216,41 @@ final class DesktopLiveWallpaperRenderer: LiveWallpaperRendering {
             view.isPaused = true
             let scene = LiveWallpaperParticleScene(size: bounds.size, screenFrame: screen.frame,
                                                    content: screen.content, settings: settings)
+            scene.setEnergy(sceneEnergy)
             view.presentScene(scene)
-            window.contentView = view
+            insertSurfaceView(view, in: window)
             surfaces[screen.displayID] = .scene(view, scene)
+        }
+    }
+
+    private func insertSurfaceView(_ view: NSView, in window: NSWindow) {
+        guard let container = window.contentView else { return }
+        view.frame = container.bounds
+        view.autoresizingMask = [.width, .height]
+        container.addSubview(view, positioned: .below, relativeTo: nil)
+    }
+
+    private func synchronizeOverlay(_ screen: LiveWallpaperScreen, in window: NSWindow) {
+        if screen.showsOverlay, overlayViews[screen.displayID] == nil, let container = window.contentView {
+            let view = NSHostingView(rootView: LiveWallpaperOverlayView(model: overlayModel))
+            view.frame = container.bounds
+            view.autoresizingMask = [.width, .height]
+            container.addSubview(view, positioned: .above, relativeTo: nil)
+            overlayViews[screen.displayID] = view
+        } else if !screen.showsOverlay {
+            overlayViews.removeValue(forKey: screen.displayID)?.removeFromSuperview()
         }
     }
 
     private func releaseSurface(_ displayID: CGDirectDisplayID) {
         switch surfaces.removeValue(forKey: displayID) {
-        case .video(let layer): layer.player = nil
+        case .video(let view, let layer):
+            layer.player = nil
+            view.removeFromSuperview()
         case .scene(let view, _):
             view.isPaused = true
             view.presentScene(nil)
+            view.removeFromSuperview()
         case nil: break
         }
     }
@@ -212,6 +260,7 @@ final class DesktopLiveWallpaperRenderer: LiveWallpaperRendering {
             NotificationCenter.default.removeObserver(observer)
         }
         releaseSurface(displayID)
+        overlayViews.removeValue(forKey: displayID)?.removeFromSuperview()
         windowContents.removeValue(forKey: displayID)
         windows.removeValue(forKey: displayID)?.orderOut(nil)
     }

@@ -149,6 +149,7 @@ struct LiveWallpaperPreferences: Codable, Equatable, Sendable {
     var pausesWhenCovered = true
     var syncsSystemWallpaper = false
     var scene = LiveWallpaperSceneSettings()
+    var overlay = LiveWallpaperOverlaySettings()
 
     init() {}
 
@@ -167,6 +168,7 @@ struct LiveWallpaperPreferences: Codable, Equatable, Sendable {
         syncsSystemWallpaper = try container.decodeIfPresent(Bool.self, forKey: .syncsSystemWallpaper)
             ?? defaults.syncsSystemWallpaper
         scene = (try? container.decodeIfPresent(LiveWallpaperSceneSettings.self, forKey: .scene)) ?? defaults.scene
+        overlay = (try? container.decodeIfPresent(LiveWallpaperOverlaySettings.self, forKey: .overlay)) ?? defaults.overlay
     }
 
     var sanitized: Self {
@@ -178,6 +180,7 @@ struct LiveWallpaperPreferences: Codable, Equatable, Sendable {
         }
         copy.displayFileNames = displayFileNames.filter { !$0.key.isEmpty && LiveWallpaperItem.isAcceptableKey($0.value) }
         copy.scene = scene.sanitized
+        copy.overlay = overlay.sanitized
         return copy
     }
 
@@ -287,6 +290,7 @@ struct LiveWallpaperScreen: Equatable, Sendable {
     let displayID: CGDirectDisplayID
     let frame: CGRect
     let content: LiveWallpaperContent
+    var showsOverlay = false
 }
 
 struct LiveWallpaperRenderConfiguration: Equatable, Sendable {
@@ -298,6 +302,7 @@ struct LiveWallpaperRenderConfiguration: Equatable, Sendable {
     /// Stops each display whose wallpaper window is fully covered, even while another display shows it.
     let pausesHiddenScreens: Bool
     let scene: LiveWallpaperSceneSettings
+    var overlay = LiveWallpaperOverlaySettings()
 }
 
 enum LiveWallpaperPolicy {
@@ -316,9 +321,13 @@ enum LiveWallpaperPolicy {
     static func configuration(displays: [LiveWallpaperDisplay], preferences: LiveWallpaperPreferences,
                               environment: LiveWallpaperEnvironment,
                               resolve: (String) -> LiveWallpaperContent?) -> LiveWallpaperRenderConfiguration? {
+        let overlay = preferences.overlay.sanitized
+        let mainDisplayKey = displays.first?.key
         let screens = displays.compactMap { display -> LiveWallpaperScreen? in
             guard let content = preferences.fileName(forDisplay: display.key).flatMap(resolve) else { return nil }
-            return LiveWallpaperScreen(displayID: display.displayID, frame: display.frame, content: content)
+            let showsOverlay = overlay.isVisible && (!overlay.mainDisplayOnly || display.key == mainDisplayKey)
+            return LiveWallpaperScreen(displayID: display.displayID, frame: display.frame, content: content,
+                                       showsOverlay: showsOverlay)
         }
         let state = state(preferences: preferences, hasContent: !screens.isEmpty, environment: environment)
         guard state != .hidden else { return nil }
@@ -330,7 +339,8 @@ enum LiveWallpaperPolicy {
             playbackRate: Float(sanitized.playbackRate),
             isPlaying: state == .playing,
             pausesHiddenScreens: sanitized.pausesWhenCovered,
-            scene: sanitized.scene
+            scene: sanitized.scene,
+            overlay: overlay
         )
     }
 }
