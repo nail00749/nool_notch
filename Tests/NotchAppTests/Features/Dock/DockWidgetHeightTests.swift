@@ -22,7 +22,11 @@ final class DockWidgetHeightTests: XCTestCase {
                 ("music", AnyView(DockMusicWidget(model: model, span: span, interactionChanged: { _ in }))),
                 ("calendar", AnyView(DockCalendarWidget(model: model, span: span, interactionChanged: { _ in }))),
                 ("timer", AnyView(DockTimerWidget(source: model.timerSource, span: span, interactionChanged: { _ in }))),
-                ("note", AnyView(DockNoteWidget(preferences: preferences, span: span, interactionChanged: { _ in })))
+                ("note", AnyView(DockNoteWidget(preferences: preferences, span: span, interactionChanged: { _ in }))),
+                ("batteries", AnyView(DockBatteryWidget(span: span, store: DeviceBatteryStore()))),
+                ("systemLoad", AnyView(DockSystemLoadWidget(span: span, store: DockSystemLoadStore()))),
+                ("quotas", AnyView(DockQuotaWidget(model: model, span: span))),
+                ("toggles", AnyView(DockTogglesWidget(model: model, span: span, store: SystemTogglesStore())))
             ]
             for (name, widget) in widgets {
                 let host = NSHostingView(rootView: widget.frame(width: DockLayout.width(span: span, scale: 1)))

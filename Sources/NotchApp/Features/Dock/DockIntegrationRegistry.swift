@@ -41,6 +41,22 @@ enum DockIntegrationRegistry {
             AnyView(DockNoteWidget(preferences: $1.preferences, span: $0.span,
                                   interactionChanged: $1.interactionChanged))
         },
+        DockIntegration(id: "batteries", title: "Заряд устройств", symbol: "battery.75percent",
+                        supportedSpans: [1, 2, 3], isAvailable: { _ in true }) { element, _ in
+            AnyView(DockBatteryWidget(span: element.span))
+        },
+        DockIntegration(id: "systemLoad", title: "Нагрузка", symbol: "cpu", supportedSpans: [1, 2, 3],
+                        isAvailable: { _ in true }) { element, _ in
+            AnyView(DockSystemLoadWidget(span: element.span))
+        },
+        DockIntegration(id: "quotas", title: "Лимиты AI", symbol: "gauge.with.dots.needle.67percent",
+                        supportedSpans: [1, 2, 3], isAvailable: { $0.modules.isEnabled(.quotas) }) {
+            AnyView(DockQuotaWidget(model: $1.model, span: $0.span))
+        },
+        DockIntegration(id: "toggles", title: "Переключатели", symbol: "switch.2", supportedSpans: [1, 2, 3],
+                        isAvailable: { _ in true }) {
+            AnyView(DockTogglesWidget(model: $1.model, span: $0.span))
+        },
         DockIntegration(id: "launcher", title: "Launcher", symbol: "magnifyingglass", supportedSpans: [1],
                         isAvailable: { _ in true }) { _, context in
             AnyView(DockActionWidget(symbol: "magnifyingglass", title: "Launcher", action: context.openLauncher))

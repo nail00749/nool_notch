@@ -74,7 +74,10 @@ final class AppModuleTests: XCTestCase {
         modules.setEnabled(.music, enabled: false)
         modules.setEnabled(.calendar, enabled: false)
         modules.setEnabled(.liveActivities, enabled: false)
-        XCTAssertEqual(items.filter { $0.isAvailable(model) }.map(\.id), ["note", "launcher", "displays"])
+        XCTAssertEqual(items.filter { $0.isAvailable(model) }.map(\.id),
+                       ["note", "batteries", "systemLoad", "quotas", "toggles", "launcher", "displays"])
+        modules.setEnabled(.quotas, enabled: false)
+        XCTAssertFalse(items.filter { $0.isAvailable(model) }.map(\.id).contains("quotas"))
         modules.applyPreset(.all)
         XCTAssertEqual(items.filter { $0.isAvailable(model) }.map(\.id), items.map(\.id))
     }
