@@ -359,6 +359,7 @@ final class ElectedPlayerCommandTransport {
 @MainActor
 final class NowPlayingProvider: NowPlayingProviding {
     private let bridge = MediaRemoteBridge()
+    private let adapterSource: MediaRemoteAdapterSource
     private let accessibilitySource = AccessibilityNowPlayingSource()
     private let applicationEventObserver = NowPlayingApplicationEventObserver(
         notificationCenter: NSWorkspace.shared.notificationCenter,
@@ -412,7 +413,17 @@ final class NowPlayingProvider: NowPlayingProviding {
     var onAccessStateChange: ((Bool) -> Void)?
     var onDiagnosticsChange: ((NowPlayingDiagnostics) -> Void)?
 
-    init() {
+    init(adapterSource: MediaRemoteAdapterSource = MediaRemoteAdapterSource()) {
+        self.adapterSource = adapterSource
+        adapterSource.onSnapshotChange = { [weak self] _ in
+            guard let self, self.hasStarted, self.adapterSource.isActive else { return }
+            self.refreshGate.invalidate()
+            self.applyAdapterSnapshot()
+        }
+        adapterSource.onStateChange = { [weak self] _ in
+            guard let self, self.hasStarted else { return }
+            self.refresh()
+        }
         accessibilitySource.onMetadataChange = { [weak self] in
             guard let self, self.usesAccessibilityFallback else { return }
             self.refreshGate.invalidate()
@@ -436,6 +447,7 @@ final class NowPlayingProvider: NowPlayingProviding {
         guard hasStarted == false else { return }
         hasStarted = true
 
+        adapterSource.start()
         if bridge.isAvailable {
             bridge.registerForNowPlayingNotifications()
             observeNowPlayingChanges()
@@ -459,6 +471,7 @@ final class NowPlayingProvider: NowPlayingProviding {
         commandRequest = nil
         commandGeneration &+= 1
         bridge.unregisterForNowPlayingNotifications()
+        adapterSource.stop()
         applicationEventObserver.stop()
         accessibilitySource.stop()
         refreshGate.invalidate()
@@ -469,11 +482,19 @@ final class NowPlayingProvider: NowPlayingProviding {
 
     func refresh() {
         let generation = refreshGate.beginRequest()
-        guard bridge.isAvailable else {
-            if refreshGate.accepts(generation) {
-                refreshFromAccessibility()
-            }
+        switch NowPlayingReadPolicy.path(
+            adapterState: adapterSource.state,
+            bridgeIsAvailable: bridge.isAvailable
+        ) {
+        case .adapter:
+            adapterSource.requestRefresh()
+            applyAdapterSnapshot()
             return
+        case .accessibility:
+            refreshFromAccessibility()
+            return
+        case .inProcessMediaRemote:
+            break
         }
 
         bridge.getNowPlayingInfo { [weak self] info in
@@ -527,6 +548,15 @@ final class NowPlayingProvider: NowPlayingProviding {
     }
 
     private func executeControlCommand(_ command: NowPlayingControlCommand) {
+        if usesAccessibilityFallback == false,
+           adapterSource.send(command) {
+            // The adapter re-reads MediaRemote itself after a command.
+            commandRequest?.cancel()
+            commandRequest = nil
+            commandGeneration &+= 1
+            scheduleRefreshAfterControl(delay: 0.35)
+            return
+        }
         commandTask?.cancel()
         commandTask = nil
         commandRequest?.cancel()
@@ -591,6 +621,17 @@ final class NowPlayingProvider: NowPlayingProviding {
                 self.refresh()
             }
         }
+    }
+
+    private func applyAdapterSnapshot() {
+        guard let adapterSnapshot = adapterSource.snapshot else {
+            refreshFromAccessibility()
+            return
+        }
+        usesAccessibilityFallback = false
+        requiresAccessibilityAccess = false
+        lastAccessibilitySample = nil
+        publishSnapshot(adapterSnapshot, source: .mediaRemote)
     }
 
     private func refreshFromAccessibility() {

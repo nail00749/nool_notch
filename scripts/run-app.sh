@@ -52,6 +52,8 @@ cp "$BIN_PATH/NoolAgentBridge" "$APP_PATH/Contents/Resources/nool-agent-bridge"
 chmod 755 "$APP_PATH/Contents/Resources/nool-agent-bridge"
 cp "$BIN_PATH/NoolDockRecovery" "$APP_PATH/Contents/Resources/nool-dock-recovery"
 chmod 755 "$APP_PATH/Contents/Resources/nool-dock-recovery"
+cp "$BIN_PATH/libNoolMediaRemoteAdapter.dylib" "$APP_PATH/Contents/Resources/nool-media-remote-adapter.dylib"
+chmod 644 "$APP_PATH/Contents/Resources/nool-media-remote-adapter.dylib"
 cp "$PROJECT_ROOT/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
 cp "$PROJECT_ROOT/Resources/AppIcon.icns" "$APP_PATH/Contents/Resources/AppIcon.icns"
 RESOURCE_BUNDLES=("$BIN_PATH"/*.bundle(N))

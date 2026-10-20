@@ -54,6 +54,9 @@ if [[ "$AVAILABLE_IDENTITIES" == *"\"$SIGNING_IDENTITY\""* ]]; then
   if [[ -f "$APP_PATH/Contents/Resources/nool-dock-recovery" ]]; then
     /usr/bin/codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP_PATH/Contents/Resources/nool-dock-recovery"
   fi
+  if [[ -f "$APP_PATH/Contents/Resources/nool-media-remote-adapter.dylib" ]]; then
+    /usr/bin/codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP_PATH/Contents/Resources/nool-media-remote-adapter.dylib"
+  fi
   record_signing_mode stable
   /usr/bin/codesign \
     --force \
@@ -74,6 +77,10 @@ else
   fi
   print -u2 -- "warning: signing identity '$SIGNING_IDENTITY' is unavailable; explicit ad-hoc signing enabled"
   record_signing_mode ad-hoc
+  if [[ -f "$APP_PATH/Contents/Resources/nool-media-remote-adapter.dylib" ]]; then
+    # --deep does not reach Mach-O files in Resources; perl loads this one.
+    /usr/bin/codesign --force --sign - "$APP_PATH/Contents/Resources/nool-media-remote-adapter.dylib"
+  fi
   /usr/bin/codesign \
     --force \
     --deep \

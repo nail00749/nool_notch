@@ -10,7 +10,12 @@ let package = Package(
         .library(name: "NotchCore", targets: ["NotchCore"]),
         .executable(name: "NotchApp", targets: ["NotchApp"]),
         .executable(name: "NoolAgentBridge", targets: ["NoolAgentBridge"]),
-        .executable(name: "NoolDockRecovery", targets: ["NoolDockRecovery"])
+        .executable(name: "NoolDockRecovery", targets: ["NoolDockRecovery"]),
+        .library(
+            name: "NoolMediaRemoteAdapter",
+            type: .dynamic,
+            targets: ["NoolMediaRemoteAdapter"]
+        )
     ],
     targets: [
         .target(
@@ -40,6 +45,14 @@ let package = Package(
             name: "NoolDockRecovery",
             dependencies: ["NotchCore"],
             path: "Sources/NoolDockRecovery"
+        ),
+        .target(
+            name: "NoolMediaRemoteAdapter",
+            path: "Sources/NoolMediaRemoteAdapter",
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("Foundation")
+            ]
         ),
         .testTarget(
             name: "NotchAppTests",
