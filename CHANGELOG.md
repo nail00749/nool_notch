@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-20
+
 ### Added
 
 - Мини-виджеты Dock шириной 1–3 ячейки: заряд Mac и подключённых Bluetooth-устройств (у наушников — меньший из двух), нагрузка CPU, памяти, диска и сети, лимиты AI с остатком и временем до сброса, панель управления: плитка в Dock раскрывается по щелчку, как папка, с переключателями Wi‑Fi, тёмной темы и «Не засыпать», ползунком громкости и переходом к настройкам Bluetooth; прокрутка над плиткой меняет громкость. Данные обновляются, только пока виджет виден.
@@ -461,7 +463,8 @@
 - Добавлены панели лимитов, календаря, Now Playing и Jira.
 - Добавлены arm64 release packaging, checksum и ad-hoc подпись.
 
-[Unreleased]: https://github.com/nail00749/nool_notch/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/nail00749/nool_notch/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/nail00749/nool_notch/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/nail00749/nool_notch/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/nail00749/nool_notch/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/nail00749/nool_notch/compare/v0.7.0...v0.8.0
