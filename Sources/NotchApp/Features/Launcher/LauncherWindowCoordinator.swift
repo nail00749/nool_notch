@@ -491,6 +491,9 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
         case .speedTest: showSpeedTest()
         case .networkDiagnostics: showSpeedTest(section: .diagnostics)
         case .screenTextCapture: captureScreenText()
+        case .displayMode, .displayMain:
+            hide(restoreFocus: false)
+            model.applyDisplayCommand(result.payload)
         case .workspace(let id): launchWorkspace(id: id)
         case .windowAction, .windowLayout: runWindowCommand(result.payload)
         case .nool(let id, _):

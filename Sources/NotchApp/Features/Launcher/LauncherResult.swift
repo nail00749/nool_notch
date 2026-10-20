@@ -42,6 +42,8 @@ enum LauncherPayload: Hashable, Sendable {
     case speedTest
     case networkDiagnostics
     case screenTextCapture
+    case displayMode(displayUUID: String, modeID: UInt32)
+    case displayMain(displayUUID: String)
 }
 
 enum LauncherNoolKind: String, Hashable, Sendable {
@@ -55,6 +57,24 @@ enum LauncherNoolKind: String, Hashable, Sendable {
 }
 
 extension LauncherResult {
+    static func displayCommands(displays: [DisplayInfo], query: String,
+                                category: LauncherCategory) -> [LauncherResult] {
+        guard category == .all, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+        return displays.filter(\.isEnabled).flatMap { display in
+            let main = display.isMain ? [] : [LauncherResult(
+                id: "display:main:\(display.id)", title: "Главный дисплей: \(display.name)",
+                subtitle: "Сделать основным · монитор · display main",
+                payload: .displayMain(displayUUID: display.id)
+            )]
+            return main + display.modes.filter { $0.id != display.currentMode?.id }.map { mode in
+                LauncherResult(id: "display:mode:\(display.id):\(mode.id)",
+                               title: "Разрешение \(mode.label)",
+                               subtitle: "\(display.name) · \(mode.width)x\(mode.height) · монитор · display resolution",
+                               payload: .displayMode(displayUUID: display.id, modeID: mode.id))
+            }
+        }
+    }
+
     static func screenTextCommands(query: String, category: LauncherCategory) -> [LauncherResult] {
         guard category == .all, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
         return [LauncherResult(id: "screen:text", title: "Текст с экрана",

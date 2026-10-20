@@ -63,7 +63,7 @@ enum LauncherResultAction: String, CaseIterable, Identifiable {
         case .calculation: return [.copy, .prepareAI, .explain, .saveSnippet]
         case .nool(_, let kind):
             return kind == .jira ? [.open, .copy, .jiraStatus, .jiraWorklog] : [.open, .copy]
-        case .windowAction, .windowLayout, .windowLayoutManager, .workspace, .workspaceManager, .speedTest, .networkDiagnostics, .screenTextCapture: return [.open]
+        case .windowAction, .windowLayout, .windowLayoutManager, .workspace, .workspaceManager, .speedTest, .networkDiagnostics, .screenTextCapture, .displayMode, .displayMain: return [.open]
         }
     }
 }

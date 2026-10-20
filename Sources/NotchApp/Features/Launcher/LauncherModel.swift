@@ -48,6 +48,7 @@ final class LauncherModel: ObservableObject {
     let aiChat: AIChatStore
     let windowLayouts: WindowLayoutManager
     let workspaces: WorkspaceStore
+    let displays = DisplayFeatureModel.shared
     let textSelection = LauncherTextSelection()
     private weak var noolSource: NotchViewModel?
     private var noolSubscription: AnyCancellable?
@@ -100,6 +101,11 @@ final class LauncherModel: ObservableObject {
             }.store(in: &subscriptions)
         self.modules.changes.sink { [weak self] _ in self?.moduleAvailabilityChanged() }
             .store(in: &subscriptions)
+        self.displays.objectWillChange.receive(on: RunLoop.main)
+            .sink { [weak self] in
+                guard let self, self.isVisible else { return }
+                self.rebuild()
+            }.store(in: &subscriptions)
     }
 
     var availableCategories: [LauncherCategory] {
@@ -127,6 +133,14 @@ final class LauncherModel: ObservableObject {
             modules.isEnabled(.windowManagement)
         case .speedTest, .networkDiagnostics: modules.isEnabled(.networkTools)
         case .screenTextCapture: modules.isEnabled(.textRecognition)
+        case .displayMode(let uuid, let modeID):
+            modules.isEnabled(.displays) && displays.enabled && !displays.isPending && !displays.isApplyingPreset && displays.displays.contains {
+                $0.id == uuid && $0.isEnabled && $0.modes.contains { $0.id == modeID }
+            }
+        case .displayMain(let uuid):
+            modules.isEnabled(.displays) && displays.enabled && !displays.isPending && !displays.isApplyingPreset && displays.displays.contains {
+                $0.id == uuid && $0.isEnabled && !$0.isMain
+            }
         case .application, .file, .calculation: true
         }
     }
@@ -136,6 +150,27 @@ final class LauncherModel: ObservableObject {
             selected: selectedResult, navigatedID: previewKeyboardSelectionID, category: category,
             hasDetail: actionResult != nil || jiraActionDestination != nil || selectedNoolEvent != nil || showsQuickAI
         )
+    }
+
+    func applyDisplayCommand(_ payload: LauncherPayload) {
+        guard modules.isEnabled(.displays), displays.enabled, !displays.isPending, !displays.isApplyingPreset else { return }
+        switch payload {
+        case .displayMode(let uuid, let modeID):
+            guard let display = displays.displays.first(where: { $0.id == uuid && $0.isEnabled }),
+                  display.modes.contains(where: { $0.id == modeID }) else {
+                message = "Режим больше недоступен. Повторите поиск."
+                return
+            }
+            displays.request(.mode(displayID: display.displayID, modeID: modeID), display: display)
+        case .displayMain(let uuid):
+            guard let display = displays.displays.first(where: { $0.id == uuid && $0.isEnabled }), !display.isMain else {
+                message = "Дисплей больше недоступен или уже выбран главным."
+                return
+            }
+            displays.request(.main(displayID: display.displayID), display: display)
+        default: return
+        }
+        message = displays.errorMessage
     }
 
     func clearPreviewKeyboardSelection() { previewKeyboardSelectionID = nil }
@@ -407,6 +442,9 @@ final class LauncherModel: ObservableObject {
         }
         if modules.isEnabled(.networkTools) { matches += LauncherResult.speedTestCommands(query: query, category: category) }
         if modules.isEnabled(.textRecognition) { matches += LauncherResult.screenTextCommands(query: query, category: category) }
+        if modules.isEnabled(.displays), displays.enabled, !displays.isPending, !displays.isApplyingPreset {
+            matches += LauncherResult.displayCommands(displays: displays.displays, query: query, category: category)
+        }
         if category == .all || category == .applications { matches += applications.results }
         if category == .all || category == .files { matches += files.results }
         if modules.isEnabled(.clipboard) && (category == .all || category == .clipboard) {

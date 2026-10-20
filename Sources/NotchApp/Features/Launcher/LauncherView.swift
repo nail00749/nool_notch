@@ -234,7 +234,7 @@ struct LauncherView: View {
     private func primaryTitle(_ result: LauncherResult) -> String {
         switch result.payload {
         case .application, .file, .nool, .windowLayoutManager, .workspaceManager, .speedTest, .networkDiagnostics, .screenTextCapture: "Открыть"
-        case .windowAction, .windowLayout: "Применить"
+        case .windowAction, .windowLayout, .displayMode, .displayMain: "Применить"
         case .workspace: "Запустить"
         case .clipboard, .snippet, .calculation: "Скопировать"
         }
@@ -325,6 +325,7 @@ private struct LauncherResultRow: View {
         case .speedTest: "speedometer"
         case .networkDiagnostics: "network"
         case .screenTextCapture: "text.viewfinder"
+        case .displayMode, .displayMain: "display.2"
         }
     }
     private var kind: String {
@@ -342,6 +343,7 @@ private struct LauncherResultRow: View {
         case .speedTest: "Сеть"
         case .networkDiagnostics: "Сеть"
         case .screenTextCapture: "Текст"
+        case .displayMode, .displayMain: "Дисплей"
         }
     }
 }
