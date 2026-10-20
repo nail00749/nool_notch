@@ -35,6 +35,8 @@
 	<true/>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>NooL App показывает ближайшие события в челке.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>NooL App просит Finder очистить Корзину, а System Events — изменить объекты входа по команде из Dock.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>NooL App показывает подключение, отключение и заряд Bluetooth-наушников в челке.</string>
 </dict>

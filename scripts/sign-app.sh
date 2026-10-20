@@ -51,6 +51,9 @@ if [[ "$AVAILABLE_IDENTITIES" == *"\"$SIGNING_IDENTITY\""* ]]; then
   if [[ -f "$APP_PATH/Contents/Resources/nool-agent-bridge" ]]; then
     /usr/bin/codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP_PATH/Contents/Resources/nool-agent-bridge"
   fi
+  if [[ -f "$APP_PATH/Contents/Resources/nool-dock-recovery" ]]; then
+    /usr/bin/codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP_PATH/Contents/Resources/nool-dock-recovery"
+  fi
   record_signing_mode stable
   /usr/bin/codesign \
     --force \
