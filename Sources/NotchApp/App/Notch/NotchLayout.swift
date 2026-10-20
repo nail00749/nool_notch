@@ -115,6 +115,7 @@ enum NotchLayout {
     static let compactBottomRadius: CGFloat = 12
     static let expandedContentSize = CGSize(width: 500, height: 300)
     static let expandedCalendarContentSize = CGSize(width: 500, height: 460)
+    static let displayManagementHeight: CGFloat = 520
     static let expandedTopPadding: CGFloat = 24
     static let expandedSideControlLaneWidth: CGFloat = 60
     static let expandedSideControlButtonSize: CGFloat = 42
@@ -206,7 +207,8 @@ enum NotchWindowSizingPolicy {
         isHovered: Bool = false,
         expandedWidth: CGFloat? = nil,
         maxExpandedHeight: CGFloat? = nil,
-        activeUtility: NotchUtilityPanel? = nil
+        activeUtility: NotchUtilityPanel? = nil,
+        isArrangingDisplays: Bool = false
     ) -> CGSize {
         guard isExpanded else {
             return compactInteractionSize(
@@ -221,6 +223,14 @@ enum NotchWindowSizingPolicy {
         guard isShowingSettings == false else {
             expandedSize = metrics.expandedSize(width: expandedWidth)
             return Self.clampHeight(expandedSize, maximum: maxExpandedHeight)
+        }
+
+        if selectedPanel == .displays, activeUtility == nil {
+            // Both the screen cards and the arrangement editor need their full
+            // height, including the notch header, navigation and footer.
+            // The usual compact-content preference must not crop their controls.
+            return CGSize(width: expandedWidth ?? metrics.expandedSize.width,
+                          height: NotchLayout.displayManagementHeight)
         }
 
         if activeUtility == .overview || activeUtility == .scratchpad || activeUtility == .recentCaptures {
@@ -254,7 +264,8 @@ enum NotchWindowSizingPolicy {
         expandedWidth: CGFloat? = nil,
         maxExpandedHeight: CGFloat? = nil,
         hasSideControls: Bool = true,
-        activeUtility: NotchUtilityPanel? = nil
+        activeUtility: NotchUtilityPanel? = nil,
+        isArrangingDisplays: Bool = false
     ) -> CGSize {
         let contentSize = size(
             metrics: metrics,
@@ -268,7 +279,8 @@ enum NotchWindowSizingPolicy {
             isHovered: isHovered,
             expandedWidth: expandedWidth,
             maxExpandedHeight: maxExpandedHeight,
-            activeUtility: activeUtility
+            activeUtility: activeUtility,
+            isArrangingDisplays: isArrangingDisplays
         )
         guard isExpanded, isShowingSettings == false else { return contentSize }
         let sideControlWidth = hasSideControls

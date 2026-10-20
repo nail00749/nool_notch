@@ -68,7 +68,8 @@ private struct CalendarPanelContent: View {
                         model: model,
                         displayedMonth: $displayedMonth,
                         selectedDate: $selectedDate,
-                        viewMode: $model.calendarViewMode
+                        viewMode: $model.calendarViewMode,
+                        upcomingEvents: snapshot.sidebarUpcomingEvents
                     )
                     .frame(minHeight: 320)
                 }
@@ -134,6 +135,7 @@ private struct CalendarMonthView: View {
     @Binding var displayedMonth: Date
     @Binding var selectedDate: Date?
     @Binding var viewMode: CalendarViewMode
+    let upcomingEvents: [CalendarEvent]
 
     private var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
@@ -257,11 +259,17 @@ private struct CalendarMonthView: View {
                 }
                 .frame(width: 300)
 
-                CalendarDayDetails(
-                    date: selectedDate,
-                    events: selectedDate.map(events(on:)) ?? [],
-                    isLoading: model.loadingCalendarMonth == monthKey
-                )
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    let dayEvents = selectedDate.map(events(on:)) ?? []
+                    CalendarDayDetails(
+                        date: selectedDate,
+                        events: dayEvents,
+                        isLoading: model.loadingCalendarMonth == monthKey,
+                        nextEvent: CalendarSidebarEvents.next(
+                            in: upcomingEvents + monthEvents,
+                            excluding: dayEvents, at: context.date)
+                    )
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }
@@ -284,7 +292,7 @@ private struct CalendarMonthView: View {
         }
 
         return monthEvents.filter { event in
-            event.startDate < dayEnd && event.endDate >= dayStart
+            event.startDate < dayEnd && event.endDate > dayStart
         }
     }
 }
@@ -329,6 +337,7 @@ private struct CalendarDayDetails: View {
     let date: Date?
     let events: [CalendarEvent]
     let isLoading: Bool
+    let nextEvent: CalendarEvent?
 
     private var dateTitle: String {
         guard let date else { return "Выберите день" }
@@ -371,6 +380,19 @@ private struct CalendarDayDetails: View {
                 }
             }
 
+            if let nextEvent {
+                Rectangle().fill(NotchPalette.text.opacity(0.10)).frame(height: 1)
+                    .padding(.vertical, 5)
+                Text("Ближайшее событие")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(NotchPalette.text.opacity(0.52))
+                Text(nextEvent.startDate.formatted(
+                    Date.FormatStyle().locale(Locale(identifier: "ru_RU"))
+                        .day().month(.wide).weekday(.wide)))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(NotchPalette.accent)
+                CalendarDayEventRow(event: nextEvent)
+            }
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -379,6 +401,17 @@ private struct CalendarDayDetails: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(NotchPalette.text.opacity(0.06))
         )
+    }
+}
+
+enum CalendarSidebarEvents {
+    static func next(in events: [CalendarEvent], excluding visible: [CalendarEvent],
+                     at now: Date) -> CalendarEvent? {
+        let visibleIDs = Set(visible.map(\.id))
+        return events.filter { $0.startDate >= now && !visibleIDs.contains($0.id) }
+            .min {
+                $0.startDate == $1.startDate ? $0.id < $1.id : $0.startDate < $1.startDate
+            }
     }
 }
 

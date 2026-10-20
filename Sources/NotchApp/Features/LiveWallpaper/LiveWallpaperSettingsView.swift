@@ -332,6 +332,16 @@ struct LiveWallpaperSettingsView: View {
                     ForEach(LiveWallpaperOverlaySize.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                slider("Отступ по горизонтали", value: overlayPreference(\.horizontalInset),
+                       range: LiveWallpaperOverlaySettings.insetRange,
+                       valueLabel: "\(Int(overlay.horizontalInset)) pt")
+                    .disabled(overlay.position == .center)
+                slider("Отступ по вертикали", value: overlayPreference(\.verticalInset),
+                       range: LiveWallpaperOverlaySettings.insetRange,
+                       valueLabel: "\(Int(overlay.verticalInset)) pt")
+                    .disabled(overlay.position == .center)
+                Text("Отступы от краёв экрана помогают освободить место для Dock. В положении «По центру» не применяются.")
+                    .settingsHintStyle()
                 slider("Непрозрачность", value: overlayPreference(\.opacity), range: 0.3...1,
                        valueLabel: "\(Int(overlay.opacity * 100))%")
                 Toggle("Только на главном экране", isOn: overlayPreference(\.mainDisplayOnly))

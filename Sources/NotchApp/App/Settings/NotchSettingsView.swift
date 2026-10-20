@@ -6,6 +6,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
     case general
     case notch
     case modules
+    case permissions
     case gestures
     case lidEffect
     case liveWallpaper
@@ -26,6 +27,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         case .general: "Основные"
         case .notch: "Чёлка"
         case .modules: "Модули"
+        case .permissions: "Разрешения"
         case .gestures: "Жесты"
         case .lidEffect: "Крышка MacBook"
         case .liveWallpaper: "Живые обои"
@@ -46,13 +48,14 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         case .general: "Поведение и оформление"
         case .notch: "Макет, панели и активности"
         case .modules: "Выберите нужные функции"
+        case .permissions: "Статус и запрос системных доступов"
         case .gestures: "Громкость и действия на чёлке"
         case .lidEffect: "Размытие и затемнение экрана"
         case .liveWallpaper: "Видео на рабочем столе"
         case .systemMonitor: "CPU, память, диск и сеть"
         case .launcher: "Поиск и буфер обмена"
         case .dock: "Приложения и виджеты"
-        case .displays: "Экран и отдельные размеры"
+        case .displays: "Режимы мониторов и расположение чёлки"
         case .updates: "Версия и Homebrew"
         case .limits: "Источники и компактный индикатор"
         case .integrations: "GitHub, GitLab и PR/CI"
@@ -66,6 +69,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         case .general: "slider.horizontal.3"
         case .notch: "rectangle.topthird.inset.filled"
         case .modules: "square.grid.2x2"
+        case .permissions: "lock.shield"
         case .gestures: "hand.draw"
         case .lidEffect: "laptopcomputer"
         case .liveWallpaper: "play.rectangle"
@@ -92,7 +96,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         case .integrations: .agentInbox
         case .music: .music
         case .jira: .jira
-        case .general, .notch, .modules, .launcher, .displays, .updates: nil
+        case .general, .notch, .modules, .permissions, .launcher, .displays, .updates: nil
         }
     }
 
@@ -107,6 +111,7 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         case .dock: .dock
         case .lidEffect: .lidEffect
         case .liveWallpaper: .liveWallpaper
+        case .displays: .displays
         case .gestures: .gestures
         case .calendar, .liveActivities, .fileShelf, .textRecognition,
              .networkTools, .windowManagement, .scratchpad, .recentCaptures: nil
@@ -123,7 +128,8 @@ struct NotchSettingsView: View {
     @ObservedObject var displaySettings: NotchDisplaySettings
     @ObservedObject var launchAtLogin: LaunchAtLoginManager
     let launcher: LauncherWindowCoordinator
-    @ObservedObject var dockSettings: NoolDockSettings
+    @ObservedObject var dockSettings: DockPreferences
+    let dockFeature: DockFeatureModel?
     let lidEffect: LidEffectController
     let liveWallpaper: LiveWallpaperController
     let systemMonitor: SystemMonitorStore
@@ -156,7 +162,8 @@ struct NotchSettingsView: View {
         displaySettings: NotchDisplaySettings,
         launchAtLogin: LaunchAtLoginManager,
         launcher: LauncherWindowCoordinator,
-        dockSettings: NoolDockSettings,
+        dockSettings: DockPreferences,
+        dockFeature: DockFeatureModel? = nil,
         lidEffect: LidEffectController,
         liveWallpaper: LiveWallpaperController,
         systemMonitor: SystemMonitorStore,
@@ -170,6 +177,7 @@ struct NotchSettingsView: View {
         self.launchAtLogin = launchAtLogin
         self.launcher = launcher
         self.dockSettings = dockSettings
+        self.dockFeature = dockFeature
         self.lidEffect = lidEffect
         self.liveWallpaper = liveWallpaper
         self.systemMonitor = systemMonitor
@@ -392,6 +400,8 @@ struct NotchSettingsView: View {
                 )
             case .modules:
                 AppModulesSettingsView(modules: modules, openSettings: selectSection)
+            case .permissions:
+                SystemPermissionsView()
             case .gestures:
                 NotchGestureSettingsView(settings: .shared)
             case .lidEffect:
@@ -404,7 +414,7 @@ struct NotchSettingsView: View {
                 LauncherSettingsView(modules: modules, settings: launcher.settings, clipboard: launcher.model.clipboard,
                                      aiChat: launcher.model.aiChat, open: launcher.show)
             case .dock:
-                NoolDockSettingsView(settings: dockSettings)
+                DockSettingsView(settings: dockSettings, feature: dockFeature)
             case .displays:
                 displaysPage
             case .updates:
@@ -428,6 +438,17 @@ struct NotchSettingsView: View {
 
     private var displaysPage: some View {
         VStack(spacing: 12) {
+            SettingsCard(title: "Управление дисплеями", icon: "display") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle("Управление дисплеями", isOn: Binding(
+                        get: { modules.isEnabled(.displays) },
+                        set: { modules.setEnabled(.displays, enabled: $0) }
+                    ))
+                    if modules.isEnabled(.displays) {
+                        DisplaySettingsView(model: model.displays)
+                    }
+                }
+            }
             SettingsCard(title: "Расположение", icon: "display.2") {
                 VStack(alignment: .leading, spacing: 10) {
                     Picker("Показывать NooL App", selection: displayModeBinding) {

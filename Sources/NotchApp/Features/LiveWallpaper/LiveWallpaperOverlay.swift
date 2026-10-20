@@ -62,6 +62,9 @@ struct LiveWallpaperOverlaySettings: Codable, Equatable, Sendable {
     var position: LiveWallpaperOverlayPosition = .bottomRight
     var size: LiveWallpaperOverlaySize = .medium
     var opacity = 0.85
+    var horizontalInset = 64.0
+    var verticalInset = 160.0
+    static let insetRange = 0.0...320.0
     /// Only the primary display (the one with the menu bar) draws the overlay.
     var mainDisplayOnly = true
     var scenesReactToLoad = false
@@ -77,6 +80,8 @@ struct LiveWallpaperOverlaySettings: Codable, Equatable, Sendable {
         position = (try? container.decodeIfPresent(LiveWallpaperOverlayPosition.self, forKey: .position)) ?? defaults.position
         size = (try? container.decodeIfPresent(LiveWallpaperOverlaySize.self, forKey: .size)) ?? defaults.size
         opacity = try container.decodeIfPresent(Double.self, forKey: .opacity) ?? defaults.opacity
+        horizontalInset = try container.decodeIfPresent(Double.self, forKey: .horizontalInset) ?? defaults.horizontalInset
+        verticalInset = try container.decodeIfPresent(Double.self, forKey: .verticalInset) ?? defaults.verticalInset
         mainDisplayOnly = try container.decodeIfPresent(Bool.self, forKey: .mainDisplayOnly) ?? defaults.mainDisplayOnly
         scenesReactToLoad = try container.decodeIfPresent(Bool.self, forKey: .scenesReactToLoad) ?? defaults.scenesReactToLoad
     }
@@ -90,6 +95,8 @@ struct LiveWallpaperOverlaySettings: Codable, Equatable, Sendable {
         var copy = self
         copy.metrics = SystemMonitorMetric.allCases.filter { metrics.contains($0) }
         copy.opacity = opacity.isFinite ? min(1, max(0.3, opacity)) : 0.85
+        copy.horizontalInset = horizontalInset.isFinite ? min(Self.insetRange.upperBound, max(0, horizontalInset)) : Self().horizontalInset
+        copy.verticalInset = verticalInset.isFinite ? min(Self.insetRange.upperBound, max(0, verticalInset)) : Self().verticalInset
         return copy
     }
 }
@@ -123,11 +130,13 @@ struct LiveWallpaperOverlayView: View {
             }
         }
         .foregroundStyle(.white)
+        // One shadow for the flattened overlay: without the group SwiftUI keeps a
+        // per-leaf NSView shadow and re-applies it on every animated ring frame.
+        .compositingGroup()
         .shadow(color: .black.opacity(0.45), radius: 10 * scale, y: 2)
         .opacity(settings.opacity)
-        .padding(.horizontal, 64)
-        .padding(.top, 64)
-        .padding(.bottom, 96)
+        .padding(.horizontal, settings.position == .center ? 0 : settings.horizontalInset)
+        .padding(.vertical, settings.position == .center ? 0 : settings.verticalInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: settings.position.alignment)
         .allowsHitTesting(false)
     }

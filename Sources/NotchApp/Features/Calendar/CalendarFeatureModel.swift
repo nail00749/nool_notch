@@ -42,8 +42,15 @@ final class CalendarFeatureModel: ObservableObject {
 
     /// Expanding the notch keeps loaded content on screen; other months reload lazily when shown.
     func refreshCalendarKeepingContent() {
+        // Expansion can be triggered repeatedly while the previous calendar load is still running.
+        // Keep that request alive instead of cancelling it and starting the same work again.
+        guard calendarTask == nil else { return }
         guard case .loaded = calendarState else {
             refreshCalendar()
+            return
+        }
+        if let calendarRefreshedAt,
+           Date.now.timeIntervalSince(calendarRefreshedAt) < 30 {
             return
         }
         calendarMonthTask?.cancel()

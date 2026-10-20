@@ -10,18 +10,24 @@ final class CodeReviewStore: ObservableObject {
     @Published private(set) var codeReviewsUpdatedAt: Date?
 
     private let provider: any CodeReviewProviding
+    private let now: () -> Date
     private var sessions: [AISession] = []
     private var isVisible = false
     private var codeReviewTasks: [AISessionID: Task<Void, Never>] = [:]
     private var codeReviewGenerations: [AISessionID: UUID] = [:]
     private var codeReviewWorkspacePaths: [AISessionID: String] = [:]
+    private var codeReviewRefreshedAt: [AISessionID: Date] = [:]
     private var pollingTask: Task<Void, Never>?
     private var pollingGeneration: UUID?
     private var lifecycleGeneration = UUID()
     private var reviewActivityBaselines: [AISessionID: (requestID: String, ids: Set<String>)] = [:]
 
-    init(provider: any CodeReviewProviding = LocalCodeReviewProvider()) {
+    init(
+        provider: any CodeReviewProviding = LocalCodeReviewProvider(),
+        now: @escaping () -> Date = Date.init
+    ) {
         self.provider = provider
+        self.now = now
     }
 
     var codeReviewSessions: [AISession] {
@@ -45,7 +51,7 @@ final class CodeReviewStore: ObservableObject {
         isVisible = visible
 
         if visible {
-            refreshCodeReviews()
+            refreshCodeReviewsIfStale()
             startPolling()
         } else {
             stopPolling()
@@ -56,6 +62,18 @@ final class CodeReviewStore: ObservableObject {
     func refreshCodeReviews() {
         for session in codeReviewSessions {
             refreshCodeReview(for: session)
+        }
+    }
+
+    private func refreshCodeReviewsIfStale() {
+        let date = now()
+        for session in codeReviewSessions {
+            guard case .loaded? = codeReviewStates[session.id],
+                  let refreshedAt = codeReviewRefreshedAt[session.id],
+                  date.timeIntervalSince(refreshedAt) < 30 else {
+                refreshCodeReview(for: session)
+                continue
+            }
         }
     }
 
@@ -161,7 +179,9 @@ final class CodeReviewStore: ObservableObject {
             case .success(let snapshot):
                 self.recordReviewActivity(snapshot.request, for: session.id)
                 self.codeReviewStates[session.id] = .loaded(snapshot)
-                self.codeReviewsUpdatedAt = .now
+                let refreshedAt = self.now()
+                self.codeReviewRefreshedAt[session.id] = refreshedAt
+                self.codeReviewsUpdatedAt = refreshedAt
             case .failure(let error):
                 self.codeReviewStates[session.id] = .failed(error, previous: previous)
             }
@@ -205,6 +225,7 @@ final class CodeReviewStore: ObservableObject {
             codeReviewGenerations.removeValue(forKey: id)
             codeReviewStates.removeValue(forKey: id)
             codeReviewWorkspacePaths.removeValue(forKey: id)
+            codeReviewRefreshedAt.removeValue(forKey: id)
             reviewActivityBaselines.removeValue(forKey: id)
             newReviewActivityCounts.removeValue(forKey: id)
         }
@@ -220,6 +241,7 @@ final class CodeReviewStore: ObservableObject {
             codeReviewGenerations.removeValue(forKey: session.id)
             codeReviewStates.removeValue(forKey: session.id)
             codeReviewWorkspacePaths.removeValue(forKey: session.id)
+            codeReviewRefreshedAt.removeValue(forKey: session.id)
             reviewActivityBaselines.removeValue(forKey: session.id)
             newReviewActivityCounts.removeValue(forKey: session.id)
         }

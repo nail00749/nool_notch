@@ -9,7 +9,8 @@ let package = Package(
     products: [
         .library(name: "NotchCore", targets: ["NotchCore"]),
         .executable(name: "NotchApp", targets: ["NotchApp"]),
-        .executable(name: "NoolAgentBridge", targets: ["NoolAgentBridge"])
+        .executable(name: "NoolAgentBridge", targets: ["NoolAgentBridge"]),
+        .executable(name: "NoolDockRecovery", targets: ["NoolDockRecovery"])
     ],
     targets: [
         .target(
@@ -34,6 +35,11 @@ let package = Package(
         .executableTarget(
             name: "NoolAgentBridge",
             path: "Sources/NoolAgentBridge"
+        ),
+        .executableTarget(
+            name: "NoolDockRecovery",
+            dependencies: ["NotchCore"],
+            path: "Sources/NoolDockRecovery"
         ),
         .testTarget(
             name: "NotchAppTests",

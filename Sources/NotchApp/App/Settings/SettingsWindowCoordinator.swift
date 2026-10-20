@@ -11,7 +11,8 @@ final class SettingsWindowCoordinator: NSObject, NSWindowDelegate {
     private let displaySettings: NotchDisplaySettings
     private let launchAtLogin: LaunchAtLoginManager
     private let launcher: LauncherWindowCoordinator
-    private let dockSettings: NoolDockSettings
+    private let dockSettings: DockPreferences
+    private let dockFeature: DockFeatureModel?
     private let lidEffect: LidEffectController
     private let liveWallpaper: LiveWallpaperController
     private let systemMonitor: SystemMonitorStore
@@ -27,7 +28,8 @@ final class SettingsWindowCoordinator: NSObject, NSWindowDelegate {
         displaySettings: NotchDisplaySettings,
         launchAtLogin: LaunchAtLoginManager,
         launcher: LauncherWindowCoordinator,
-        dockSettings: NoolDockSettings,
+        dockSettings: DockPreferences,
+        dockFeature: DockFeatureModel? = nil,
         lidEffect: LidEffectController,
         liveWallpaper: LiveWallpaperController,
         systemMonitor: SystemMonitorStore
@@ -39,6 +41,7 @@ final class SettingsWindowCoordinator: NSObject, NSWindowDelegate {
         self.launchAtLogin = launchAtLogin
         self.launcher = launcher
         self.dockSettings = dockSettings
+        self.dockFeature = dockFeature
         self.lidEffect = lidEffect
         self.liveWallpaper = liveWallpaper
         self.systemMonitor = systemMonitor
@@ -113,6 +116,7 @@ final class SettingsWindowCoordinator: NSObject, NSWindowDelegate {
             launchAtLogin: launchAtLogin,
             launcher: launcher,
             dockSettings: dockSettings,
+            dockFeature: dockFeature,
             lidEffect: lidEffect,
             liveWallpaper: liveWallpaper,
             systemMonitor: systemMonitor,

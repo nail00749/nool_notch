@@ -38,7 +38,14 @@ target, не отдельные Swift-модули. Shared не зависит �
   отдельный coordinator владеет окном и ждёт завершения отмены при выходе.
 - `Sources/NotchApp/Features/WindowLayouts` — геометрия, сохранение и AX-управление
   окнами; Accessibility запрашивается только явным действием пользователя.
-- `Sources/NotchApp/Features/Dock` — дополнительная панель NooL Dock.
+- `Sources/NotchApp/Features/Dock` — новый Dock: `DockPreferences` хранит профили,
+  элементы и миграцию; `DockIntegrationRegistry` подключает виджеты;
+  `DockWindowCoordinator` владеет окнами и автоскрытием. Превью захватываются
+  по требованию с явными разрешениями. `SystemDockController` сериализует
+  замену/возврат системного Dock; обычный выход ждёт восстановления.
+- `Sources/NotchCore/SystemDockRecovery.swift` и `Sources/NoolDockRecovery` —
+  журнал исходных настроек системного Dock и независимый помощник возврата.
+  Не менять настройки Dock из UI напрямую; тесты используют fake backend.
 - `Sources/NotchApp/Features/LiveWallpaper` — видео-обои: click-through окна на
   уровне desktop под иконками, свой видеоролик для каждого дисплея (ключ — UUID
   экрана) с общим по умолчанию; экраны с одним роликом делят AVPlayer; локальная

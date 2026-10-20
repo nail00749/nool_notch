@@ -4,6 +4,7 @@ enum PanelID: String, CaseIterable, Identifiable {
     case calendar
     case music
     case jira
+    case displays
 
     var id: String { rawValue }
 
@@ -19,6 +20,8 @@ enum PanelID: String, CaseIterable, Identifiable {
             "Музыка"
         case .jira:
             "Jira"
+        case .displays:
+            "Дисплеи"
         }
     }
 
@@ -34,6 +37,8 @@ enum PanelID: String, CaseIterable, Identifiable {
             "waveform"
         case .jira:
             "checkmark.square"
+        case .displays:
+            "display.2"
         }
     }
 }

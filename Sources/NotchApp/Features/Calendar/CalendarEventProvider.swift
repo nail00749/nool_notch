@@ -1,6 +1,7 @@
 import AppKit
 import EventKit
 import Foundation
+import Combine
 
 struct CalendarEvent: Identifiable, Equatable, Sendable {
     let id: String
@@ -81,6 +82,80 @@ enum CalendarConferenceLinkResolver {
 struct CalendarSnapshot: Equatable, Sendable {
     let upcomingEvents: [CalendarEvent]
     let monthEvents: [CalendarEvent]
+    let sidebarUpcomingEvents: [CalendarEvent]
+
+    init(upcomingEvents: [CalendarEvent], monthEvents: [CalendarEvent],
+         sidebarUpcomingEvents: [CalendarEvent]? = nil) {
+        self.upcomingEvents = upcomingEvents
+        self.monthEvents = monthEvents
+        self.sidebarUpcomingEvents = sidebarUpcomingEvents ?? upcomingEvents
+    }
+}
+
+/// The long sidebar horizon is fetched once, then projected into the existing reminder/month
+/// windows. Event-store edits invalidate it immediately; the short TTL also catches clock changes.
+@MainActor
+final class CalendarUpcomingEventCache {
+    static let lifetime: TimeInterval = 5 * 60
+    private struct Entry {
+        let fetchedAt: Date
+        let monthStart: Date
+        let events: [CalendarEvent]
+    }
+    private var entry: Entry?
+    private var pending: (id: UUID, monthStart: Date, task: Task<[CalendarEvent], Never>)?
+    private var revision = UUID()
+
+    func invalidate() {
+        revision = UUID()
+        entry = nil
+        pending?.task.cancel()
+        pending = nil
+    }
+
+    func snapshot(at now: Date, calendar: Calendar = .current,
+                  fetch: @escaping @Sendable (Date, Date, Date) async -> [CalendarEvent]) async -> CalendarSnapshot {
+        guard let month = calendar.dateInterval(of: .month, for: now),
+              let yearEnd = calendar.date(byAdding: .year, value: 1, to: now),
+              let nearEnd = calendar.date(byAdding: .day, value: 14, to: now) else {
+            return CalendarSnapshot(upcomingEvents: [], monthEvents: [])
+        }
+        if let entry, entry.monthStart == month.start,
+           now >= entry.fetchedAt, now.timeIntervalSince(entry.fetchedAt) < Self.lifetime {
+            return Self.project(entry.events, now: now, nearEnd: nearEnd, yearEnd: yearEnd, month: month)
+        }
+        let requestRevision = revision
+        let request: (id: UUID, monthStart: Date, task: Task<[CalendarEvent], Never>)
+        if let pending, pending.monthStart == month.start {
+            request = pending
+        } else {
+            let id = UUID()
+            // The buffer preserves conference links for events entering the 14-day window
+            // during the cache lifetime, without parsing notes for a whole year's events.
+            let detailsThrough = max(month.end, nearEnd.addingTimeInterval(Self.lifetime))
+            request = (id, month.start, Task { await fetch(month.start, yearEnd, detailsThrough) })
+            pending = request
+        }
+        let events = await request.task.value
+        guard !Task.isCancelled else { return CalendarSnapshot(upcomingEvents: [], monthEvents: []) }
+        guard revision == requestRevision else {
+            return await snapshot(at: now, calendar: calendar, fetch: fetch)
+        }
+        if pending?.id == request.id {
+            entry = Entry(fetchedAt: now, monthStart: month.start, events: events)
+            pending = nil
+        }
+        return Self.project(events, now: now, nearEnd: nearEnd, yearEnd: yearEnd, month: month)
+    }
+
+    private static func project(_ events: [CalendarEvent], now: Date, nearEnd: Date,
+                                yearEnd: Date, month: DateInterval) -> CalendarSnapshot {
+        let sorted = events.sorted { $0.startDate < $1.startDate }
+        let future = sorted.filter { $0.endDate > now && $0.startDate < yearEnd }
+        return CalendarSnapshot(upcomingEvents: future.filter { $0.startDate < nearEnd },
+                                monthEvents: sorted.filter { $0.endDate > month.start && $0.startDate < month.end },
+                                sidebarUpcomingEvents: future)
+    }
 }
 
 struct CalendarMonthKey: Hashable, Sendable {
@@ -139,6 +214,15 @@ private final class CalendarAccessRequest {
 final class CalendarEventProvider: CalendarProviding {
     private let store = EKEventStore()
     private let fetchQueue = DispatchQueue(label: "nool.calendar.fetch", qos: .userInitiated)
+    private let upcomingCache = CalendarUpcomingEventCache()
+    private var storeChanges: AnyCancellable?
+
+    init() {
+        storeChanges = NotificationCenter.default.publisher(for: .EKEventStoreChanged)
+            .sink { [weak cache = upcomingCache] _ in
+                Task { @MainActor in cache?.invalidate() }
+            }
+    }
 
     var canLoadWithoutPrompt: Bool {
         EKEventStore.authorizationStatus(for: .event) == .fullAccess
@@ -146,18 +230,21 @@ final class CalendarEventProvider: CalendarProviding {
 
     func loadUpcomingEvents() async -> CalendarLoadState {
         guard await hasFullAccess() else {
+            upcomingCache.invalidate()
             return .denied
         }
 
-        let startDate = Date()
-        guard let endDate = Calendar.current.date(byAdding: .day, value: 14, to: startDate) else {
-            return .loaded(CalendarSnapshot(upcomingEvents: [], monthEvents: []))
+        let store = CalendarStoreBox(store: store)
+        let queue = fetchQueue
+        let snapshot = await upcomingCache.snapshot(at: Date()) { start, end, detailsThrough in
+            await withCheckedContinuation { continuation in
+                queue.async {
+                    continuation.resume(returning: Self.fetchEvents(in: store.store, from: start, to: end,
+                                                                   conferenceDetailsThrough: detailsThrough))
+                }
+            }
         }
-
-        let month = CalendarMonthKey(date: startDate)
-        let upcomingEvents = await events(from: startDate, to: endDate)
-        let monthEvents = await events(from: month.startDate, to: month.endDate)
-        return .loaded(CalendarSnapshot(upcomingEvents: upcomingEvents, monthEvents: monthEvents))
+        return .loaded(snapshot)
     }
 
     func loadEvents(for month: Date) async -> [CalendarEvent] {
@@ -180,7 +267,8 @@ final class CalendarEventProvider: CalendarProviding {
         }
     }
 
-    nonisolated private static func fetchEvents(in store: EKEventStore, from startDate: Date, to endDate: Date) -> [CalendarEvent] {
+    nonisolated private static func fetchEvents(in store: EKEventStore, from startDate: Date, to endDate: Date,
+                                                conferenceDetailsThrough: Date = .distantFuture) -> [CalendarEvent] {
         let predicate = store.predicateForEvents(
             withStart: startDate,
             end: endDate,
@@ -202,8 +290,8 @@ final class CalendarEventProvider: CalendarProviding {
                     calendarTitle: event.calendar.title,
                     joinURL: CalendarConferenceLinkResolver.joinURL(
                         eventURL: event.url,
-                        location: event.location,
-                        notes: event.notes
+                        location: event.startDate < conferenceDetailsThrough ? event.location : nil,
+                        notes: event.startDate < conferenceDetailsThrough ? event.notes : nil
                     )
                 )
             }

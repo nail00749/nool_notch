@@ -57,7 +57,8 @@ final class WindowCoordinatorLifecycleTests: XCTestCase {
             liveActivityCenter: LiveActivityCenter(additionalSources: []),
             jiraProvider: FakeJiraProvider(),
             aiSessionStore: AISessionStore(sources: []),
-            preferences: MemoryAppPreferences(compactQuotaDisplayMode: mode)
+            preferences: MemoryAppPreferences(compactQuotaDisplayMode: mode),
+            displays: makeTestDisplayFeatureModel()
         )
     }
 

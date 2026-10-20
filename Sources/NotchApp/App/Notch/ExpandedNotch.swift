@@ -13,14 +13,6 @@ struct ExpandedNotch: View {
     @State private var swipeTranslation: CGFloat = 0
     @State private var hasPreparedNeighbors = false
 
-    private var contentVisible: Bool {
-        model.expandedContentVisible
-    }
-
-    private var contentAnimation: Animation {
-        NotchMotion.contentAnimation(reduceMotion: reduceMotion)
-    }
-
     private var carouselAnimation: Animation {
         NotchMotion.panelAnimation(reduceMotion: reduceMotion)
     }
@@ -34,7 +26,8 @@ struct ExpandedNotch: View {
             isShowingSettings: false,
             expandedWidth: customizationSettings.expandedWidth,
             maxExpandedHeight: customizationSettings.maxExpandedHeight,
-            activeUtility: model.activeUtility
+            activeUtility: model.activeUtility,
+            isArrangingDisplays: model.displays.isArranging
         )
     }
 
@@ -60,9 +53,6 @@ struct ExpandedNotch: View {
                 onTogglePin: model.toggleExpansionPin,
                 onShowSettings: { onOpenSettings(.general) }
             )
-            .opacity(contentVisible ? 1 : 0)
-            .offset(y: reduceMotion || contentVisible ? 0 : 3)
-            .animation(contentAnimation, value: contentVisible)
 
             navigationBar
             .padding(.horizontal, 16)
@@ -73,15 +63,9 @@ struct ExpandedNotch: View {
                     .allowsHitTesting(false)
             }
             .padding(.bottom, 6)
-            .opacity(contentVisible ? 1 : 0)
-            .offset(y: reduceMotion || contentVisible ? 0 : 3)
-            .animation(contentAnimation.delay(reduceMotion ? 0 : 0.03), value: contentVisible)
 
             mainContent
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .opacity(contentVisible ? 1 : 0)
-            .offset(y: reduceMotion || contentVisible ? 0 : 3)
-            .animation(contentAnimation.delay(reduceMotion ? 0 : 0.06), value: contentVisible)
 
             if !customizationSettings.actions(at: .bottom).isEmpty {
                 bottomQuickActions
@@ -99,25 +83,11 @@ struct ExpandedNotch: View {
                     .padding(.horizontal, 22)
                     .allowsHitTesting(false)
             }
-            .opacity(contentVisible ? 1 : 0)
-            .offset(y: reduceMotion || contentVisible ? 0 : 3)
-            .animation(contentAnimation.delay(reduceMotion ? 0 : 0.06), value: contentVisible)
         }
         .frame(width: expandedSize.width, height: expandedSize.height)
 
-        .onAppear {
-            withAnimation(contentAnimation) {
-                model.expandedContentVisible = true
-            }
-        }
-        .onDisappear {
-            model.expandedContentVisible = false
-        }
-        .task {
-            // Present the selected page first; prepare swipe neighbors after its fade.
-            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
-            hasPreparedNeighbors = true
-        }
+        // Adjacent pages are mounted only when a swipe or tab selection needs
+        // them. Opening the notch must not start hidden panels' onAppear work.
         .contentShape(Rectangle())
     }
 
@@ -230,6 +200,8 @@ struct ExpandedNotch: View {
                 model: model,
                 onOpenSettings: { onOpenSettings(.jira) }
             )
+        case .displays:
+            DisplaysPanel(model: model.displays, isActive: model.isExpanded && model.selectedPanel == .displays)
         }
     }
 
@@ -271,7 +243,6 @@ struct ExpandedNotch: View {
         }
         .padding(.horizontal, 22)
         .padding(.top, 6)
-        .opacity(contentVisible ? 1 : 0)
     }
 
     private func selectPanel(_ panel: PanelID) {
@@ -392,6 +363,8 @@ struct ExpandedNotch: View {
         case .music:
             guard model.nowPlayingSnapshot?.playbackState.isPlaying == true else { return nil }
             return PanelTabBadge(text: nil, color: Color.signalMint)
+        case .displays:
+            return nil
         case .jira:
             let issues: [JiraIssue]
             switch model.jiraState.list {

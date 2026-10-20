@@ -26,7 +26,7 @@ enum NotchMotion {
     static func layoutAnimation(isExpanded: Bool, reduceMotion: Bool) -> Animation {
         reduceMotion
             ? .linear(duration: 0.01)
-            : .timingCurve(0.2, 0, 0, 1, duration: isExpanded ? expansionDuration : collapseDuration)
+            : .timingCurve(0.4, 0, 0.2, 1, duration: isExpanded ? expansionDuration : collapseDuration)
     }
 
     static func compactResizeAnimation(reduceMotion: Bool) -> Animation {

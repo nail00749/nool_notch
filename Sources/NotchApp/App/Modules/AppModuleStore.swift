@@ -7,6 +7,7 @@ enum AppModuleID: String, CaseIterable, Identifiable, Sendable {
     case lidEffect, liveWallpaper, windowManagement, clipboard, gestures
     case scratchpad
     case recentCaptures
+    case displays
 
     var id: String { rawValue }
 
@@ -31,6 +32,7 @@ enum AppModuleID: String, CaseIterable, Identifiable, Sendable {
         case .gestures: "Жесты"
         case .scratchpad: "Черновик"
         case .recentCaptures: "Недавние снимки"
+        case .displays: "Управление дисплеями"
         }
     }
 
@@ -55,6 +57,7 @@ enum AppModuleID: String, CaseIterable, Identifiable, Sendable {
         case .gestures: "Громкость и управление музыкой с чёлки"
         case .scratchpad: "Локальные заметки с автосохранением и экспортом"
         case .recentCaptures: "Последние изображения из выбранной папки"
+        case .displays: "Разрешение, частота, главный экран и затемнение"
         }
     }
 
@@ -79,6 +82,7 @@ enum AppModuleID: String, CaseIterable, Identifiable, Sendable {
         case .gestures: "hand.draw"
         case .scratchpad: "square.and.pencil"
         case .recentCaptures: "photo.on.rectangle"
+        case .displays: "display.2"
         }
     }
 
@@ -96,7 +100,7 @@ enum AppModuleID: String, CaseIterable, Identifiable, Sendable {
     var surfaces: [String] {
         switch self {
         case .aiChat, .windowManagement, .clipboard, .networkTools: ["Launcher"]
-        case .agentInbox, .jira, .calendar: ["Чёлка", "Launcher"]
+        case .agentInbox, .jira, .calendar, .displays: ["Чёлка", "Launcher"]
         case .quotas: ["Чёлка", "Боковая панель", "Стек", "Виджет"]
         case .music, .liveActivities: ["Чёлка", "Dock"]
         case .fileShelf: ["Чёлка", "Launcher"]

@@ -46,14 +46,35 @@ final class CalendarFeatureModelTests: XCTestCase {
 
         var completion: CheckedContinuation<CalendarLoadState, Never>?
         provider.upcomingLoader = { await withCheckedContinuation { completion = $0 } }
+        provider.canLoadWithoutPrompt = true
+        model.setEnabled(true)
+        for _ in 0..<100 where completion == nil { await Task.yield() }
+        XCTAssertNotNil(completion)
         model.refreshCalendarKeepingContent()
         for _ in 0..<100 where completion == nil { await Task.yield() }
         XCTAssertEqual(model.calendarState, loaded)
         XCTAssertNotNil(model.calendarEventsByMonth[CalendarMonthKey(date: Date())])
-        XCTAssertNil(model.calendarEventsByMonth[CalendarMonthKey(date: nextMonth)])
+        XCTAssertNotNil(model.calendarEventsByMonth[CalendarMonthKey(date: nextMonth)])
         completion?.resume(returning: loaded)
         for _ in 0..<20 { await Task.yield() }
         XCTAssertEqual(provider.loadUpcomingEventsCallCount, 2)
+        model.stop()
+    }
+
+    func testRefreshKeepingContentSkipsRecentlyRefreshedCalendar() async {
+        let provider = FakeCalendarProvider()
+        let loaded = CalendarLoadState.loaded(CalendarSnapshot(upcomingEvents: [], monthEvents: []))
+        provider.upcomingState = loaded
+        let model = CalendarFeatureModel(provider: provider)
+        model.refreshCalendar()
+        for _ in 0..<100 where model.calendarRefreshedAt == nil { await Task.yield() }
+
+        let refreshedAt = model.calendarRefreshedAt
+        model.refreshCalendarKeepingContent()
+        for _ in 0..<10 { await Task.yield() }
+
+        XCTAssertEqual(provider.loadUpcomingEventsCallCount, 1)
+        XCTAssertEqual(model.calendarRefreshedAt, refreshedAt)
         model.stop()
     }
 

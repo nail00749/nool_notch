@@ -67,9 +67,20 @@ final class NotchAppDelegate: NSObject, NSApplicationDelegate {
                 alert.runModal()
                 return
             }
+            if let coordinator, !(await coordinator.prepareDisplayTermination()) {
+                sender.reply(toApplicationShouldTerminate: false)
+                let alert = NSAlert()
+                alert.messageText = "Не удалось восстановить настройки дисплеев"
+                alert.informativeText = "NooL остаётся открытым, чтобы сохранить возможность возврата. Откройте панель «Дисплеи», повторите возврат настроек и затем завершите приложение."
+                alert.addButton(withTitle: "Понятно")
+                alert.runModal()
+                return
+            }
             coordinator?.stop()
             launcher.stop()
             await coordinator.waitForFileActions()
+            await coordinator.waitForDisplayOperations()
+            await coordinator.waitForDockOperations()
             await coordinator.waitForQuotaWidgetPersistence()
             await coordinator.waitForLidEffect()
             await launcher.model.clipboard.waitForPersistence()

@@ -65,14 +65,17 @@ final class AppModuleTests: XCTestCase {
 
     func testDockFiltersDisabledProvidersWithoutRemovingSavedItems() {
         let modules = AppModuleStore(defaults: nil)
-        let items = NoolDockItemKind.allCases.map {
-            NoolDockItem(id: $0.rawValue, kind: $0, applicationPath: nil, title: $0.title, size: .regular)
-        }
+        let model = NotchViewModel(providers: [], calendarProvider: FakeCalendarProvider(),
+                                   nowPlayingProvider: FakeNowPlayingProvider(),
+                                   liveActivityCenter: LiveActivityCenter(additionalSources: []),
+                                   jiraProvider: FakeJiraProvider(), modules: modules,
+                                   displays: makeTestDisplayFeatureModel())
+        let items = DockIntegrationRegistry.integrations
         modules.setEnabled(.music, enabled: false)
         modules.setEnabled(.calendar, enabled: false)
         modules.setEnabled(.liveActivities, enabled: false)
-        XCTAssertEqual(items.filter { $0.isAvailable(in: modules) }.map(\.kind), [.app, .note])
+        XCTAssertEqual(items.filter { $0.isAvailable(model) }.map(\.id), ["note", "launcher", "displays"])
         modules.applyPreset(.all)
-        XCTAssertEqual(items.filter { $0.isAvailable(in: modules) }, items)
+        XCTAssertEqual(items.filter { $0.isAvailable(model) }.map(\.id), items.map(\.id))
     }
 }

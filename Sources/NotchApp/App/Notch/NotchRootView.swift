@@ -75,7 +75,8 @@ struct NotchRootView: View {
             expandedWidth: customizationSettings.expandedWidth,
             maxExpandedHeight: customizationSettings.maxExpandedHeight,
             hasSideControls: customizationSettings.quickActions.contains { $0.placement != .bottom },
-            activeUtility: model.activeUtility
+            activeUtility: model.activeUtility,
+            isArrangingDisplays: model.displays.isArranging
         )
     }
 
@@ -96,7 +97,8 @@ struct NotchRootView: View {
             isShowingSettings: false,
             expandedWidth: customizationSettings.expandedWidth,
             maxExpandedHeight: customizationSettings.maxExpandedHeight,
-            activeUtility: model.activeUtility
+            activeUtility: model.activeUtility,
+            isArrangingDisplays: model.displays.isArranging
         )
         return NotchSurfaceShape(
             compactWindowSize: compactSize,
@@ -121,7 +123,7 @@ struct NotchRootView: View {
                 .opacity(model.isExpanded ? 1 : 0)
                 .allowsHitTesting(model.isExpanded)
                 .accessibilityHidden(!model.isExpanded)
-                .transition(.opacity.animation(.easeOut(duration: reduceMotion ? 0.01 : 0.10)))
+                .transition(.identity)
             }
             if !model.isExpanded || !presentation.mountsExpandedContent {
                 CompactNotch(
@@ -292,10 +294,10 @@ struct NotchRootView: View {
             if isTargeted { model.openUtility(.files) }
         }
         .onChange(of: model.activeUtility) { previous, utility in
-            let neededFocus = previous?.requiresKeyboardFocus == true
-            let needsFocus = utility?.requiresKeyboardFocus == true
-            if neededFocus != needsFocus { onKeyboardFocusChange(needsFocus) }
             onLayoutChange(model.isExpanded, reduceMotion)
+        }
+        .onChange(of: model.requiresNotchKeyboardFocus) { _, needsFocus in
+            onKeyboardFocusChange(needsFocus)
         }
     }
 
@@ -349,6 +351,9 @@ struct NotchRootView: View {
             onLayoutChange(model.isExpanded, reduceMotion)
         }
         .onChange(of: model.calendarViewMode) { _, _ in
+            onLayoutChange(model.isExpanded, reduceMotion)
+        }
+        .onChange(of: model.displays.isArranging) { _, _ in
             onLayoutChange(model.isExpanded, reduceMotion)
         }
     }

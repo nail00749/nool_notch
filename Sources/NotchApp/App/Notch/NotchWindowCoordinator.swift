@@ -45,18 +45,22 @@ final class NotchWindowCoordinator: NSObject {
     private let customizationSettings: NotchCustomizationSettings
     private let displaySettings: NotchDisplaySettings
     private let launchAtLogin: LaunchAtLoginManager
-    private let dockSettings: NoolDockSettings
+    private let dockSettings: DockPreferences
+    private let dockFeature: DockFeatureModel
     private let lidEffect = LidEffectController()
     private let liveWallpaper = LiveWallpaperController()
     private let systemMonitor = SystemMonitorStore()
     private var systemMonitorWindow: SystemMonitorWindowCoordinator?
-    private var dock: NoolDockWindowCoordinator?
+    private var dock: DockWindowCoordinator?
     private let fileActions = FileActionsWindowCoordinator()
     private let textRecognition = TextRecognitionWindowCoordinator()
     private let screenTextCapture = ScreenTextCaptureCoordinator()
     private var lastLayoutWasExpanded = false
     private var targetWindowFrame: NSRect?
     private var layoutAnimationGeneration = 0
+    #if DEBUG
+    private let expansionProfile = NotchExpansionProfile()
+    #endif
     private var applicationBeforeSearch: NSRunningApplication?
     private var displayFollowTimer: Timer?
     private var isQuotaSynchronizationScheduled = false
@@ -84,7 +88,8 @@ final class NotchWindowCoordinator: NSObject {
         customizationSettings = .shared
         displaySettings = NotchDisplaySettings()
         launchAtLogin = LaunchAtLoginManager()
-        dockSettings = NoolDockSettings()
+        dockSettings = DockPreferences()
+        dockFeature = DockFeatureModel(prefs: dockSettings)
         displaySettings.refreshConnectedDisplays()
         let initialScreen = displaySettings.selectedScreen()
         displaySettings.setActiveScreen(initialScreen)
@@ -119,6 +124,7 @@ final class NotchWindowCoordinator: NSObject {
             launchAtLogin: launchAtLogin,
             launcher: launcher,
             dockSettings: dockSettings,
+            dockFeature: dockFeature,
             lidEffect: lidEffect,
             liveWallpaper: liveWallpaper,
             systemMonitor: systemMonitor
@@ -173,12 +179,10 @@ final class NotchWindowCoordinator: NSObject {
                 }
             )
         }
-        dock = NoolDockWindowCoordinator(
-            settings: dockSettings,
-            model: model,
-            openSettings: { [weak self] in self?.showSettingsWindow(section: .dock) },
-            openLauncher: { [weak launcher] in launcher?.show() }
-        )
+        dockFeature.onOpenSettings = { [weak self] in self?.showSettingsWindow(section: .dock) }
+        dockFeature.onOpenLauncher = { [weak launcher] in launcher?.show() }
+        dockFeature.onOpenDisplays = { [weak self] in self?.model.openPanel(.displays) }
+        dock = DockWindowCoordinator(feature: dockFeature, model: model)
 
         let contentView = NotchRootView(
             model: model,
@@ -203,7 +207,8 @@ final class NotchWindowCoordinator: NSObject {
                     self.window.makeKeyAndOrderFront(nil)
                 } else {
                     if self.window.isKeyWindow { self.window.resignKey() }
-                    if NSApp.isActive, self.settingsCoordinator.isVisible == false {
+                    if NSApp.isActive, self.settingsCoordinator.isVisible == false,
+                       self.model.displays.revertController.isPresented == false {
                         self.applicationBeforeSearch?.activate(options: [])
                     }
                     self.applicationBeforeSearch = nil
@@ -315,6 +320,16 @@ final class NotchWindowCoordinator: NSObject {
         settingsCoordinator.start()
         window.orderFrontRegardless()
         moduleRuntime.start()
+        #if DEBUG
+        if let screen = window.screen {
+            expansionProfile.start(screen: screen) { [weak self] expanded in
+                guard let self else { return }
+                if expanded { self.model.prepareDefaultExpansion() }
+                self.model.isExpanded = expanded
+                self.animateWindow(to: expanded, reduceMotion: false)
+            }
+        }
+        #endif
         moduleChanges = model.modules.changes.sink { [weak self] _ in
             guard let self, self.isStarted else { return }
             self.dock?.reposition()
@@ -325,6 +340,9 @@ final class NotchWindowCoordinator: NSObject {
     func stop() {
         guard !isTerminated else { return }
         isTerminated = true
+        #if DEBUG
+        expansionProfile.stop()
+        #endif
         isStarted = false
         layoutAnimationGeneration += 1
         moduleChanges = nil
@@ -355,6 +373,17 @@ final class NotchWindowCoordinator: NSObject {
     }
 
     func waitForFileActions() async { await fileActions.waitForCompletion() }
+    func waitForDisplayOperations() async { await model.displays.waitForOperations() }
+    func waitForDockOperations() async { await dock?.waitForRestoration() }
+    func prepareDisplayTermination() async -> Bool {
+        model.displays.stop()
+        await model.displays.waitForOperations()
+        if model.displays.rollbackFailed {
+            model.displays.start()
+            return false
+        }
+        return true
+    }
 
     func waitForQuotaWidgetPersistence() async { await model.waitForQuotaWidgetPersistence() }
     func saveScratchpadBeforeTermination() async -> Bool {
@@ -437,6 +466,15 @@ final class NotchWindowCoordinator: NSObject {
         // on separate clocks produces visible judder even with identical easing.
         window.setFrame(NotchWindowEnvelope.frame(containing: window.frame, target: frame), display: true)
         window.contentView?.layoutSubtreeIfNeeded()
+        // Reveal the selected page with the viewport, without waiting for the
+        // geometry completion and then starting a second content transition.
+        if isExpanded {
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                presentation.mountsExpandedContent = true
+            }
+        }
         let animation: Animation
         if !isExpanded && !wasExpanded {
             animation = NotchMotion.compactResizeAnimation(reduceMotion: false)
@@ -453,7 +491,7 @@ final class NotchWindowCoordinator: NSObject {
                   self.model.isExpanded == isExpanded else { return }
             self.window.setFrame(frame, display: true)
             self.model.expansionSurfaceSettled = isExpanded
-            // Construct/destroy heavy panel trees only after the geometry stops.
+            // Keep outgoing content mounted until the viewport has collapsed.
             self.presentation.mountsExpandedContent = isExpanded
         }
     }
@@ -474,7 +512,8 @@ final class NotchWindowCoordinator: NSObject {
             expandedWidth: customizationSettings.expandedWidth,
             maxExpandedHeight: customizationSettings.maxExpandedHeight,
             hasSideControls: customizationSettings.quickActions.contains { $0.placement != .bottom },
-            activeUtility: model.activeUtility
+            activeUtility: model.activeUtility,
+            isArrangingDisplays: model.displays.isArranging
         )
     }
 

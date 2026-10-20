@@ -77,6 +77,112 @@ final class CodeReviewStoreTests: XCTestCase {
         XCTAssertEqual(store.newReviewActivityCount(for: current), 0)
     }
 
+    func testWarmReopenSkipsRecentlyLoadedSession() async {
+        let provider = DeferredCodeReviewProvider()
+        var now = Date(timeIntervalSince1970: 10_000)
+        let store = CodeReviewStore(provider: provider, now: { now })
+        let current = session(id: "session", workspace: "/tmp/current", status: .running)
+        store.updateSessions([current])
+
+        store.setVisible(true)
+        await waitForCalls(provider, count: 1)
+        await provider.completeNext(.success(snapshot(rootPath: "/tmp/current")))
+        await settleTasks()
+        store.setVisible(false)
+
+        now.addTimeInterval(10)
+        store.setVisible(true)
+        await settleTasks()
+
+        let callCount = await provider.callCount
+        XCTAssertEqual(callCount, 1)
+        store.stop()
+    }
+
+    func testWarmReopenRefreshesStaleResultAndExplicitRefreshForcesFreshResult() async {
+        let provider = DeferredCodeReviewProvider()
+        var now = Date(timeIntervalSince1970: 20_000)
+        let store = CodeReviewStore(provider: provider, now: { now })
+        let current = session(id: "session", workspace: "/tmp/current", status: .running)
+        store.updateSessions([current])
+
+        store.setVisible(true)
+        await waitForCalls(provider, count: 1)
+        await provider.completeNext(.success(snapshot(rootPath: "/tmp/current")))
+        await settleTasks()
+        store.setVisible(false)
+
+        now.addTimeInterval(31)
+        store.setVisible(true)
+        await waitForCalls(provider, count: 2)
+        await provider.completeNext(.success(snapshot(rootPath: "/tmp/current")))
+        await settleTasks()
+
+        store.refreshCodeReviews()
+        await waitForCalls(provider, count: 3)
+        await provider.completeNext(.success(snapshot(rootPath: "/tmp/current")))
+        await settleTasks()
+
+        let callCount = await provider.callCount
+        XCTAssertEqual(callCount, 3)
+        store.stop()
+    }
+
+    func testWorkspaceChangeInvalidatesFreshness() async {
+        let provider = DeferredCodeReviewProvider()
+        let now = Date(timeIntervalSince1970: 30_000)
+        let store = CodeReviewStore(provider: provider, now: { now })
+        let original = session(id: "session", workspace: "/tmp/old", status: .running)
+        let replacement = session(id: "session", workspace: "/tmp/new", status: .running)
+        store.updateSessions([original])
+
+        store.setVisible(true)
+        await waitForCalls(provider, count: 1)
+        await provider.completeNext(.success(snapshot(rootPath: "/tmp/old")))
+        await settleTasks()
+        store.setVisible(false)
+        store.updateSessions([replacement])
+
+        store.setVisible(true)
+        await waitForCalls(provider, count: 2)
+        await provider.completeNext(.success(snapshot(rootPath: "/tmp/new")))
+        await settleTasks()
+
+        let callCount = await provider.callCount
+        XCTAssertEqual(callCount, 2)
+        store.stop()
+    }
+
+    func testWarmReopenRetriesWhenExplicitRefreshWasCancelled() async {
+        let provider = DeferredCodeReviewProvider()
+        let now = Date(timeIntervalSince1970: 40_000)
+        let store = CodeReviewStore(provider: provider, now: { now })
+        let current = session(id: "session", workspace: "/tmp/current", status: .running)
+        store.updateSessions([current])
+
+        store.setVisible(true)
+        await waitForCalls(provider, count: 1)
+        await provider.completeNext(.success(snapshot(rootPath: "/tmp/current")))
+        await settleTasks()
+
+        store.refreshCodeReviews()
+        await waitForCalls(provider, count: 2)
+        store.setVisible(false)
+        store.setVisible(true)
+        await waitForCalls(provider, count: 3)
+
+        // The old provider ignores cancellation; its result must not replace the reopened request.
+        await provider.completeNext(.success(snapshot(rootPath: "/tmp/current")))
+        await settleTasks()
+        await provider.completeNext(.success(snapshot(rootPath: "/tmp/current")))
+        await settleTasks()
+
+        guard case .loaded = store.codeReviewState(for: current) else {
+            return XCTFail("Reopened session should finish in the loaded state")
+        }
+        store.stop()
+    }
+
     private func session(
         id: String,
         workspace: String,

@@ -48,7 +48,7 @@ Sources/
       AIOverview/           Объединённая панель лимитов и Agent Inbox
       Calendar/             Календарь и напоминания
       CodeReview/           Read-only PR/MR и CI
-      Dock/                 Дополнительный NooL Dock
+      Dock/                 Панель приложений, папок, стэков и интеграций; замена Dock
       FileShelf/            Полка и Actions для обработки файлов
       Jira/                 Клиент, модели, провайдер и UI Jira
       Launcher/             Поиск, навигация и окно Launcher

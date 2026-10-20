@@ -8,6 +8,17 @@ final class LiveWallpaperPolicyTests: XCTestCase {
         let decoded = try JSONDecoder().decode(LiveWallpaperOverlaySettings.self, from: Data(#"{"showsQuotas":true,"opacity":7,"metrics":["network","cpu"]}"#.utf8))
         XCTAssertTrue(decoded.showsQuotas)
         XCTAssertEqual(decoded.position, .bottomRight)
+        XCTAssertEqual(decoded.horizontalInset, 64)
+        XCTAssertEqual(decoded.verticalInset, 160)
+        var custom = decoded
+        custom.horizontalInset = 120
+        custom.verticalInset = 240
+        XCTAssertEqual(try JSONDecoder().decode(LiveWallpaperOverlaySettings.self,
+                                              from: JSONEncoder().encode(custom)), custom)
+        custom.horizontalInset = -10
+        custom.verticalInset = 900
+        XCTAssertEqual(custom.sanitized.horizontalInset, 0)
+        XCTAssertEqual(custom.sanitized.verticalInset, 320)
         XCTAssertEqual(decoded.sanitized.opacity, 1)
         XCTAssertEqual(decoded.sanitized.metrics, [.cpu, .network])
         XCTAssertFalse(LiveWallpaperOverlaySettings().isVisible)

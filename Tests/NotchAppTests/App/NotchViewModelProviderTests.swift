@@ -5,6 +5,24 @@ import XCTest
 
 @MainActor
 final class NotchViewModelProviderTests: XCTestCase {
+    func testRepeatedExpansionDoesNotRefreshFreshQuotaOrPollMusicAgain() async {
+        let quota = RecordingQuotaProvider()
+        let music = FakeNowPlayingProvider()
+        let model = makeModel(providers: [quota], nowPlayingProvider: music)
+        defer { model.stop() }
+        await settleMainActorTasks()
+        let initialQuotaCalls = await quota.callCount
+        let initialMusicCalls = music.refreshCallCount
+        for _ in 0..<5 {
+            model.isExpanded = true
+            await settleMainActorTasks()
+            model.isExpanded = false
+        }
+        let finalQuotaCalls = await quota.callCount
+        XCTAssertEqual(finalQuotaCalls, initialQuotaCalls)
+        XCTAssertEqual(music.refreshCallCount, initialMusicCalls)
+    }
+
     func testQuotaRefreshIsPrefetchedAndHoverRefreshesOnlyWhenStale() async {
         let provider = RecordingQuotaProvider()
         var currentDate = Date(timeIntervalSince1970: 1_000)
@@ -687,7 +705,8 @@ final class NotchViewModelProviderTests: XCTestCase {
             aiSessionStore: aiSessionStore,
             codeReviewProvider: codeReviewProvider,
             preferences: preferences,
-            now: now
+            now: now,
+            displays: makeTestDisplayFeatureModel()
         )
     }
 

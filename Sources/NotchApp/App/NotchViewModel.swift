@@ -42,6 +42,7 @@ final class NotchViewModel: ObservableObject {
     let recentCaptures: RecentCapturesStore
     let musicLyrics: MusicLyricsStore
     let musicQueue: YandexMusicQueueStore
+    let displays: DisplayFeatureModel
     @Published var isFileDropTargeted = false
     @Published private(set) var isChoosingShelfFiles = false
     let fileShelfStore = FileShelfStore()
@@ -67,7 +68,6 @@ final class NotchViewModel: ObservableObject {
             }
             updateProviderActivity()
             if isExpanded, oldValue == false {
-                refreshQuotaProviders(ifOlderThan: 10)
                 refreshPanelBadges()
             }
         }
@@ -77,7 +77,6 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var isContextMenuVisible = false
     @Published private(set) var activeTransientSurfaces: Set<NotchTransientSurface> = []
     @Published private(set) var transientSurfaceDismissalRequest = 0
-    @Published var expandedContentVisible = false
     // Set by the coordinator after the SwiftUI viewport animation completes.
     @Published var expansionSurfaceSettled = false
     @Published private(set) var selectedPanel: PanelID
@@ -104,7 +103,7 @@ final class NotchViewModel: ObservableObject {
     var codeReviewsUpdatedAt: Date? { codeReviews.codeReviewsUpdatedAt }
     @Published private(set) var hasCompletedPanelSwipe: Bool
     @Published private(set) var hoverExpansionDelay: TimeInterval
-    @Published var calendarViewMode: CalendarViewMode = .list
+    @Published var calendarViewMode: CalendarViewMode = .month
     var snapshots: [String: QuotaSnapshot] { modules.isEnabled(.quotas) ? quotas.snapshots : [:] }
     var quotaProviderOrder: [String] { quotas.quotaProviderOrder }
     var hiddenQuotaProviderIDs: Set<String> { quotas.hiddenQuotaProviderIDs }
@@ -169,10 +168,12 @@ final class NotchViewModel: ObservableObject {
         modules: AppModuleStore? = nil,
         recentCaptures: RecentCapturesStore? = nil,
         musicLyrics: MusicLyricsStore? = nil,
-        musicQueue: YandexMusicQueueStore? = nil
+        musicQueue: YandexMusicQueueStore? = nil,
+        displays: DisplayFeatureModel? = nil
     ) {
         let moduleStore = modules ?? AppModuleStore(defaults: nil)
         self.modules = moduleStore
+        self.displays = displays ?? .shared
         self.recentCaptures = recentCaptures ?? RecentCapturesStore()
         self.musicLyrics = musicLyrics ?? MusicLyricsStore()
         self.musicQueue = musicQueue ?? YandexMusicQueueStore()
@@ -295,6 +296,19 @@ final class NotchViewModel: ObservableObject {
         calendar.objectWillChange
             .sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &cancellables)
+        self.displays.$isArranging
+            .removeDuplicates()
+            .dropFirst()
+            // @Published emits before the child value changes; defer the parent's invalidation
+            // so layout observers read the new editor state rather than the previous one.
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        self.displays.$isManagingPresets
+            .removeDuplicates().dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
         moduleRuntime.register(.quotas, start: { [weak self] in self?.quotas.resume() },
                                stop: { [weak self] in self?.quotas.suspend() })
         moduleRuntime.register(.calendar, start: { [weak self] in
@@ -353,6 +367,8 @@ final class NotchViewModel: ObservableObject {
         })
         moduleRuntime.register(.fileShelf, start: { [weak self] in self?.fileShelfStore.setActive(true) },
                                stop: { [weak self] in self?.fileShelfStore.setActive(false) })
+        moduleRuntime.register(.displays, start: { [weak self] in self?.displays.start() },
+                               stop: { [weak self] in self?.displays.stop() })
         fileShelfStore.setActive(moduleStore.isEnabled(.fileShelf))
         moduleStore.changes.sink { [weak self] _ in
             guard let self else { return }
@@ -694,6 +710,7 @@ final class NotchViewModel: ObservableObject {
         case .calendar: modules.isEnabled(.calendar)
         case .music: modules.isEnabled(.music)
         case .jira: modules.isEnabled(.jira)
+        case .displays: modules.isEnabled(.displays)
         }
     }
 
@@ -868,6 +885,8 @@ final class NotchViewModel: ObservableObject {
             return nowPlayingDiagnostics.lastSuccessfulUpdate ?? nowPlayingSnapshot?.updatedAt
         case .jira:
             return jiraRefreshedAt
+        case .displays:
+            return nil
         }
     }
 
@@ -896,6 +915,8 @@ final class NotchViewModel: ObservableObject {
                 calendar.isDate($0.startDate, inSameDayAs: now)
             }.count
         case .music:
+            return nil
+        case .displays:
             return nil
         case .jira:
             switch jiraState.list {
@@ -956,6 +977,7 @@ final class NotchViewModel: ObservableObject {
         cancelScheduledCollapse()
         isExpansionPinned = false
         hasRequestedCollapse = true
+        displays.isManagingPresets = false
         if activeUtility?.requiresKeyboardFocus == true,
            !activeTransientSurfaces.contains(where: { $0.utilityModule != nil }) { closeUtility() }
         if isTransientSurfaceVisible { transientSurfaceDismissalRequest += 1 }
@@ -971,8 +993,18 @@ final class NotchViewModel: ObservableObject {
 
     var isTransientSurfaceVisible: Bool {
         isContextMenuVisible || activeTransientSurfaces.isEmpty == false
+            || isDisplayPresetEditorVisible
             || activeUtility?.requiresKeyboardFocus == true || isFileDropTargeted
             || (modules.isEnabled(.fileShelf) && fileShelfStore.isImporting) || isChoosingShelfFiles
+    }
+
+    var isDisplayPresetEditorVisible: Bool {
+        isExpanded && activeUtility == nil && selectedPanel == .displays && modules.isEnabled(.displays)
+            && displays.isManagingPresets
+    }
+
+    var requiresNotchKeyboardFocus: Bool {
+        activeUtility?.requiresKeyboardFocus == true || isDisplayPresetEditorVisible
     }
 
     func openUtility(_ utility: NotchUtilityPanel) {
@@ -1417,8 +1449,7 @@ final class NotchViewModel: ObservableObject {
         if visiblePanels.contains(.calendar), modules.isEnabled(.calendar) {
             calendar.refreshCalendarKeepingContent()
         }
-        if visiblePanels.contains(.music) {
-            refreshNowPlaying()
-        }
+        // Now Playing already follows system events and its polling mode.
+        // Opening an unrelated panel must not trigger an extra AX/bridge read.
     }
 }

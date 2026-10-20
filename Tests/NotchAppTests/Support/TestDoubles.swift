@@ -2,6 +2,30 @@ import Foundation
 import XCTest
 @testable import NotchApp
 
+/// Test view models must never invoke the real display/gamma services.
+@MainActor
+func makeTestDisplayFeatureModel() -> DisplayFeatureModel {
+    DisplayFeatureModel(service: EmptyTestDisplayConfigurationService(),
+                        brightness: NoopTestDisplayBrightnessService(),
+                        defaults: UserDefaults(suiteName: "NotchAppTests.Displays.\(UUID().uuidString)")!,
+                        revertController: DisplayRevertController(showsWindow: false))
+}
+
+@MainActor
+private final class EmptyTestDisplayConfigurationService: DisplayConfigurationServing {
+    func displays() throws -> [DisplayInfo] { [] }
+    func snapshot() throws -> DisplayConfigurationSnapshot { .init() }
+    func apply(_ change: DisplayChange, permanently: Bool) throws {}
+    func restore(_ snapshot: DisplayConfigurationSnapshot) throws {}
+}
+
+@MainActor
+private final class NoopTestDisplayBrightnessService: DisplayBrightnessServing {
+    func setDimming(_ factor: Double, displayID: UInt32) throws {}
+    func restore() {}
+    func invalidate() {}
+}
+
 @MainActor
 final class MemoryAppPreferences: AppPreferencesStoring {
     var hoverExpansionDelay: TimeInterval
@@ -630,10 +654,11 @@ final class FakeNowPlayingProvider: NowPlayingProviding {
     private(set) var didStart = false
     private(set) var didStop = false
     private(set) var pollingModes: [NowPlayingPollingMode] = []
+    private(set) var refreshCallCount = 0
 
     func start() { didStart = true }
     func stop() { didStop = true }
-    func refresh() {}
+    func refresh() { refreshCallCount += 1 }
     func setPollingMode(_ mode: NowPlayingPollingMode) {
         guard pollingModes.last != mode else { return }
         pollingModes.append(mode)

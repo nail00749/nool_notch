@@ -10,12 +10,35 @@ private struct QueueLifecycleSource: YandexMusicQueueReading {
 
 @MainActor
 final class NotchModuleLifecycleTests: XCTestCase {
+    func testDisplaysModuleStartsAndStopsItsOwnerAndSeparatePanel() {
+        let modules = AppModuleStore(defaults: nil)
+        for module in AppModuleID.allCases { modules.setEnabled(module, enabled: false) }
+        let displays = makeTestDisplayFeatureModel()
+        let model = NotchViewModel(providers: [], modules: modules, displays: displays)
+        defer { model.stop() }
+
+        XCTAssertFalse(displays.enabled)
+        XCTAssertFalse(model.visiblePanels.contains(.displays))
+        modules.setEnabled(.displays, enabled: true)
+        XCTAssertTrue(displays.enabled)
+        XCTAssertEqual(model.visiblePanels, [.displays])
+        model.openPanel(.displays)
+        XCTAssertEqual(model.selectedPanel, .displays)
+
+        modules.setEnabled(.displays, enabled: false)
+        XCTAssertFalse(displays.enabled)
+        XCTAssertTrue(model.visiblePanels.isEmpty)
+        modules.setEnabled(.displays, enabled: true)
+        model.stop()
+        XCTAssertFalse(displays.enabled)
+    }
+
     func testYandexQueueIsClearedWhenMusicIsHiddenOrDisabled() async {
         let modules = AppModuleStore(defaults: nil)
         for module in AppModuleID.allCases { modules.setEnabled(module, enabled: module == .music) }
         let queue = YandexMusicQueueStore(source: QueueLifecycleSource())
         let model = NotchViewModel(providers: [], nowPlayingProvider: FakeNowPlayingProvider(),
-                                   modules: modules, musicQueue: queue)
+                                   modules: modules, musicQueue: queue, displays: makeTestDisplayFeatureModel())
         defer { model.stop() }
         for hide in [0, 1, 2] {
             model.openPanel(.music)
@@ -43,7 +66,7 @@ final class NotchModuleLifecycleTests: XCTestCase {
             return MusicLyricsHTTPResponse(data: Data(), statusCode: 404, retryAfter: nil)
         }))
         let model = NotchViewModel(providers: [], nowPlayingProvider: provider,
-                                   modules: modules, musicLyrics: lyrics)
+                                   modules: modules, musicLyrics: lyrics, displays: makeTestDisplayFeatureModel())
         defer { model.stop() }
         model.selectPanel(.music)
         model.isExpanded = true
@@ -73,7 +96,7 @@ final class NotchModuleLifecycleTests: XCTestCase {
         let modules = AppModuleStore(defaults: nil)
         for module in AppModuleID.allCases { modules.setEnabled(module, enabled: false) }
         let model = NotchViewModel(providers: [], modules: modules,
-                                   recentCaptures: RecentCapturesStore(defaults: defaults))
+                                   recentCaptures: RecentCapturesStore(defaults: defaults), displays: makeTestDisplayFeatureModel())
         defer { model.stop() }
         model.openUtility(.recentCaptures)
         XCTAssertNil(model.activeUtility)
@@ -100,7 +123,7 @@ final class NotchModuleLifecycleTests: XCTestCase {
     func testScratchpadIsGatedAndExplicitCollapseWaitsForExport() {
         let modules = AppModuleStore(defaults: nil)
         for module in AppModuleID.allCases { modules.setEnabled(module, enabled: false) }
-        let model = NotchViewModel(providers: [], modules: modules)
+        let model = NotchViewModel(providers: [], modules: modules, displays: makeTestDisplayFeatureModel())
         defer { model.stop() }
         model.openUtility(.scratchpad)
         XCTAssertNil(model.activeUtility)
@@ -138,7 +161,7 @@ final class NotchModuleLifecycleTests: XCTestCase {
         let model = NotchViewModel(providers: [], calendarProvider: calendar,
                                    nowPlayingProvider: music, liveActivityCenter: center,
                                    jiraProvider: jira, aiSessionStore: AISessionStore(sources: [agent]),
-                                   preferences: preferences, modules: modules)
+                                   preferences: preferences, modules: modules, displays: makeTestDisplayFeatureModel())
         defer { model.stop() }
 
         model.isExpanded = true
@@ -177,7 +200,7 @@ final class NotchModuleLifecycleTests: XCTestCase {
         let modules = AppModuleStore(defaults: nil)
         for module in AppModuleID.allCases { modules.setEnabled(module, enabled: false) }
         let provider = DelayedModuleQuotaProvider()
-        let model = NotchViewModel(providers: [provider], modules: modules)
+        let model = NotchViewModel(providers: [provider], modules: modules, displays: makeTestDisplayFeatureModel())
         defer { model.stop() }
 
         model.isCompactHovered = true

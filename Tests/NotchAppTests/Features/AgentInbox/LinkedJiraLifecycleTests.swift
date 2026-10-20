@@ -58,7 +58,8 @@ final class LinkedJiraLifecycleTests: XCTestCase {
             liveActivityCenter: LiveActivityCenter(additionalSources: []),
             jiraProvider: jira,
             aiSessionStore: AISessionStore(sources: [source]),
-            preferences: MemoryAppPreferences()
+            preferences: MemoryAppPreferences(),
+            displays: makeTestDisplayFeatureModel()
         )
         return (model, source)
     }
