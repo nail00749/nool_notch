@@ -108,8 +108,8 @@ final class DockMiniWidgetsTests: XCTestCase {
         XCTAssertEqual(DockSystemLoadWidget.compactRate(.init(receivedBytesPerSecond: 1_250_000, sentBytesPerSecond: 0)), "↓1.2M")
         XCTAssertEqual(DockSystemLoadWidget.compactRate(.init(receivedBytesPerSecond: 640_400, sentBytesPerSecond: 0)), "↓640K")
         XCTAssertEqual(DockSystemLoadWidget.compactRate(nil), "—")
-        XCTAssertEqual(DockSystemToggle.shown(span: 1).count, 4)
-        XCTAssertEqual(DockSystemToggle.shown(span: 3).last, .bluetooth)
+        XCTAssertEqual(DockSystemToggle.preview, [.wifi, .sound, .darkMode, .keepAwake])
+        XCTAssertFalse(DockSystemToggle.panelTiles.contains(.sound), "Sound is the panel's slider row")
     }
 
     @MainActor
@@ -135,6 +135,8 @@ final class DockMiniWidgetsTests: XCTestCase {
         XCTAssertEqual(store.audio?.isMuted, false, "Raising the volume unmutes")
         store.adjustVolume(by: -100)
         XCTAssertEqual(store.audio?.volume, 0)
+        store.setVolume(0.8)
+        XCTAssertEqual(store.audio?.volume, 0.8)
     }
 }
 

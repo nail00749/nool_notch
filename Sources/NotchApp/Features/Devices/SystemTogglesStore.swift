@@ -186,6 +186,13 @@ final class SystemTogglesStore: ObservableObject {
         refresh()
     }
 
+    /// Absolute volume from a slider; 0 leaves mute alone, any level above it unmutes.
+    func setVolume(_ volume: Double) {
+        guard let audio, audio.canSetVolume else { return }
+        errorMessage = service.setVolume(min(max(volume, 0), 1)) ? nil : "Не удалось изменить громкость."
+        refresh()
+    }
+
     /// Positive steps raise the volume.
     func adjustVolume(by steps: Int) {
         guard let audio, audio.canSetVolume, steps != 0 else { return }

@@ -336,127 +336,147 @@ enum DockSystemToggle: String, CaseIterable, Identifiable {
         switch self {
         case .wifi: "Wi‑Fi"
         case .sound: "Звук"
-        case .darkMode: "Тема"
-        case .keepAwake: "Не спать"
+        case .darkMode: "Тёмная тема"
+        case .keepAwake: "Не засыпать"
         case .bluetooth: "Bluetooth"
         }
     }
 
-    /// Bluetooth only opens Settings (no public power API), so it joins at three cells.
-    static func shown(span: Int) -> [DockSystemToggle] {
-        span >= 3 ? allCases : [.wifi, .sound, .darkMode, .keepAwake]
-    }
+    /// The closed tile previews these, like a folder icon previews its apps.
+    static let preview: [DockSystemToggle] = [.wifi, .sound, .darkMode, .keepAwake]
+    /// Tiles of the opened panel; sound gets its own slider row below them.
+    static let panelTiles: [DockSystemToggle] = [.wifi, .bluetooth, .darkMode, .keepAwake]
 }
 
+/// Closed: a folder-like preview of the main toggles. A click opens a panel
+/// with full controls; scrolling over the tile still changes the volume.
 struct DockTogglesWidget: View {
     @ObservedObject var model: NotchViewModel
     @ObservedObject var store: SystemTogglesStore
     @ObservedObject var appearance: DisplaySystemSettingsModel
     @ObservedObject var keepAwake: DisplayKeepAwakeModel
     let span: Int
+    let interactionChanged: (Bool) -> Void
+    @State private var showsPanel = false
 
-    init(model: NotchViewModel, span: Int, store: SystemTogglesStore = .shared) {
+    init(model: NotchViewModel, span: Int, store: SystemTogglesStore = .shared,
+         interactionChanged: @escaping (Bool) -> Void = { _ in }) {
         self.model = model
         self.span = span
         self.store = store
+        self.interactionChanged = interactionChanged
         appearance = model.displays.systemSettings
         keepAwake = model.displays.keepAwake
     }
 
-    private var displaysEnabled: Bool { model.modules.isEnabled(.displays) }
+    private var controls: DockToggleControls {
+        DockToggleControls(store: store, appearance: appearance, keepAwake: keepAwake,
+                           displaysEnabled: model.modules.isEnabled(.displays))
+    }
 
     var body: some View {
-        let toggles = DockSystemToggle.shown(span: span)
-        Group {
-            if span <= 1 {
-                Grid(horizontalSpacing: 4, verticalSpacing: 4) {
-                    GridRow { button(toggles[0], size: 21); button(toggles[1], size: 21) }
-                    GridRow { button(toggles[2], size: 21); button(toggles[3], size: 21) }
-                }
-            } else {
-                HStack(spacing: 0) {
-                    ForEach(toggles) { toggle in
-                        VStack(spacing: 2) {
-                            button(toggle, size: span >= 3 ? 27 : 25)
-                            if span >= 3 {
-                                Text(toggle.title).font(.system(size: 8.5, weight: .medium))
-                                    .foregroundStyle(.white.opacity(0.56)).lineLimit(1).minimumScaleFactor(0.7)
-                            }
-                        }.frame(maxWidth: .infinity)
-                    }
-                }
+        HStack(spacing: 9) {
+            preview.frame(width: 42, height: 42)
+            if span > 1 {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Управление").font(.system(size: 11, weight: .semibold))
+                    Text(summary).font(.system(size: 10)).foregroundStyle(.white.opacity(0.56))
+                }.lineLimit(1).minimumScaleFactor(0.8).frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(.horizontal, 5).dockWidgetSurface()
+        .padding(.horizontal, span > 1 ? 8 : 0).dockWidgetSurface()
+        .dockTapTarget("Управление системой") { showsPanel.toggle() }
         .background(DockScrollWheelReader { delta in
-            // Scrolling anywhere on the widget changes the output volume.
             store.adjustVolume(by: delta > 0 ? -1 : 1)
         })
-        .help(helpText)
+        .help("Щелчок: открыть управление\nПрокрутка: громкость")
         .onAppear { store.beginViewing() }
         .onDisappear { store.endViewing() }
-    }
-
-    private var helpText: String {
-        var lines = ["Прокрутка: громкость"]
-        if let audio = store.audio { lines.append("Громкость \(Int((audio.volume * 100).rounded()))%\(audio.isMuted ? ", без звука" : "")") }
-        if let error = store.errorMessage { lines.append(error) }
-        return lines.joined(separator: "\n")
-    }
-
-    private func button(_ toggle: DockSystemToggle, size: CGFloat) -> some View {
-        let state = state(of: toggle)
-        return ZStack {
-            Circle().fill(state.isOn == true ? Color.accentColor : .white.opacity(0.1))
-            Image(systemName: state.symbol)
-                .font(.system(size: size * 0.42, weight: .semibold))
-                .foregroundStyle(.white)
-                .contentTransition(.symbolEffect(.replace))
+        .popover(isPresented: $showsPanel, arrowEdge: .top) {
+            DockTogglesPanel(controls: controls)
+                .onAppear { interactionChanged(true) }
+                .onDisappear { interactionChanged(false) }
         }
-        .frame(width: size, height: size)
-        .opacity(state.isEnabled ? 1 : 0.35)
-        .animation(.easeOut(duration: 0.15), value: state.isOn)
-        .dockTapTarget(state.label) { if state.isEnabled { perform(toggle) } }
     }
 
-    private struct ToggleState {
+    private var preview: some View {
+        Grid(horizontalSpacing: 3, verticalSpacing: 3) {
+            GridRow { miniIcon(.wifi); miniIcon(.sound) }
+            GridRow { miniIcon(.darkMode); miniIcon(.keepAwake) }
+        }
+        .padding(3)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityHidden(true)
+    }
+
+    private func miniIcon(_ toggle: DockSystemToggle) -> some View {
+        let state = controls.state(of: toggle)
+        return ZStack {
+            Circle().fill(state.isOn == true ? Color.accentColor : .white.opacity(0.12))
+            Image(systemName: state.symbol).font(.system(size: 7.5, weight: .semibold)).foregroundStyle(.white)
+        }
+        .frame(width: 16, height: 16)
+        .opacity(state.isEnabled ? 1 : 0.4)
+    }
+
+    private var summary: String {
+        var parts: [String] = []
+        if let wifi = store.wifiOn { parts.append(wifi ? "Wi‑Fi" : "Wi‑Fi выкл.") }
+        if let audio = store.audio {
+            parts.append(audio.isMuted ? "без звука" : "звук \(Int((audio.volume * 100).rounded()))%")
+        }
+        return parts.isEmpty ? "Wi‑Fi, звук, тема" : parts.joined(separator: " · ")
+    }
+}
+
+/// State and actions shared by the closed preview and the open panel.
+struct DockToggleControls {
+    let store: SystemTogglesStore
+    let appearance: DisplaySystemSettingsModel
+    let keepAwake: DisplayKeepAwakeModel
+    let displaysEnabled: Bool
+
+    struct State {
         let isOn: Bool?
         let isEnabled: Bool
         let symbol: String
-        let label: String
+        let status: String
     }
 
-    private func state(of toggle: DockSystemToggle) -> ToggleState {
+    @MainActor
+    func state(of toggle: DockSystemToggle) -> State {
         switch toggle {
         case .wifi:
             let on = store.wifiOn
-            return ToggleState(isOn: on, isEnabled: on != nil, symbol: on == false ? "wifi.slash" : "wifi",
-                               label: on == true ? "Выключить Wi‑Fi" : "Включить Wi‑Fi")
+            return State(isOn: on, isEnabled: on != nil, symbol: on == false ? "wifi.slash" : "wifi",
+                         status: on.map { $0 ? "Вкл." : "Выкл." } ?? "Нет Wi‑Fi")
         case .sound:
             let audio = store.audio
             let muted = audio?.isMuted ?? false
             let volume = audio?.volume ?? 0
             let symbol = muted || volume == 0 ? "speaker.slash.fill"
                 : volume < 0.34 ? "speaker.wave.1.fill" : volume < 0.67 ? "speaker.wave.2.fill" : "speaker.wave.3.fill"
-            return ToggleState(isOn: audio.map { !$0.isMuted }, isEnabled: audio?.canMute == true, symbol: symbol,
-                               label: muted ? "Включить звук" : "Выключить звук")
+            return State(isOn: audio.map { !$0.isMuted }, isEnabled: audio?.canMute == true, symbol: symbol,
+                         status: audio.map { $0.isMuted ? "Без звука" : "\(Int(($0.volume * 100).rounded()))%" } ?? "Нет выхода")
         case .darkMode:
             let dark = displaysEnabled ? appearance.darkMode.value : nil
-            return ToggleState(isOn: dark, isEnabled: dark != nil && !appearance.isBusy,
-                               symbol: dark == true ? "moon.fill" : "sun.max.fill",
-                               label: dark == true ? "Светлая тема" : "Тёмная тема")
+            return State(isOn: dark, isEnabled: dark != nil && !appearance.isBusy,
+                         symbol: dark == true ? "moon.fill" : "sun.max.fill",
+                         status: displaysEnabled ? (dark.map { $0 ? "Вкл." : "Выкл." } ?? "Проверяем…")
+                                                 : "Модуль «Дисплеи» выключен")
         case .keepAwake:
             let active = keepAwake.isActive
-            return ToggleState(isOn: active, isEnabled: displaysEnabled,
-                               symbol: active ? "cup.and.saucer.fill" : "cup.and.saucer",
-                               label: active ? "Разрешить сон" : "Не засыпать")
+            let until = keepAwake.expiresAt.map { "до " + $0.formatted(date: .omitted, time: .shortened) }
+            return State(isOn: active, isEnabled: displaysEnabled,
+                         symbol: active ? "cup.and.saucer.fill" : "cup.and.saucer",
+                         status: displaysEnabled ? (active ? (until ?? "Вкл.") : "Выкл.") : "Модуль «Дисплеи» выключен")
         case .bluetooth:
-            return ToggleState(isOn: nil, isEnabled: true, symbol: "dot.radiowaves.left.and.right",
-                               label: "Настройки Bluetooth")
+            return State(isOn: nil, isEnabled: true, symbol: "dot.radiowaves.left.and.right", status: "Настройки")
         }
     }
 
-    private func perform(_ toggle: DockSystemToggle) {
+    @MainActor
+    func perform(_ toggle: DockSystemToggle) {
         switch toggle {
         case .wifi: store.toggleWiFi()
         case .sound: store.toggleMute()
@@ -470,5 +490,87 @@ struct DockTogglesWidget: View {
                 NSWorkspace.shared.open(url)
             }
         }
+    }
+}
+
+/// The opened panel: Control Center-like tiles plus a volume slider.
+struct DockTogglesPanel: View {
+    let controls: DockToggleControls
+    @ObservedObject private var store: SystemTogglesStore
+    @ObservedObject private var appearance: DisplaySystemSettingsModel
+    @ObservedObject private var keepAwake: DisplayKeepAwakeModel
+
+    init(controls: DockToggleControls) {
+        self.controls = controls
+        store = controls.store
+        appearance = controls.appearance
+        keepAwake = controls.keepAwake
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+                GridRow { tile(.wifi); tile(.bluetooth) }
+                GridRow { tile(.darkMode); tile(.keepAwake) }
+            }
+            soundRow
+            if let error = store.errorMessage ?? appearance.errorMessage ?? keepAwake.errorMessage {
+                Text(error).font(.system(size: 10)).foregroundStyle(Color.signalAmber).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12).frame(width: 330).preferredColorScheme(.dark)
+        .onAppear { store.beginViewing() }
+        .onDisappear { store.endViewing() }
+    }
+
+    private func tile(_ toggle: DockSystemToggle) -> some View {
+        let state = controls.state(of: toggle)
+        return Button { controls.perform(toggle) } label: {
+            HStack(spacing: 9) {
+                ZStack {
+                    Circle().fill(state.isOn == true ? Color.accentColor : .white.opacity(0.12))
+                    Image(systemName: state.symbol).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                        .contentTransition(.symbolEffect(.replace))
+                }.frame(width: 30, height: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(toggle.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+                    Text(state.status).font(.system(size: 10)).foregroundStyle(.white.opacity(0.56))
+                }.lineLimit(1).minimumScaleFactor(0.8)
+                Spacer(minLength: 0)
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity)
+            .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .disabled(!state.isEnabled)
+        .opacity(state.isEnabled ? 1 : 0.45)
+        .animation(.easeOut(duration: 0.15), value: state.isOn)
+        .accessibilityLabel("\(toggle.title): \(state.status)")
+    }
+
+    private var soundRow: some View {
+        let state = controls.state(of: .sound)
+        let audio = store.audio
+        return HStack(spacing: 9) {
+            Button { controls.perform(.sound) } label: {
+                Image(systemName: state.symbol).font(.system(size: 13, weight: .semibold))
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(.white.opacity(0.12)))
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .buttonStyle(.plain).disabled(!state.isEnabled)
+            .accessibilityLabel(audio?.isMuted == true ? "Включить звук" : "Выключить звук")
+            Slider(value: Binding(get: { audio?.isMuted == true ? 0 : audio?.volume ?? 0 },
+                                  set: { store.setVolume($0) }), in: 0...1)
+                .controlSize(.small)
+                .disabled(audio?.canSetVolume != true)
+                .accessibilityLabel("Громкость")
+            Text(state.status).font(.system(size: 10).monospacedDigit()).foregroundStyle(.white.opacity(0.56))
+                .frame(width: 44, alignment: .trailing)
+        }
+        .padding(8)
+        .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
     }
 }

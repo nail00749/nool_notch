@@ -55,7 +55,7 @@ enum DockIntegrationRegistry {
         },
         DockIntegration(id: "toggles", title: "Переключатели", symbol: "switch.2", supportedSpans: [1, 2, 3],
                         isAvailable: { _ in true }) {
-            AnyView(DockTogglesWidget(model: $1.model, span: $0.span))
+            AnyView(DockTogglesWidget(model: $1.model, span: $0.span, interactionChanged: $1.interactionChanged))
         },
         DockIntegration(id: "launcher", title: "Launcher", symbol: "magnifyingglass", supportedSpans: [1],
                         isAvailable: { _ in true }) { _, context in
