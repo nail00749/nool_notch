@@ -9,6 +9,15 @@ final class DockMusicWidgetTests: XCTestCase {
         XCTAssertNil(DockScrollWheelNSView.step(for: 300, consumed: true), "Momentum doesn't skip several tracks")
     }
 
+    func testMarqueeScrollsOnlyOverflowingTitlesAtAReadableSpeed() {
+        XCTAssertFalse(DockMarqueeText.overflows(textWidth: 60, containerWidth: 67))
+        XCTAssertFalse(DockMarqueeText.overflows(textWidth: 60, containerWidth: 0), "Not measured yet")
+        XCTAssertTrue(DockMarqueeText.overflows(textWidth: 180, containerWidth: 67))
+        let duration = DockMarqueeText.passDuration(textWidth: 180)
+        XCTAssertEqual(duration, TimeInterval((180 + DockMarqueeText.gap) / DockMarqueeText.pointsPerSecond))
+        XCTAssertGreaterThan(duration, 5, "A long title must stay readable")
+    }
+
     func testBottomPanelGainsHeadroomAboveTheStripOnly() {
         let strip = CGRect(x: 100, y: 8, width: 600, height: 64)
         let frame = DockLayout.windowFrame(strip: strip, position: .bottom, scale: 1)

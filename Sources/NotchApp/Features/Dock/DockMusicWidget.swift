@@ -22,24 +22,27 @@ struct DockMusicWidget: View {
         HStack(spacing: 9) {
             artworkControl
             if span > 1 {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(snapshot?.title ?? "Музыка").font(.system(size: 11, weight: .semibold))
-                    Text(snapshot?.artist ?? "Ничего не играет")
-                        .font(.system(size: 10)).foregroundStyle(.white.opacity(0.56))
-                    if let snapshot, snapshot.duration > 0 {
+                VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        DockMarqueeText(text: snapshot?.title ?? "Музыка",
+                                        font: .system(size: 11, weight: .semibold),
+                                        isActive: isPlaying && !reduceMotion)
+                        Text(snapshot?.artist ?? "Ничего не играет").lineLimit(1)
+                            .font(.system(size: 10)).foregroundStyle(.white.opacity(0.56))
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                        .dockTapTarget("Подробнее о треке") { showsDetails = true }
+                    HStack(spacing: 6) {
+                        DockMusicTransportControls(model: model, isPlaying: isPlaying,
+                                                   isEnabled: snapshot != nil, compact: span == 2)
+                        if span > 2, let snapshot, snapshot.duration > 0 {
+                            DockMusicProgressLine(snapshot: snapshot)
+                        }
+                    }
+                    // Two cells have no room beside the buttons, so progress sits below them.
+                    if span == 2, let snapshot, snapshot.duration > 0 {
                         DockMusicProgressLine(snapshot: snapshot)
                     }
-                }.lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-                    .dockTapTarget("Подробнее о треке") { showsDetails = true }
-            }
-            if span > 2 {
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 12)).frame(width: 25, height: 32)
-                    .contentTransition(.symbolEffect(.replace))
-                    .opacity(snapshot == nil ? 0.4 : 1)
-                    .dockTapTarget(isPlaying ? "Пауза" : "Воспроизвести") {
-                        if snapshot != nil { model.nowPlayingTogglePlayPause() }
-                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
             }
         }.padding(.horizontal, span > 1 ? 8 : 0).dockWidgetSurface()
             .background(DockScrollWheelReader { delta in
@@ -109,6 +112,121 @@ struct DockMusicArtwork: View {
                     .background(.white.opacity(0.07))
             }
         }.frame(width: size, height: size).clipShape(RoundedRectangle(cornerRadius: size * 0.21))
+    }
+}
+
+/// Previous / play-pause / next row for widgets two or three cells wide.
+private struct DockMusicTransportControls: View {
+    @ObservedObject var model: NotchViewModel
+    let isPlaying: Bool
+    let isEnabled: Bool
+    let compact: Bool
+
+    var body: some View {
+        HStack(spacing: compact ? 0 : 2) {
+            button("backward.fill", label: "Предыдущий трек", size: 9, action: model.nowPlayingPreviousTrack)
+            button(isPlaying ? "pause.fill" : "play.fill", label: isPlaying ? "Пауза" : "Воспроизвести",
+                   size: 12, action: model.nowPlayingTogglePlayPause)
+            button("forward.fill", label: "Следующий трек", size: 9, action: model.nowPlayingNextTrack)
+        }.opacity(isEnabled ? 1 : 0.35)
+    }
+
+    private func button(_ symbol: String, label: String, size: CGFloat, action: @escaping () -> Void) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: size, weight: .semibold))
+            .contentTransition(.symbolEffect(.replace))
+            .frame(width: compact ? 21 : 22, height: compact ? 15 : 18)
+            .dockTapTarget(label) { if isEnabled { action() } }
+    }
+}
+
+/// One-line label that scrolls like a ticker when the text does not fit.
+/// It moves only while `isActive`; otherwise it is truncated in place.
+struct DockMarqueeText: View {
+    let text: String
+    let font: Font
+    let isActive: Bool
+    @State private var textWidth: CGFloat = 0
+    @State private var containerWidth: CGFloat = 0
+    @State private var offset: CGFloat = 0
+
+    static let gap: CGFloat = 28
+    static let pointsPerSecond: CGFloat = 26
+    static let pauseBetweenPasses: TimeInterval = 1.6
+
+    static func overflows(textWidth: CGFloat, containerWidth: CGFloat) -> Bool {
+        containerWidth > 0 && textWidth > containerWidth + 0.5
+    }
+
+    static func passDuration(textWidth: CGFloat) -> TimeInterval {
+        TimeInterval((textWidth + gap) / pointsPerSecond)
+    }
+
+    private var scrolls: Bool {
+        isActive && Self.overflows(textWidth: textWidth, containerWidth: containerWidth)
+    }
+
+    var body: some View {
+        label.hidden()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .leading) {
+                if scrolls {
+                    HStack(spacing: Self.gap) { label; label }
+                        .fixedSize()
+                        .offset(x: offset)
+                        .accessibilityHidden(true)
+                } else {
+                    label.truncationMode(.tail)
+                }
+            }
+            .clipped()
+            .mask {
+                if scrolls {
+                    HStack(spacing: 0) {
+                        // The leading fade appears only once the text starts moving.
+                        LinearGradient(colors: [offset < 0 ? .clear : .black, .black],
+                                       startPoint: .leading, endPoint: .trailing).frame(width: 6)
+                        Color.black
+                        LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 10)
+                    }
+                } else {
+                    Color.black
+                }
+            }
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { containerWidth = $0 }
+            .background(alignment: .leading) {
+                label.fixedSize().hidden()
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { textWidth = $0 }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(text)
+            .task(id: MarqueeRun(text: text, textWidth: textWidth, scrolls: scrolls)) {
+                offset = 0
+                guard scrolls else { return }
+                let distance = textWidth + Self.gap
+                let duration = Self.passDuration(textWidth: textWidth)
+                while Task.isCancelled == false {
+                    try? await Task.sleep(nanoseconds: UInt64(Self.pauseBetweenPasses * 1_000_000_000))
+                    guard Task.isCancelled == false else { return }
+                    withAnimation(.linear(duration: duration)) { offset = -distance }
+                    try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+                    guard Task.isCancelled == false else { return }
+                    // The second copy now sits where the first began: reset without a visible jump.
+                    var reset = Transaction()
+                    reset.disablesAnimations = true
+                    withTransaction(reset) { offset = 0 }
+                }
+            }
+    }
+
+    private var label: some View {
+        Text(text).font(font).lineLimit(1)
+    }
+
+    private struct MarqueeRun: Equatable {
+        let text: String
+        let textWidth: CGFloat
+        let scrolls: Bool
     }
 }
 
