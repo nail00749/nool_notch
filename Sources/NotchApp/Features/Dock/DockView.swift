@@ -38,6 +38,9 @@ private struct DockStrip: View {
     @State private var dropTarget: String?
     @State private var groupTarget: String?
     @State private var dwell: Task<Void, Never>?
+    @State private var springTask: Task<Void, Never>?
+    @State private var springKey: String?
+    @State private var folderDropTarget: String?
     @State private var previewTask: Task<Void, Never>?
     @State private var previewDismissTask: Task<Void, Never>?
     @State private var interactionIDs = Set<String>()
@@ -182,7 +185,8 @@ private struct DockStrip: View {
                 liveOrder: $liveOrder, insertion: $insertion, leadingInset: leading,
                 commitLiveOrder: commitLiveOrder,
                 dwell: $dwell, expand: { expandedID = item.id; previewPath = nil },
-                interactionChanged: interaction("drag"), receiveFiles: feature.receiveFiles))
+                interactionChanged: interaction("drag"), receiveFiles: feature.receiveFiles,
+                spring: { spring(item) }))
             .contextMenu { itemMenu(item) }
     }
 
@@ -197,7 +201,9 @@ private struct DockStrip: View {
             })
             .onDrag { beginDrag("running:\(path)") }
             .contextMenu { appMenu(path: path, pinnedID: nil) }
-            .onDrop(of: [.fileURL], isTargeted: nil) { providers in openFiles(providers, path: path) }
+            .onDrop(of: [.fileURL], isTargeted: Binding(get: { springKey == "running:\(path)" }, set: { targeted in
+                springTargetChanged("running:\(path)", targeted: targeted) { applications.springOpen(path: path) }
+            })) { providers in openFiles(providers, path: path) }
     }
 
     /// The drag ends when the mouse button is released, not when SwiftUI frees the item
@@ -305,6 +311,9 @@ private struct DockStrip: View {
                 Button("Открыть в Finder") {
                     if let path = element.directoryPath { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
                 }
+            }
+            .onChange(of: downloadsTargeted) { _, targeted in
+                springTargetChanged(element.id, targeted: targeted) { openInFinder(element) }
             }
             .onDrop(of: [.fileURL], isTargeted: $downloadsTargeted) { providers in
                 guard let path = element.directoryPath else { return false }
@@ -485,7 +494,8 @@ private struct DockStrip: View {
     }
 
     private func folder(_ original: DockElement) -> some View {
-        DockFolderSurface(preferences: preferences, element: original, interactionChanged: interaction("folder")) { child in
+        DockFolderSurface(preferences: preferences, element: original, isDropTargeted: folderDropTarget == original.id,
+                          interactionChanged: interaction("folder")) { child in
                         VStack(spacing: 5) {
                             appIcon(path: child.applicationPath ?? "", title: child.title, id: child.id, inFolder: true).frame(width: 64, height: 57)
                             Text(child.title).font(.system(size: 10)).lineLimit(2).multilineTextAlignment(.center)
@@ -506,6 +516,11 @@ private struct DockStrip: View {
                                 Button("Убрать") { preferences.remove(id: child.id) }
                             }
         }
+        // The whole open folder, not only its icons, takes applications dropped into it.
+        .onDrop(of: [.utf8PlainText, .fileURL], delegate: DockFolderDropDelegate(
+            folderID: original.id, preferences: preferences, dragID: $dragID, targeted: $folderDropTarget,
+            liveOrder: $liveOrder, insertion: $insertion, groupTarget: $groupTarget, dwell: $dwell,
+            interactionChanged: interaction("drag")))
     }
 
     /// System Dock application menu: Options, window commands, and Quit (⌥ — Force Quit).
@@ -611,6 +626,34 @@ private struct DockStrip: View {
         Button("Подробнее…") { NotificationCenter.default.post(name: DockMusicWidget.showDetails, object: nil) }
         Button("Обновить", action: model.refreshNowPlaying)
         Divider()
+    }
+
+    /// Spring-loading, like the system Dock: holding a drag over an application brings it
+    /// forward, over a stack opens its folder in Finder, so the drop can land there.
+    private func spring(_ item: DockElement) {
+        if item.kind == .app, let path = item.applicationPath { applications.springOpen(path: path) }
+        else if item.kind == .stack { openInFinder(item) }
+    }
+
+    private func openInFinder(_ element: DockElement) {
+        guard let path = element.directoryPath else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: path, isDirectory: true))
+    }
+
+    private func springTargetChanged(_ key: String, targeted: Bool, action: @escaping @MainActor () -> Void) {
+        if targeted {
+            guard springKey != key, let delay = DockSpringLoading.delay else { return }
+            springTask?.cancel()
+            springKey = key
+            springTask = Task { @MainActor in
+                try? await Task.sleep(for: delay)
+                guard !Task.isCancelled, springKey == key else { return }
+                springKey = nil; springTask = nil
+                action()
+            }
+        } else if springKey == key {
+            springTask?.cancel(); springTask = nil; springKey = nil
+        }
     }
 
     private func openFiles(_ providers: [NSItemProvider], path: String) -> Bool {
@@ -776,6 +819,16 @@ private final class DockDragProvider: NSItemProvider {
 
 /// Trash takes a move, like the system Dock: a copy proposal is refused by drag sources
 /// that only offer move or generic, such as files dragged out of the stack fan.
+/// The system spring-loading preference (Accessibility › Pointer Control and Finder); nil when off.
+enum DockSpringLoading {
+    static var delay: Duration? {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: "com.apple.springing.enabled") as? Bool ?? true else { return nil }
+        let seconds = (defaults.object(forKey: "com.apple.springing.delay") as? NSNumber)?.doubleValue ?? 0.5
+        return .milliseconds(Int(min(2, max(0.1, seconds)) * 1_000))
+    }
+}
+
 private struct DockTrashDropDelegate: DropDelegate {
     @Binding var targeted: Bool
     let drop: @MainActor ([NSItemProvider]) -> Bool
@@ -871,6 +924,63 @@ private final class DockFileDropLoadGate: @unchecked Sendable {
     }
 }
 
+/// Drops on the free area of an open folder: Dock items, running applications and
+/// applications from Finder are filed into it.
+private struct DockFolderDropDelegate: DropDelegate {
+    let folderID: String
+    let preferences: DockPreferences
+    @Binding var dragID: String?
+    @Binding var targeted: String?
+    @Binding var liveOrder: [String]?
+    @Binding var insertion: DockInsertion?
+    @Binding var groupTarget: String?
+    @Binding var dwell: Task<Void, Never>?
+    let interactionChanged: (Bool) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.utf8PlainText, .fileURL]) }
+    func dropEntered(info: DropInfo) { targeted = folderID }
+    func dropExited(info: DropInfo) { if targeted == folderID { targeted = nil } }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: dragID == nil ? .copy : .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        defer {
+            dwell?.cancel(); dwell = nil; groupTarget = nil; targeted = nil; dragID = nil
+            liveOrder = nil; insertion = nil
+            interactionChanged(false)
+        }
+        if let id = dragID { return file(id) }
+        let fileProviders = info.itemProviders(for: [.fileURL])
+        if fileProviders.isEmpty {
+            guard let provider = info.itemProviders(for: [.utf8PlainText]).first else { return false }
+            _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+                guard let id = object as? String else { return }
+                Task { @MainActor in _ = file(id) }
+            }
+            return true
+        }
+        return DockFileDrop.load(fileProviders) { urls in
+            for url in urls where url.pathExtension.lowercased() == "app" {
+                _ = file("running:" + url.standardizedFileURL.resolvingSymlinksInPath().path)
+            }
+        }
+    }
+
+    @MainActor
+    private func file(_ original: String) -> Bool {
+        var id = original
+        if id.hasPrefix("running:") {
+            let path = String(id.dropFirst("running:".count))
+            _ = preferences.addApplication(URL(fileURLWithPath: path))
+            guard let pinned = preferences.flattenedApps.first(where: { $0.applicationPath == path }) else { return false }
+            id = pinned.id
+        }
+        if preferences.items.first(where: { $0.id == folderID })?.children.contains(where: { $0.id == id }) == true {
+            return true
+        }
+        return preferences.moveIntoFolder(id, folderID: folderID)
+    }
+}
+
 private struct DockElementDropDelegate: DropDelegate {
     let item: DockElement
     /// Cell length along the Dock axis without an open gap; the outer fifths insert, the middle groups.
@@ -890,6 +1000,7 @@ private struct DockElementDropDelegate: DropDelegate {
     let expand: () -> Void
     let interactionChanged: (Bool) -> Void
     let receiveFiles: ([URL], String) -> Void
+    var spring: () -> Void = {}
     var insideFolder = false
 
     private func offset(_ info: DropInfo) -> CGFloat {
@@ -958,7 +1069,13 @@ private struct DockElementDropDelegate: DropDelegate {
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled else { return }
             groupTarget = item.id
-            if item.kind == .folder { expand() }
+            if item.kind == .folder { expand(); return }
+            // Files held over an application or a stack spring it open; Dock items group instead.
+            guard dragID == nil, !insideFolder, item.kind == .app || item.kind == .stack,
+                  let delay = DockSpringLoading.delay else { return }
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, groupTarget == item.id else { return }
+            spring()
         }
     }
     private func cancelDwell() {
@@ -970,7 +1087,8 @@ private struct DockElementDropDelegate: DropDelegate {
         let offset = offset(info)
         let edge = !actsOnMiddle || DockLiveReorder.insertsAtEdge(offset: offset, length: length)
         let after = insertion?.id == item.id ? insertion?.after ?? false : offset > length * 0.5
-        let grouping = groupTarget == item.id
+        // A folder's middle takes the item at once, like a stack in the system Dock.
+        let grouping = groupTarget == item.id || (item.kind == .folder && !edge)
         defer {
             dwell?.cancel(); dwell = nil; dropTarget = nil; groupTarget = nil; dragID = nil
             liveOrder = nil; insertion = nil
@@ -1013,7 +1131,8 @@ private struct DockElementDropDelegate: DropDelegate {
                         guard preferences.addApplication(url),
                               let added = preferences.flattenedApps.first(where: { $0.applicationPath == path }) else { continue }
                         if item.kind == .folder, !edge { _ = preferences.moveIntoFolder(added.id, folderID: item.id) }
-                        else if !insideFolder { place(added.id, after: after) }
+                        else if insideFolder { _ = joinFolder(added.id, after: after) }
+                        else { place(added.id, after: after) }
                     } else if !insideFolder, preferences.addStack(url) {
                         place("stack:\(path)", after: after)
                     }
@@ -1034,9 +1153,20 @@ private struct DockElementDropDelegate: DropDelegate {
         guard id != item.id else { return true }
         if grouping, item.kind == .folder { return preferences.moveIntoFolder(id, folderID: item.id) }
         if grouping, item.kind == .app, !insideFolder { return preferences.group(id, with: item.id) }
+        if insideFolder { return joinFolder(id, after: after) }
         if !insideFolder, preferences.items.flatMap(\.children).contains(where: { $0.id == id }) {
             preferences.moveOutOfFolder(id, before: item.id)
         }
+        place(id, after: after)
+        return true
+    }
+
+    /// Inside an open folder: brings an item from elsewhere into this folder, then places it.
+    @MainActor
+    private func joinFolder(_ id: String, after: Bool) -> Bool {
+        guard let folder = preferences.items.first(where: { $0.children.contains { $0.id == item.id } }) else { return false }
+        if !folder.children.contains(where: { $0.id == id }),
+           !preferences.moveIntoFolder(id, folderID: folder.id) { return false }
         place(id, after: after)
         return true
     }

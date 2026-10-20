@@ -101,6 +101,28 @@ final class DockPreferencesTests: XCTestCase {
         XCTAssertEqual(DockPreferences(defaults: defaults).items, preferences.items)
     }
 
+    func testTopLevelAppDroppedInsideOpenFolderJoinsItAtThatPosition() throws {
+        let (defaults, suite) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let apps = try ["First", "Second", "Third"].map { try application($0, at: root) }
+        let preferences = DockPreferences(defaults: defaults)
+        for app in apps { XCTAssertTrue(preferences.addApplication(app)) }
+        let ids = apps.map { "app:\($0.path)" }
+        XCTAssertTrue(preferences.group(ids[0], with: ids[1]))
+        let folderID = try XCTUnwrap(preferences.items.first(where: { $0.kind == .folder })?.id)
+
+        // The drop on an open folder's icon: join the folder, then stand before that icon.
+        XCTAssertTrue(preferences.moveIntoFolder(ids[2], folderID: folderID))
+        preferences.move(id: ids[2], before: ids[0])
+
+        let folder = try XCTUnwrap(preferences.items.first(where: { $0.id == folderID }))
+        XCTAssertEqual(folder.children.map(\.id), [ids[1], ids[2], ids[0]])
+        XCTAssertFalse(preferences.items.contains { $0.id == ids[2] })
+        XCTAssertEqual(preferences.flattenedApps.filter { ids.contains($0.id) }.count, 3)
+    }
+
     func testProfilesAreIndependentAndLastProfileCannotBeDeleted() throws {
         let (defaults, suite) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }

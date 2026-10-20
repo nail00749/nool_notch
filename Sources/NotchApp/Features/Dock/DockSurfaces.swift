@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct DockFolderSurface<Content: View>: View {
     @ObservedObject var preferences: DockPreferences
     let element: DockElement
+    var isDropTargeted = false
     let interactionChanged: (Bool) -> Void
     @ViewBuilder var child: (DockElement) -> Content
 
@@ -30,7 +31,14 @@ struct DockFolderSurface<Content: View>: View {
                     }.padding(.vertical, 4)
                 }.frame(height: gridHeight)
             }
-        }.padding(22).frame(width: 370).preferredColorScheme(.dark)
+        }.padding(22).frame(width: 370)
+            .overlay {
+                RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(isDropTargeted ? 0.35 : 0), lineWidth: 1.5)
+                    .padding(6).allowsHitTesting(false)
+            }
+            .animation(.easeOut(duration: 0.15), value: isDropTargeted)
+            .contentShape(Rectangle())
+            .preferredColorScheme(.dark)
             .onAppear { interactionChanged(true) }.onDisappear { interactionChanged(false) }
     }
 }

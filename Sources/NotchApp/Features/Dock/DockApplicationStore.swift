@@ -266,6 +266,12 @@ final class DockApplicationStore: ObservableObject {
         }
     }
 
+    /// Spring-loading brings a running application forward; it never launches one mid-drag.
+    func springOpen(path: String) {
+        guard running.contains(where: { $0.path == path }) else { return }
+        open(path: path)
+    }
+
     /// The icon bounces until the application appears, at most ten seconds, like the system Dock.
     func beginLaunching(_ path: String) {
         launching.insert(path)
