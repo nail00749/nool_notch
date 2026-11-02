@@ -29,6 +29,7 @@ struct LauncherView: View {
                 } else {
                     LauncherSearchField(text: $model.query, move: model.move, submit: submit,
                                         cancel: cancel, cycle: model.cycleCategory,
+                                        moveHorizontally: model.moveApplicationHorizontally,
                                         invalidatePreviewSelection: model.clearPreviewKeyboardSelection)
                         .frame(height: 38)
                 }
@@ -118,33 +119,16 @@ struct LauncherView: View {
             } else if let event = model.selectedNoolEvent {
                 LauncherMeetingDetail(event: event, back: { model.selectedNoolEvent = nil },
                                       join: model.joinSelectedMeeting)
-            } else if model.results.isEmpty {
-                emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 3) {
-                            ForEach(model.results) { result in
-                                LauncherResultRow(result: result, selected: model.selectedID == result.id,
-                                                  icons: model.icons, clipboardData: clipboardData(for: result))
-                                    .contentShape(Rectangle())
-                                    .onTapGesture(count: 2) { activate(result, false) }
-                                    .onTapGesture { model.selectResult(result.id) }
-                                    .accessibilityElement(children: .combine)
-                                    .accessibilityAddTraits(model.selectedID == result.id ? [.isSelected] : [])
-                                    .accessibilityAction { activate(result, false) }
-                                    .contextMenu {
-                                        ForEach(model.resultActions(for: result)) { action in
-                                            Button(action.title) { performAction(action, result) }
-                                        }
-                                    }
-                                    .id(result.id)
-                            }
-                        }
-                        .padding(10)
+                VStack(spacing: 0) {
+                    if model.category == .all || model.category == .applications {
+                        LauncherApplicationLayoutPicker(settings: model.settings, focusInput: focusInput)
                     }
-                    .onChange(of: model.selectedID) { _, id in
-                        if let id { proxy.scrollTo(id, anchor: nil) }
+                    if model.results.isEmpty {
+                        emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        LauncherResultsView(model: model, settings: model.settings,
+                                            activate: activate, performAction: performAction)
                     }
                 }
             }
@@ -226,11 +210,6 @@ struct LauncherView: View {
         else { close() }
     }
 
-    private func clipboardData(for result: LauncherResult) -> Data? {
-        guard case .clipboard(let id) = result.payload else { return nil }
-        return model.clipboard.items.first { $0.id == id }?.imageData
-    }
-
     private func primaryTitle(_ result: LauncherResult) -> String {
         switch result.payload {
         case .application, .file, .nool, .windowLayoutManager, .workspaceManager, .speedTest, .networkDiagnostics, .screenTextCapture: "Открыть"
@@ -268,7 +247,7 @@ struct LauncherView: View {
     }
 }
 
-private struct LauncherResultRow: View {
+struct LauncherResultRow: View {
     let result: LauncherResult
     let selected: Bool
     let icons: LauncherIcons
@@ -348,7 +327,7 @@ private struct LauncherResultRow: View {
     }
 }
 
-private enum LauncherSelectionStyle {
+enum LauncherSelectionStyle {
     static let background = Color(nsColor: .unemphasizedSelectedContentBackgroundColor)
     static let text = Color(nsColor: .unemphasizedSelectedTextColor)
 }
@@ -375,6 +354,7 @@ private struct LauncherSearchField: NSViewRepresentable {
     let submit: (Bool) -> Void
     let cancel: () -> Void
     let cycle: (Bool) -> Void
+    let moveHorizontally: (Int) -> Bool
     let invalidatePreviewSelection: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -436,7 +416,11 @@ private struct LauncherSearchField: NSViewRepresentable {
             case "cancelOperation:": parent.cancel()
             case "insertTab:": parent.cycle(false)
             case "insertBacktab:": parent.cycle(true)
-            case "moveLeft:", "moveRight:", "moveToBeginningOfLine:", "moveToEndOfLine:",
+            case "moveLeft:", "moveRight:":
+                if parent.moveHorizontally(command == "moveLeft:" ? -1 : 1) { return true }
+                parent.invalidatePreviewSelection()
+                return false
+            case "moveToBeginningOfLine:", "moveToEndOfLine:",
                  "moveToBeginningOfDocument:", "moveToEndOfDocument:", "selectAll:":
                 parent.invalidatePreviewSelection()
                 return false

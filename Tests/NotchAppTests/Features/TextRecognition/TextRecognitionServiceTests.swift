@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import Foundation
 import ImageIO
+import Vision
 import XCTest
 @testable import NotchApp
 
@@ -54,6 +55,21 @@ final class TextRecognitionServiceTests: XCTestCase {
         } catch is CancellationError {
             // Expected before any Vision request is made.
         }
+    }
+
+    func testCancellationInterruptsActiveVisionRequestAndRejectsLaterActivation() throws {
+        let token = TextRecognitionCancellation()
+        let active = CancellationSpyRequest()
+        try token.activate(active)
+        token.cancel()
+        XCTAssertEqual(active.cancelCount, 1)
+        XCTAssertThrowsError(try token.check()) { XCTAssertTrue($0 is CancellationError) }
+        token.deactivate(active)
+        token.cancel()
+        XCTAssertEqual(active.cancelCount, 1)
+        let later = CancellationSpyRequest()
+        XCTAssertThrowsError(try token.activate(later)) { XCTAssertTrue($0 is CancellationError) }
+        XCTAssertEqual(later.cancelCount, 1)
     }
 
     func testRecognizesTextInGeneratedImageAndScannedPDF() async throws {
@@ -142,5 +158,15 @@ final class TextRecognitionServiceTests: XCTestCase {
         context.draw(image, in: box)
         context.endPDFPage()
         context.closePDF()
+    }
+}
+
+private final class CancellationSpyRequest: VNRecognizeTextRequest, @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var cancelCount: Int { lock.withLock { count } }
+    override func cancel() {
+        lock.withLock { count += 1 }
+        super.cancel()
     }
 }

@@ -18,11 +18,25 @@ struct DockIntegrationContext {
     let interactionChanged: (Bool) -> Void
     let openLauncher: () -> Void
     let openDisplays: () -> Void
+    var popoverEdge: Edge = .top
+    var surfaceGeneration: Int = 0
+    var openSpeedTest: () -> Void = {}
 }
 
 @MainActor
 enum DockIntegrationRegistry {
     static let integrations: [DockIntegration] = [
+        DockIntegration(id: "cooling", title: "Охлаждение", symbol: "fanblades", supportedSpans: [1, 2, 3],
+                        isAvailable: { _ in true }) { element, context in
+            AnyView(DockCoolingWidget(span: element.span, interactionChanged: context.interactionChanged,
+                                      arrowEdge: context.popoverEdge, dismissalEpoch: context.surfaceGeneration))
+        },
+        DockIntegration(id: "speedtest", title: "Speedtest", symbol: "speedometer", supportedSpans: [1, 2, 3],
+                        isAvailable: { $0.modules.isEnabled(.networkTools) }) { element, context in
+            AnyView(DockSpeedTestWidget(span: element.span, interactionChanged: context.interactionChanged,
+                                       arrowEdge: context.popoverEdge, dismissalEpoch: context.surfaceGeneration,
+                                       openFullPanel: context.openSpeedTest))
+        },
         DockIntegration(id: "music", title: "Музыка", symbol: "music.note", supportedSpans: [1, 2, 3],
                         isAvailable: { $0.modules.isEnabled(.music) }) {
             AnyView(DockMusicWidget(model: $1.model, span: $0.span, interactionChanged: $1.interactionChanged))
@@ -46,8 +60,9 @@ enum DockIntegrationRegistry {
             AnyView(DockBatteryWidget(span: element.span))
         },
         DockIntegration(id: "systemLoad", title: "Нагрузка", symbol: "cpu", supportedSpans: [1, 2, 3],
-                        isAvailable: { _ in true }) { element, _ in
-            AnyView(DockSystemLoadWidget(span: element.span))
+                        isAvailable: { _ in true }) { element, context in
+            AnyView(DockSystemLoadWidget(span: element.span, interactionChanged: context.interactionChanged,
+                                        arrowEdge: context.popoverEdge, dismissalEpoch: context.surfaceGeneration))
         },
         DockIntegration(id: "quotas", title: "Лимиты AI", symbol: "gauge.with.dots.needle.67percent",
                         supportedSpans: [1, 2, 3], isAvailable: { $0.modules.isEnabled(.quotas) }) {

@@ -13,12 +13,14 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
     case systemMonitor
     case launcher
     case dock
+    case fileConversion
     case displays
     case updates
     case limits
     case integrations
     case music
     case jira
+    case nooLLink
 
     var id: String { rawValue }
 
@@ -34,12 +36,14 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         case .systemMonitor: "Мониторинг"
         case .launcher: "Launcher"
         case .dock: "NooL Dock"
+        case .fileConversion: "Конвертация"
         case .displays: "Дисплеи"
         case .updates: "Обновления"
         case .limits: "Лимиты"
         case .integrations: "Интеграции"
         case .music: "Музыка"
         case .jira: "Jira"
+        case .nooLLink: "NooL Link"
         }
     }
 
@@ -55,12 +59,14 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         case .systemMonitor: "CPU, память, диск и сеть"
         case .launcher: "Поиск и буфер обмена"
         case .dock: "Приложения и виджеты"
+        case .fileConversion: "Радиальное меню в Finder"
         case .displays: "Режимы мониторов и расположение чёлки"
         case .updates: "Версия и Homebrew"
         case .limits: "Источники и компактный индикатор"
         case .integrations: "GitHub, GitLab и PR/CI"
         case .music: "Источник текущего трека"
         case .jira: "Подключение и проекты"
+        case .nooLLink: "Общий буфер Mac и Windows"
         }
     }
 
@@ -76,12 +82,14 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         case .systemMonitor: "chart.xyaxis.line"
         case .launcher: "magnifyingglass"
         case .dock: "dock.rectangle"
+        case .fileConversion: "arrow.triangle.2.circlepath"
         case .displays: "display.2"
         case .updates: "arrow.triangle.2.circlepath"
         case .limits: "gauge.with.dots.needle.67percent"
         case .integrations: "point.3.connected.trianglepath.dotted"
         case .music: "waveform"
         case .jira: "checkmark.square"
+        case .nooLLink: "point.3.connected.trianglepath.dotted"
         }
     }
 
@@ -92,11 +100,12 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         case .liveWallpaper: .liveWallpaper
         case .systemMonitor: .systemMonitor
         case .dock: .dock
+        case .fileConversion: .fileShelf
         case .limits: .quotas
         case .integrations: .agentInbox
         case .music: .music
         case .jira: .jira
-        case .general, .notch, .modules, .permissions, .launcher, .displays, .updates: nil
+        case .general, .notch, .modules, .permissions, .launcher, .displays, .updates, .nooLLink: nil
         }
     }
 
@@ -113,7 +122,8 @@ enum NotchSettingsSection: String, CaseIterable, Identifiable {
         case .liveWallpaper: .liveWallpaper
         case .displays: .displays
         case .gestures: .gestures
-        case .calendar, .liveActivities, .fileShelf, .textRecognition,
+        case .fileShelf: .fileConversion
+        case .calendar, .liveActivities, .textRecognition,
              .networkTools, .windowManagement, .scratchpad, .recentCaptures: nil
         }
     }
@@ -407,14 +417,16 @@ struct NotchSettingsView: View {
             case .lidEffect:
                 LidEffectSettingsView(controller: lidEffect)
             case .liveWallpaper:
-                LiveWallpaperSettingsView(controller: liveWallpaper)
+                LiveWallpaperSettingsView(controller: liveWallpaper, model: model)
             case .systemMonitor:
                 SystemMonitorSettingsView(store: systemMonitor)
             case .launcher:
                 LauncherSettingsView(modules: modules, settings: launcher.settings, clipboard: launcher.model.clipboard,
-                                     aiChat: launcher.model.aiChat, open: launcher.show)
+                                     aiChat: launcher.model.aiChat, windowShortcuts: launcher.windowShortcuts, open: launcher.show)
             case .dock:
                 DockSettingsView(settings: dockSettings, feature: dockFeature)
+            case .fileConversion:
+                FinderConversionSettingsView()
             case .displays:
                 displaysPage
             case .updates:
@@ -432,6 +444,8 @@ struct NotchSettingsView: View {
                     }
                     JiraPinnedSettingsView(model: model)
                 }
+            case .nooLLink:
+                NooLLinkSettingsView(service: NooLLinkService.shared)
             }
         }
     }

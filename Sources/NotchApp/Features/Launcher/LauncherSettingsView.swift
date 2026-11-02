@@ -6,9 +6,11 @@ struct LauncherSettingsView: View {
     @ObservedObject var settings: LauncherSettings
     @ObservedObject var clipboard: LauncherClipboardStore
     @ObservedObject var aiChat: AIChatStore
+    var windowShortcuts: WindowShortcutController? = nil
     let open: () -> Void
     @State private var recordingMonitor: Any?
     @State private var shortcutMessage: String?
+    @State private var recordingID = UUID()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -36,10 +38,23 @@ struct LauncherSettingsView: View {
                             shortcutMessage = nil
                         }.font(.caption)
                     }
+                    Divider().opacity(0.45)
+                    Picker("Переводить валюту в", selection: $settings.defaultCurrency) {
+                        ForEach(LauncherCurrency.allCases) { currency in
+                            Text("\(currency.title) (\(currency.rawValue))").tag(currency)
+                        }
+                    }
+                    .font(.system(size: 12))
+                    Text("Например: 250$, 1000 юаней или 50 € в доллары. Используется официальный курс Банка России.")
+                        .font(.caption).foregroundStyle(NotchPalette.secondary)
                 }.padding(8)
             }
 
             if modules.isEnabled(.aiChat) { AIChatSettingsView(store: aiChat) }
+
+            if modules.isEnabled(.windowManagement), let windowShortcuts {
+                WindowShortcutSettingsView(controller: windowShortcuts, settings: windowShortcuts.settings)
+            }
 
             GroupBox("Поиск файлов") {
                 VStack(alignment: .leading, spacing: 10) {
@@ -124,8 +139,11 @@ struct LauncherSettingsView: View {
     }
 
     private func beginRecording() {
-        if settings.isRecordingShortcut { endRecording(); return }
-        settings.isRecordingShortcut = true
+        if recordingMonitor != nil { endRecording(); return }
+        guard settings.beginShortcutRecording(owner: recordingID) else {
+            shortcutMessage = "Сначала завершите запись другого сочетания (Escape)."
+            return
+        }
         shortcutMessage = nil
         recordingMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 guard settings.isRecordingShortcut else { return event }
@@ -144,7 +162,7 @@ struct LauncherSettingsView: View {
     private func endRecording() {
         if let recordingMonitor { NSEvent.removeMonitor(recordingMonitor) }
         recordingMonitor = nil
-        if settings.isRecordingShortcut { settings.isRecordingShortcut = false }
+        settings.endShortcutRecording(owner: recordingID)
     }
 }
 

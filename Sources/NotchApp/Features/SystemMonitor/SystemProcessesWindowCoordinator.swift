@@ -40,7 +40,7 @@ struct SystemProcessesView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Label("Что нагружает Mac", systemImage: "chart.bar.xaxis")
                         .font(.system(size: 22, weight: .bold))
-                    Text("Пять самых ресурсоёмких процессов")
+                    Text("До 15 групп приложений по выбранной метрике")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -56,38 +56,14 @@ struct SystemProcessesView: View {
                     Text("Для CPU нужны два замера с интервалом 2 секунды.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if store.topProcesses.isEmpty {
+            } else if store.groups.isEmpty {
                 ContentUnavailableView("Нет доступных процессов", systemImage: "chart.bar",
                                        description: Text("macOS не вернула доступные показания. Можно открыть системный «Мониторинг системы»."))
             } else {
-                VStack(spacing: 0) {
-                    HStack {
-                        Text("Процесс")
-                        Spacer()
-                        Text("CPU").frame(width: 82, alignment: .trailing)
-                        Text("Резидентная ОЗУ").frame(width: 125, alignment: .trailing)
-                    }
-                    .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    ForEach(store.topProcesses) { process in
-                        Divider()
-                        HStack(spacing: 10) {
-                            Image(systemName: "app.dashed").foregroundStyle(.secondary)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(process.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                                Text("PID \(process.pid)").font(.system(size: 10)).foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 6)
-                            Text(process.cpuPercent.map { $0.formatted(.number.precision(.fractionLength(1))) + "%" } ?? "—")
-                                .frame(width: 82, alignment: .trailing)
-                            Text(SystemMetricReading.bytes(process.residentMemoryBytes))
-                                .frame(width: 125, alignment: .trailing)
-                        }
-                        .font(.system(size: 12)).monospacedDigit()
-                        .padding(.horizontal, 14).frame(height: 46)
-                    }
+                ScrollView {
+                    SystemProcessGroupList(groups: Array(store.groups.prefix(15)), sort: store.sort, compact: false)
+                        .background(NotchPalette.raised, in: RoundedRectangle(cornerRadius: 12))
                 }
-                .background(NotchPalette.raised, in: RoundedRectangle(cornerRadius: 12))
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text("CPU: 100% — одно ядро, значение может быть выше. Резидентная ОЗУ включает общие страницы и отличается от столбца «Память» в macOS.")

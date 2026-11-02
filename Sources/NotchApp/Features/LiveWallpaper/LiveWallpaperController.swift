@@ -72,6 +72,11 @@ final class LiveWallpaperController: ObservableObject {
             self.render()
         }
         power.onChange = { [weak self] in self?.refreshPower() }
+        renderer.onFailure = { [weak self] error in self?.message = error }
+        renderer.onSceneReady = { [weak self] in
+            guard let self, self.preferences.syncsSystemWallpaper else { return }
+            self.syncSystemWallpaper()
+        }
     }
 
     /// The video a target shows: a display without its own choice falls back to the shared one.
@@ -93,7 +98,18 @@ final class LiveWallpaperController: ObservableObject {
 
     /// True when any display shows a built-in scene or a picture, so scene settings apply.
     var usesScenes: Bool {
-        activeDisplays.contains { item(named: preferences.fileName(forDisplay: $0.key))?.content.isScene == true }
+        activeDisplays.contains {
+            switch item(named: preferences.fileName(forDisplay: $0.key))?.content {
+            case .scene, .image: true
+            default: false
+            }
+        }
+    }
+
+    var usesWallpaperEngine: Bool {
+        activeDisplays.contains {
+            if case .wallpaperEngine = item(named: preferences.fileName(forDisplay: $0.key))?.content { true } else { false }
+        }
     }
 
     /// Displays that currently resolve to an existing wallpaper.
@@ -190,6 +206,15 @@ final class LiveWallpaperController: ObservableObject {
             for url in urls {
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                if ["pkg", "json"].contains(url.pathExtension.lowercased())
+                    || (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                    do {
+                        imported.append(try await Task.detached { try library.importWallpaperEngine(from: url) }.value)
+                    } catch {
+                        failures.append("«\(url.lastPathComponent)»: \(error.localizedDescription)")
+                    }
+                    continue
+                }
                 guard LiveWallpaperLibrary.supportedExtensions.contains(url.pathExtension.lowercased()) else {
                     failures.append(LiveWallpaperLibraryError.unsupportedFile(url.lastPathComponent).localizedDescription)
                     continue
@@ -275,8 +300,15 @@ final class LiveWallpaperController: ObservableObject {
         guard let url = item.url, thumbnails[item.fileName] == nil,
               thumbnailRequests.insert(item.fileName).inserted else { return }
         let isImage: Bool = if case .image = item.content { true } else { false }
+        let isEngine: Bool = if case .wallpaperEngine = item.content { true } else { false }
         Task { [weak self] in
-            let image = isImage
+            let image = isEngine
+                ? await Task.detached {
+                    ["preview.png", "preview.jpg", "preview.jpeg"].lazy.compactMap {
+                        LiveWallpaperMedia.image(at: url.appendingPathComponent($0), maxPixelSize: 480)
+                    }.first
+                }.value
+                : isImage
                 ? await Task.detached { LiveWallpaperMedia.image(at: url, maxPixelSize: 480) }.value
                 : await LiveWallpaperMedia.frame(of: url, maximumSize: CGSize(width: 480, height: 300))
             guard let self else { return }
@@ -363,7 +395,8 @@ final class LiveWallpaperController: ObservableObject {
     private func reconcileOverlayFeed() {
         let overlay = preferences.overlay
         let playing = playbackState == .playing
-        let samplesMetrics = playing && overlay.needsSystemMetrics
+        let hasReactor = displays.contains { preferences.fileName(forDisplay: $0.key) == LiveWallpaperScenePreset.reactor.key }
+        let samplesMetrics = playing && (overlay.needsSystemMetrics || hasReactor)
         let wantsQuotas = playing && overlay.showsQuotas
         guard samplesMetrics || wantsQuotas else {
             stopOverlayFeed()
@@ -429,6 +462,7 @@ final class LiveWallpaperController: ObservableObject {
             var posters: [String: URL] = [:]
             for item in Set(targets.map(\.1.fileName)).compactMap({ name in targets.first { $0.1.fileName == name }?.1 }) {
                 guard let url = item.url else { continue }
+                if case .wallpaperEngine = item.content { continue }
                 if case .image = item.content {
                     posters[item.fileName] = url
                     continue

@@ -1,0 +1,208 @@
+Processes: 1019 total, 10 running, 1009 sleeping, 6743 threads 
+2026/10/21 13:20:02
+Load Avg: 20.93, 14.07, 14.39 
+CPU usage: 42.52% user, 30.70% sys, 26.76% idle 
+SharedLibs: 390M resident, 88M data, 75M linkedit.
+MemRegions: 540036 total, 3435M resident, 121M private, 1630M shared.
+PhysMem: 15G used (4941M wired, 4766M compressor), 91M unused.
+VM: 485T vsize, 57G framework vsize, 1267747(0) swapins, 2017504(0) swapouts.
+Networks: packets: 13232926/11G in, 9171646/4196M out.
+Disks: 39468749/903G read, 8095316/249G written.
+
+PID    COMMAND  %CPU TIME     #TH MEM 
+97946  NotchApp 0.0  00:05.29 22  329M
+Processes: 1018 total, 7 running, 1011 sleeping, 6714 threads 
+2026/10/21 13:20:04
+Load Avg: 20.93, 14.07, 14.39 
+CPU usage: 33.45% user, 23.38% sys, 43.15% idle 
+SharedLibs: 390M resident, 88M data, 75M linkedit.
+MemRegions: 0 total, 0B resident, 121M private, 1630M shared.
+PhysMem: 15G used (5142M wired, 4795M compressor), 89M unused.
+VM: 485T vsize, 57G framework vsize, 1267811(64) swapins, 2017504(0) swapouts.
+Networks: packets: 13233833/11G in, 9172134/4196M out.
+Disks: 39469780/903G read, 8095333/249G written.
+
+PID    COMMAND  %CPU TIME     #TH  MEM  
+97946  NotchApp 12.8 00:05.65 22/1 329M-
+Processes: 1016 total, 3 running, 1013 sleeping, 6705 threads 
+2026/10/21 13:20:06
+Load Avg: 19.34, 13.86, 14.31 
+CPU usage: 17.7% user, 11.67% sys, 71.24% idle 
+SharedLibs: 390M resident, 88M data, 75M linkedit.
+MemRegions: 0 total, 0B resident, 121M private, 1630M shared.
+PhysMem: 15G used (4208M wired, 4717M compressor), 86M unused.
+VM: 484T vsize, 57G framework vsize, 1267831(20) swapins, 2017504(0) swapouts.
+Networks: packets: 13234494/11G in, 9172310/4196M out.
+Disks: 39470553/903G read, 8095352/249G written.
+
+PID    COMMAND  %CPU TIME     #TH  MEM  
+97946  NotchApp 11.3 00:05.89 22   329M 
+Processes: 1016 total, 5 running, 1011 sleeping, 6681 threads 
+2026/10/21 13:20:08
+Load Avg: 19.34, 13.86, 14.31 
+CPU usage: 16.43% user, 9.87% sys, 73.68% idle 
+SharedLibs: 390M resident, 88M data, 75M linkedit.
+MemRegions: 0 total, 0B resident, 121M private, 1630M shared.
+PhysMem: 15G used (4113M wired, 4747M compressor), 81M unused.
+VM: 484T vsize, 57G framework vsize, 1267839(8) swapins, 2017504(0) swapouts.
+Networks: packets: 13235042/11G in, 9172397/4196M out.
+Disks: 39470740/903G read, 8095354/249G written.
+
+PID    COMMAND  %CPU TIME     #TH  MEM  
+97946  NotchApp 11.4 00:06.13 22   329M-
+Processes: 1016 total, 7 running, 1009 sleeping, 6660 threads 
+2026/10/21 13:20:10
+Load Avg: 18.03, 13.68, 14.25 
+CPU usage: 20.84% user, 14.71% sys, 64.44% idle 
+SharedLibs: 390M resident, 88M data, 75M linkedit.
+MemRegions: 0 total, 0B resident, 121M private, 1630M shared.
+PhysMem: 15G used (5004M wired, 4788M compressor), 83M unused.
+VM: 484T vsize, 57G framework vsize, 1267907(68) swapins, 2017504(0) swapouts.
+Networks: packets: 13235738/11G in, 9172547/4196M out.
+Disks: 39471394/903G read, 8096039/249G written.
+
+PID    COMMAND  %CPU TIME     #TH  MEM  
+97946  NotchApp 13.0 00:06.41 22   329M+
+Processes: 1016 total, 4 running, 1012 sleeping, 6656 threads 
+2026/10/21 13:20:12
+Load Avg: 18.03, 13.68, 14.25 
+CPU usage: 25.16% user, 14.68% sys, 60.14% idle 
+SharedLibs: 390M resident, 88M data, 75M linkedit.
+MemRegions: 0 total, 0B resident, 121M private, 1630M shared.
+PhysMem: 15G used (4207M wired, 4608M compressor), 80M unused.
+VM: 484T vsize, 57G framework vsize, 1267947(40) swapins, 2017504(0) swapouts.
+Networks: packets: 13236467/11G in, 9172778/4196M out.
+Disks: 39471602/903G read, 8096045/249G written.
+
+PID    COMMAND  %CPU TIME     #TH  MEM  
+97946  NotchApp 12.6 00:06.67 22/1 329M 
+Processes: 1015 total, 2 running, 1 stuck, 1012 sleeping, 6633 threads 
+2026/10/21 13:20:14
+Load Avg: 16.82, 13.50, 14.18 
+CPU usage: 20.4% user, 10.40% sys, 69.54% idle 
+SharedLibs: 390M resident, 88M data, 75M linkedit.
+MemRegions: 0 total, 0B resident, 121M private, 1630M shared.
+PhysMem: 15G used (4141M wired, 4546M compressor), 95M unused.
+VM: 484T vsize, 57G framework vsize, 1267955(8) swapins, 2017504(0) swapouts.
+Networks: packets: 13237213/11G in, 9173287/4197M out.
+Disks: 39471992/903G read, 8096050/249G written.
+
+PID    COMMAND  %CPU TIME     #TH  MEM  
+97946  NotchApp 13.2 00:06.95 22   329M+
+Processes: 1015 total, 4 running, 1011 sleeping, 6629 threads 
+2026/10/21 13:20:16
+Load Avg: 16.82, 13.50, 14.18 
+CPU usage: 23.3% user, 15.71% sys, 61.25% idle 
+SharedLibs: 390M resident, 88M data, 75M linkedit.
+MemRegions: 0 total, 0B resident, 121M private, 1630M shared.
+PhysMem: 15G used (4194M wired, 4841M compressor), 97M unused.
+VM: 484T vsize, 57G framework vsize, 1268130(175) swapins, 2017504(0) swapouts.
+Networks: packets: 13238028/11G in, 9173828/4197M out.
+Disks: 39472508/903G read, 8096069/249G written.
+
+PID    COMMAND  %CPU TIME     #TH  MEM  
+97946  NotchApp 12.7 00:07.22 22   332M+
+Processes: 1015 total, 5 running, 1 stuck, 1009 sleeping, 6652 threads 
+2026/10/21 13:20:18
+Load Avg: 16.82, 13.50, 14.18 
+CPU usage: 17.13% user, 13.49% sys, 69.37% idle 
+SharedLibs: 390M resident, 88M data, 75M linkedit.
+MemRegions: 0 total, 0B resident, 121M private, 1630M shared.
+PhysMem: 15G used (4181M wired, 4818M compressor), 101M unused.
+VM: 484T vsize, 57G framework vsize, 1268202(72) swapins, 2017504(0) swapouts.
+Networks: packets: 13238737/11G in, 9174012/4197M out.
+Disks: 39474225/903G read, 8096410/249G written.
+
+PID    COMMAND  %CPU TIME     #TH  MEM  
+97946  NotchApp 14.1 00:07.52 22   329M-
+Processes: 1018 total, 5 running, 1013 sleeping, 6697 threads 
+2026/10/21 13:20:20
+Load Avg: 15.80, 13.34, 14.12 
+CPU usage: 18.97% user, 18.6% sys, 62.95% idle 
+SharedLibs: 390M resident, 88M data, 75M linkedit.
+MemRegions: 277 total, 35M resident, 121M private, 1630M shared.
+PhysMem: 15G used (4228M wired, 4652M compressor), 110M unused.
+VM: 485T vsize, 57G framework vsize, 1268322(120) swapins, 2017504(0) swapouts.
+Networks: packets: 13239618/11G in, 9174706/4198M out.
+Disks: 39481339/903G read, 8096643/249G written.
+
+PID    COMMAND  %CPU TIME     #TH  MEM  
+97946  NotchApp 12.2 00:07.77 22   329M+
+Processes: 1017 total, 11 running, 1 stuck, 1005 sleeping, 6759 threads 
+2026/10/21 13:20:23
+Load Avg: 15.80, 13.34, 14.12 
+CPU usage: 29.62% user, 23.16% sys, 47.20% idle 
+SharedLibs: 367M resident, 84M data, 53M linkedit.
+MemRegions: 0 total, 0B resident, 0B private, 1630M shared.
+PhysMem: 15G used (4150M wired, 5235M compressor), 153M unused.
+VM: 485T vsize, 57G framework vsize, 1269610(1288) swapins, 2017504(0) swapouts.
+Networks: packets: 13241070/11G in, 9175610/4199M out.
+Disks: 39487909/903G read, 8097316/249G written.
+
+PID    COMMAND  %CPU TIME     #TH  MEM  
+97946  NotchApp 14.1 00:08.07 22   329M+
+Processes: 1025 total, 6 running, 1019 sleeping, 6997 threads 
+2026/10/21 13:20:25
+Load Avg: 15.41, 13.30, 14.10 
+CPU usage: 42.23% user, 30.53% sys, 27.22% idle 
+SharedLibs: 367M resident, 84M data, 53M linkedit.
+MemRegions: 3228 total, 27M resident, 0B private, 1635M shared.
+PhysMem: 15G used (4216M wired, 5336M compressor), 244M unused.
+VM: 488T vsize, 57G framework vsize, 1277460(7850) swapins, 2017504(0) swapouts.
+Networks: packets: 13241796/11G in, 9175867/4199M out.
+Disks: 39504474/904G read, 8097857/249G written.
+
+PID    COMMAND  %CPU TIME     #TH  MEM  
+97946  NotchApp 14.3 00:08.39 23   329M 
+Processes: 1029 total, 10 running, 1019 sleeping, 7053 threads 
+2026/10/21 13:20:27
+Load Avg: 15.41, 13.30, 14.10 
+CPU usage: 46.40% user, 32.12% sys, 21.46% idle 
+SharedLibs: 367M resident, 84M data, 53M linkedit.
+MemRegions: 2487 total, 200M resident, 0B private, 1640M shared.
+PhysMem: 15G used (4121M wired, 5148M compressor), 251M unused.
+VM: 490T vsize, 57G framework vsize, 1279257(1797) swapins, 2017504(0) swapouts.
+Networks: packets: 13242584/11G in, 9176173/4199M out.
+Disks: 39508464/904G read, 8098302/249G written.
+
+PID    COMMAND  %CPU TIME     #TH  MEM  
+97946  NotchApp 13.1 00:08.67 23   329M+
+Processes: 1029 total, 4 running, 1025 sleeping, 6999 threads 
+2026/10/21 13:20:29
+Load Avg: 14.74, 13.20, 14.06 
+CPU usage: 28.97% user, 27.76% sys, 43.26% idle 
+SharedLibs: 367M resident, 84M data, 53M linkedit.
+MemRegions: 0 total, 0B resident, 0B private, 1640M shared.
+PhysMem: 15G used (4861M wired, 5320M compressor), 157M unused.
+VM: 490T vsize, 57G framework vsize, 1280164(907) swapins, 2017504(0) swapouts.
+Networks: packets: 13243366/11G in, 9176572/4199M out.
+Disks: 39515636/904G read, 8098357/249G written.
+
+PID    COMMAND  %CPU TIME     #TH  MEM  
+97946  NotchApp 14.9 00:08.99 23   329M-
+Processes: 1028 total, 4 running, 1024 sleeping, 6937 threads 
+2026/10/21 13:20:31
+Load Avg: 14.74, 13.20, 14.06 
+CPU usage: 18.58% user, 13.78% sys, 67.63% idle 
+SharedLibs: 367M resident, 84M data, 53M linkedit.
+MemRegions: 0 total, 0B resident, 0B private, 1640M shared.
+PhysMem: 15G used (4097M wired, 5311M compressor), 159M unused.
+VM: 490T vsize, 57G framework vsize, 1280220(56) swapins, 2017504(0) swapouts.
+Networks: packets: 13244070/11G in, 9176750/4199M out.
+Disks: 39518707/904G read, 8098936/249G written.
+
+PID    COMMAND  %CPU TIME     #TH  MEM  
+97946  NotchApp 12.3 00:09.25 23   301M-
+Processes: 1028 total, 5 running, 1023 sleeping, 6854 threads 
+2026/10/21 13:20:33
+Load Avg: 14.74, 13.20, 14.06 
+CPU usage: 24.95% user, 21.11% sys, 53.93% idle 
+SharedLibs: 367M resident, 84M data, 53M linkedit.
+MemRegions: 370 total, 9936K resident, 0B private, 1641M shared.
+PhysMem: 15G used (4182M wired, 5048M compressor), 205M unused.
+VM: 490T vsize, 57G framework vsize, 1282226(2006) swapins, 2017504(0) swapouts.
+Networks: packets: 13244462/11G in, 9176884/4199M out.
+Disks: 39526095/904G read, 8099399/249G written.
+
+PID    COMMAND  %CPU TIME     #TH  MEM  
+97946  NotchApp 13.9 00:09.54 24   301M+

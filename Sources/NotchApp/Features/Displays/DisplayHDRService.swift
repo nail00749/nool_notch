@@ -193,12 +193,11 @@ private final class DynamicDisplayHDRRuntime: DisplayHDRRuntime {
     typealias NativeHDR = @convention(c) (UInt32) -> UInt8
 
     // Retain loaded images for process lifetime, including any stuck driver.
-    private lazy var monitorPanel = dlopen("/System/Library/PrivateFrameworks/MonitorPanel.framework/MonitorPanel", RTLD_LAZY | RTLD_LOCAL)
     private lazy var skyLight = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY | RTLD_LOCAL)
 
     func state(_ target: DisplayHardwareTarget) throws -> DisplayHDRNativeState? {
-        try autoreleasepool {
-            guard let display = try display(target),
+        try MonitorPanelAccess.shared.withManager { manager in
+            guard let manager, let display = try display(target, manager: manager),
                   let supported = method(display, "hasHDRModes", result: "B"),
                   let preferred = method(display, "preferHDRModes", result: "B"),
                   method(display, "setPreferHDRModes:", result: "v", parameters: ["B"]) != nil,
@@ -212,8 +211,8 @@ private final class DynamicDisplayHDRRuntime: DisplayHDRRuntime {
     }
 
     func setHDR(_ enabled: Bool, for target: DisplayHardwareTarget) throws {
-        try autoreleasepool {
-            guard let display = try display(target),
+        try MonitorPanelAccess.shared.withManager { manager in
+            guard let manager, let display = try display(target, manager: manager),
                   let setter = method(display, "setPreferHDRModes:", result: "v", parameters: ["B"]) else {
                 throw DisplayHDRError.unavailable
             }
@@ -222,9 +221,7 @@ private final class DynamicDisplayHDRRuntime: DisplayHDRRuntime {
         }
     }
 
-    private func display(_ target: DisplayHardwareTarget) throws -> NSObject? {
-        guard monitorPanel != nil, let cls = NSClassFromString("MPDisplayMgr") as? NSObject.Type else { return nil }
-        let manager = cls.init()
+    private func display(_ target: DisplayHardwareTarget, manager: NSObject) throws -> NSObject? {
         guard let getter = method(manager, "displays", result: "@"),
               let objects = object(manager, getter, "displays") as? [NSObject], objects.count <= 128 else { return nil }
         let candidates = objects.filter { display in

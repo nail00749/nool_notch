@@ -1,0 +1,16 @@
+{
+  "before-gate": {
+    "mean": 17.903333333333332,
+    "median": 15.6,
+    "min": 10.7,
+    "max": 52.8
+  },
+  "after-gate": {
+    "mean": 15.156666666666666,
+    "median": 14.2,
+    "min": 10.8,
+    "max": 32.2
+  },
+  "meanReductionPercent": 15.341649599702102,
+  "medianReductionPercent": 8.974358974358976
+}

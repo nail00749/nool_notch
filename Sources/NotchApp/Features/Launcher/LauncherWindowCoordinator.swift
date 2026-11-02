@@ -11,6 +11,8 @@ final class LauncherPanel: TextEditingPanel {}
 final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
     let settings: LauncherSettings
     let model: LauncherModel
+    lazy var windowShortcuts = WindowShortcutController(manager: model.windowLayouts,
+        modules: model.modules, launcherSettings: settings)
     var onOpenSettings: (() -> Void)?
     var onProcessFiles: (([URL], FileActionKind?) -> Void)?
     var onRecognizeText: (([URL]) -> Void)?
@@ -95,6 +97,7 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
         }
         settings.onChange = { [weak self] in self?.applySettings() }
         applySettings()
+        windowShortcuts.onAccessRequired = { [weak self] in self?.showWindowLayouts() }
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -132,6 +135,7 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
     }
 
     func stop() {
+        windowShortcuts.stop()
         windowCommandGeneration += 1
         windowCommandTask?.cancel()
         workspaceLaunchGeneration += 1
@@ -155,6 +159,13 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         screenObserver = nil
     }
+
+    func waitForWindowOperations() async {
+        await windowShortcuts.waitForOperation()
+        await windowCommandTask?.value
+    }
+
+    func waitForNetworkOperations() async { await speedTestPanel.waitForCompletion() }
 
     @discardableResult
     func prepareTextRecognitionDraft(_ text: String, prompt: String = "") -> Bool {
@@ -194,6 +205,7 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func applySettings() {
+        windowShortcuts.refresh()
         if settings.isRecordingShortcut {
             hotKey.stop()
         } else {
@@ -269,7 +281,7 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
         guard model.modules.isEnabled(.windowManagement) else { return }
         let targetPID = previousApplication?.processIdentifier
         hide(restoreFocus: false)
-        windowLayoutsPanel.show(manager: model.windowLayouts, targetPID: targetPID)
+        windowLayoutsPanel.show(manager: model.windowLayouts, targetPID: targetPID, shortcuts: windowShortcuts)
     }
 
     private func showWorkspaces() {
@@ -278,7 +290,7 @@ final class LauncherWindowCoordinator: NSObject, NSWindowDelegate {
         workspacesPanel.show(store: model.workspaces, layouts: model.windowLayouts)
     }
 
-    private func showSpeedTest(section: SpeedTestSection = .test) {
+    func showSpeedTest(section: SpeedTestSection = .test) {
         guard model.modules.isEnabled(.networkTools) else { return }
         hide(restoreFocus: false)
         speedTestPanel.show(section: section)

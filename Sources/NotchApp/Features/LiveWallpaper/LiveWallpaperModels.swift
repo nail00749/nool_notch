@@ -17,7 +17,7 @@ enum LiveWallpaperScaleMode: String, Codable, CaseIterable, Identifiable, Sendab
 
 /// Built-in interactive scenes; they need no files and are keyed as `nool-scene-<name>`.
 enum LiveWallpaperScenePreset: String, Codable, CaseIterable, Identifiable, Sendable {
-    case starfield, fireflies, plexus, snow, embers
+    case starfield, fireflies, plexus, reactor, snow, embers, cogitator
 
     static let keyPrefix = "nool-scene-"
 
@@ -34,8 +34,10 @@ enum LiveWallpaperScenePreset: String, Codable, CaseIterable, Identifiable, Send
         case .starfield: "Звёздное небо"
         case .fireflies: "Светлячки"
         case .plexus: "Нейросеть"
+        case .reactor: "Реактор · JARVIS"
         case .snow: "Снегопад"
         case .embers: "Искры"
+        case .cogitator: "Когитатор"
         }
     }
 
@@ -44,8 +46,10 @@ enum LiveWallpaperScenePreset: String, Codable, CaseIterable, Identifiable, Send
         case .starfield: "sparkles"
         case .fireflies: "light.min"
         case .plexus: "point.3.connected.trianglepath.dotted"
+        case .reactor: "atom"
         case .snow: "snowflake"
         case .embers: "flame"
+        case .cogitator: "cpu"
         }
     }
 
@@ -55,8 +59,10 @@ enum LiveWallpaperScenePreset: String, Codable, CaseIterable, Identifiable, Send
         case .starfield: (SIMD3(0.02, 0.03, 0.09), SIMD3(0.07, 0.05, 0.18))
         case .fireflies: (SIMD3(0.01, 0.06, 0.05), SIMD3(0.04, 0.13, 0.08))
         case .plexus: (SIMD3(0.03, 0.04, 0.10), SIMD3(0.01, 0.13, 0.20))
+        case .reactor: (SIMD3(0.005, 0.015, 0.025), SIMD3(0.01, 0.05, 0.08))
         case .snow: (SIMD3(0.10, 0.14, 0.22), SIMD3(0.26, 0.31, 0.40))
         case .embers: (SIMD3(0.06, 0.02, 0.02), SIMD3(0.20, 0.06, 0.02))
+        case .cogitator: (SIMD3(0.03, 0.03, 0.025), SIMD3(0.1, 0.34, 0.14))
         }
     }
 
@@ -66,8 +72,11 @@ enum LiveWallpaperScenePreset: String, Codable, CaseIterable, Identifiable, Send
         case .starfield: .stars
         case .fireflies: .fireflies
         case .plexus: .plexus
+        case .reactor: .none
         case .snow: .snow
         case .embers: .embers
+        // Drawn by its own scene; embers stand in when the style is borrowed for pictures.
+        case .cogitator: .embers
         }
     }
 }
@@ -199,6 +208,7 @@ enum LiveWallpaperContent: Equatable, Sendable {
     case video(URL)
     case image(URL)
     case scene(LiveWallpaperScenePreset)
+    case wallpaperEngine(URL)
 
     var isScene: Bool { if case .video = self { false } else { true } }
 }
@@ -210,7 +220,11 @@ struct LiveWallpaperItem: Identifiable, Equatable, Sendable {
 
     init(fileName: String, url: URL) {
         self.fileName = fileName
-        content = LiveWallpaperLibrary.isImageFileName(fileName) ? .image(url) : .video(url)
+        if url.pathExtension.lowercased() == "noolwe" {
+            content = .wallpaperEngine(url)
+        } else {
+            content = LiveWallpaperLibrary.isImageFileName(fileName) ? .image(url) : .video(url)
+        }
     }
 
     init(preset: LiveWallpaperScenePreset) {
@@ -228,7 +242,7 @@ struct LiveWallpaperItem: Identifiable, Equatable, Sendable {
 
     var url: URL? {
         switch content {
-        case .video(let url), .image(let url): url
+        case .video(let url), .image(let url), .wallpaperEngine(let url): url
         case .scene: nil
         }
     }
@@ -242,6 +256,7 @@ struct LiveWallpaperItem: Identifiable, Equatable, Sendable {
         case .video: "Видео"
         case .image: "Картинка"
         case .scene: "Сцена"
+        case .wallpaperEngine: "Wallpaper Engine · экспериментально"
         }
     }
 }

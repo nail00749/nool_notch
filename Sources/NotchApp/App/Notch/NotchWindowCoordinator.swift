@@ -53,6 +53,7 @@ final class NotchWindowCoordinator: NSObject {
     private var systemMonitorWindow: SystemMonitorWindowCoordinator?
     private var dock: DockWindowCoordinator?
     private let fileActions = FileActionsWindowCoordinator()
+    private let finderConversion = FinderConversionCoordinator()
     private let textRecognition = TextRecognitionWindowCoordinator()
     private let screenTextCapture = ScreenTextCaptureCoordinator()
     private var lastLayoutWasExpanded = false
@@ -182,6 +183,7 @@ final class NotchWindowCoordinator: NSObject {
         dockFeature.onOpenSettings = { [weak self] in self?.showSettingsWindow(section: .dock) }
         dockFeature.onOpenLauncher = { [weak launcher] in launcher?.show() }
         dockFeature.onOpenDisplays = { [weak self] in self?.model.openPanel(.displays) }
+        dockFeature.onOpenSpeedTest = { [weak launcher] in launcher?.showSpeedTest() }
         dock = DockWindowCoordinator(feature: dockFeature, model: model)
 
         let contentView = NotchRootView(
@@ -278,7 +280,11 @@ final class NotchWindowCoordinator: NSObject {
             self?.screenTextCapture.cancel()
             self?.textRecognition.stop()
         })
-        moduleRuntime.register(.fileShelf, start: {}, stop: { [weak self] in self?.fileActions.stop() })
+        moduleRuntime.register(.fileShelf, start: { [weak self] in self?.finderConversion.start() },
+                               stop: { [weak self] in
+            self?.fileActions.stop()
+            self?.finderConversion.stop()
+        })
     }
 
     func show() {
@@ -363,6 +369,7 @@ final class NotchWindowCoordinator: NSObject {
         lidEffect.stop()
         liveWallpaper.stop()
         fileActions.stop()
+        finderConversion.stop()
         screenTextCapture.cancel()
         launcher.onCaptureScreenText = nil
         textRecognition.stop()
@@ -372,7 +379,10 @@ final class NotchWindowCoordinator: NSObject {
         applicationBeforeSearch = nil
     }
 
-    func waitForFileActions() async { await fileActions.waitForCompletion() }
+    func waitForFileActions() async {
+        await fileActions.waitForCompletion()
+        await finderConversion.waitForCompletion()
+    }
     func waitForDisplayOperations() async { await model.displays.waitForOperations() }
     func waitForDockOperations() async { await dock?.waitForRestoration() }
     func prepareDisplayTermination() async -> Bool {

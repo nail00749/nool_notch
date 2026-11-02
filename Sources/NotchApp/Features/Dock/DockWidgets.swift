@@ -79,7 +79,7 @@ struct DockCalendarWidget: View {
                     }
                 }.padding(.horizontal, span > 1 ? 8 : 0).dockWidgetSurface()
             }.dockTapTarget("Календарь") { showsDetails.toggle() }.help("Календарь")
-                .popover(isPresented: $showsDetails, arrowEdge: .top) {
+                .dockPopover(isPresented: $showsDetails, arrowEdge: .top) {
                     DockMonthCalendar(model: model, interactionChanged: interactionChanged)
                 }
         }
@@ -104,7 +104,7 @@ struct DockTimerWidget: View {
             }
         }.padding(.horizontal, span > 1 ? 8 : 0).dockWidgetSurface()
             .dockTapTarget(source.snapshot?.countdownText ?? "Таймер") { showsDetails.toggle() }.help("Таймер")
-            .popover(isPresented: $showsDetails, arrowEdge: .top) {
+            .dockPopover(isPresented: $showsDetails, arrowEdge: .top) {
                 VStack(spacing: 16) {
                     Text(source.snapshot?.countdownText ?? "Таймер").font(.system(size: 30, weight: .medium)).monospacedDigit()
                     if let snapshot = source.snapshot {
@@ -145,7 +145,7 @@ struct DockNoteWidget: View {
             }
         }.padding(.horizontal, span > 1 ? 8 : 0).dockWidgetSurface()
             .dockTapTarget("Заметка") { showsEditor = true }.help("Заметка")
-            .popover(isPresented: $showsEditor, arrowEdge: .top) {
+            .dockPopover(isPresented: $showsEditor, arrowEdge: .top) {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Text("Заметка").font(.headline)

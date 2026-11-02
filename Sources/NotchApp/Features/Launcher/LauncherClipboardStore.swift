@@ -288,14 +288,15 @@ final class LauncherClipboardStore: ObservableObject {
 
     @discardableResult
     private func trimItems(now: Date) -> Bool {
-        let originalItems = items
-        items = Self.trimmedItems(
-            originalItems,
+        let trimmed = Self.trimmedItems(
+            items,
             itemLimit: itemLimit,
             retentionDays: retentionDays,
             now: now
         )
-        return originalItems != items
+        guard trimmed != items else { return false }
+        items = trimmed
+        return true
     }
 
     private func normalizedImageData() -> Data? {

@@ -243,13 +243,12 @@ enum TextRecognitionService {
         var foundText = false
         for index in 1...document.numberOfPages {
             try cancellation.check()
-            guard let page = document.page(at: index),
-                  let image = render(page: page) else {
+            guard let page = document.page(at: index) else {
                 throw TextRecognitionError.invalidPDF(name)
             }
-            let lines = try recognize(image, cancellation: cancellation)
-            foundText = foundText || !lines.isEmpty
-            let content = lines.isEmpty ? "[Текст не найден]" : lines.joined(separator: "\n")
+            let recognized = try recognizePDFPage(page, name: name, cancellation: cancellation)
+            foundText = foundText || !recognized.isEmpty
+            let content = recognized.isEmpty ? "[Текст не найден]" : recognized
             let section = document.numberOfPages == 1
                 ? content : "[Страница \(index)]\n\(content)"
             characterCount += section.count + (pages.isEmpty ? 0 : 2)
@@ -258,6 +257,22 @@ enum TextRecognitionService {
         }
         guard foundText else { throw TextRecognitionError.noText(name) }
         return pages.joined(separator: "\n\n")
+    }
+
+    /// Reusable one-page OCR. The caller owns document/page limits and page numbering.
+    /// Page pixels and Vision observations are released before processing another page.
+    static func recognizePDFPage(
+        _ page: CGPDFPage, name: String = "PDF", cancellation: TextRecognitionCancellation
+    ) throws -> String {
+        try cancellation.check()
+        return try autoreleasepool {
+            guard let image = render(page: page) else {
+                throw TextRecognitionError.invalidPDF(name)
+            }
+            let lines = try recognize(image, cancellation: cancellation)
+            try cancellation.check()
+            return lines.joined(separator: "\n")
+        }
     }
 
     private static func render(page: CGPDFPage) -> CGImage? {

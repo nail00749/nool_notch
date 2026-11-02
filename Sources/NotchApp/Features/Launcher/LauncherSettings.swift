@@ -2,6 +2,14 @@ import AppKit
 import Carbon
 import Combine
 
+enum LauncherApplicationLayout: String, CaseIterable, Identifiable {
+    case list, grid
+
+    var id: String { rawValue }
+    var title: String { self == .list ? "Список" : "Плитка" }
+    var symbol: String { self == .list ? "list.bullet" : "square.grid.2x2" }
+}
+
 struct LauncherShortcut: Codable, Equatable, Sendable {
     var keyCode: UInt32
     var modifiers: UInt32
@@ -38,6 +46,10 @@ struct LauncherShortcut: Codable, Equatable, Sendable {
         case kVK_Return: label = "Return"
         case kVK_Tab: label = "Tab"
         case kVK_Delete: label = "Delete"
+        case kVK_LeftArrow: label = "←"
+        case kVK_RightArrow: label = "→"
+        case kVK_UpArrow: label = "↑"
+        case kVK_DownArrow: label = "↓"
         default: label = event.charactersIgnoringModifiers?.uppercased() ?? ""
         }
         let shortcut = LauncherShortcut(keyCode: UInt32(event.keyCode), modifiers: modifiers, keyLabel: label)
@@ -47,6 +59,13 @@ struct LauncherShortcut: Codable, Equatable, Sendable {
 
 @MainActor
 final class LauncherSettings: ObservableObject {
+    @Published var applicationLayout: LauncherApplicationLayout { didSet {
+        defaults.set(applicationLayout.rawValue, forKey: Self.prefix + "applicationLayout")
+    } }
+    @Published var defaultCurrency: LauncherCurrency { didSet {
+        defaults.set(defaultCurrency.rawValue, forKey: Self.prefix + "defaultCurrency")
+        onChange?()
+    } }
     @Published var shortcut: LauncherShortcut { didSet { save() } }
     @Published var clipboardEnabled: Bool { didSet { save() } }
     @Published var clipboardLimit: Int { didSet { save() } }
@@ -55,11 +74,14 @@ final class LauncherSettings: ObservableObject {
     @Published var hotKeyError: String?
     @Published var isRecordingShortcut = false { didSet { onChange?() } }
     var onChange: (() -> Void)?
+    private var shortcutRecordingOwner: UUID?
     private let defaults: UserDefaults
     private static let prefix = "nool.launcher."
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        applicationLayout = LauncherApplicationLayout(rawValue: defaults.string(forKey: Self.prefix + "applicationLayout") ?? "") ?? .list
+        defaultCurrency = LauncherCurrency(rawValue: defaults.string(forKey: Self.prefix + "defaultCurrency") ?? "") ?? .RUB
         if let data = defaults.data(forKey: Self.prefix + "shortcut"),
            let saved = try? JSONDecoder().decode(LauncherShortcut.self, from: data), saved.isValid {
             shortcut = saved
@@ -80,6 +102,19 @@ final class LauncherSettings: ObservableObject {
 
     var folders: [URL] {
         Array(Set(folderPaths.filter { $0.hasPrefix("/") })).sorted().map { URL(fileURLWithPath: $0, isDirectory: true) }
+    }
+
+    func beginShortcutRecording(owner: UUID) -> Bool {
+        guard !isRecordingShortcut else { return false }
+        shortcutRecordingOwner = owner
+        isRecordingShortcut = true
+        return true
+    }
+
+    func endShortcutRecording(owner: UUID) {
+        guard shortcutRecordingOwner == owner else { return }
+        shortcutRecordingOwner = nil
+        isRecordingShortcut = false
     }
 
     func addFolders(_ urls: [URL]) {

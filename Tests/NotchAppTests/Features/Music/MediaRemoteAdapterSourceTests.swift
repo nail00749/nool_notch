@@ -154,25 +154,72 @@ final class MediaRemoteAdapterSourceTests: XCTestCase {
             sleep: { await delays.record($0) }
         )
         source.start()
-        processes[0].emit(#"{"type":"ready"}"# + "\n")
-        try await waitUntil { source.state == .active }
-
-        // A crash after ready restarts; ready again resets the failure count.
-        processes[0].exit()
-        try await waitUntil { processes.count == 2 }
-        processes[1].emit(#"{"type":"ready"}"# + "\n")
-        try await waitUntil { source.state == .active }
-
-        for index in 1...MediaRemoteAdapterSource.maximumFailuresBeforeReady {
+        // A helper can say ready and emit data immediately before crashing.
+        // Neither handshake nor a single valid frame makes that a stable run.
+        for index in 0..<MediaRemoteAdapterSource.maximumConsecutiveFailures {
+            processes[index].emit(#"{"type":"ready"}"# + "\n" + #"{"type":"idle"}"# + "\n")
+            try await waitUntil { source.state == .active }
             processes[index].exit()
             try await waitUntil { processes.count == index + 2 }
         }
+        processes.last?.emit(#"{"type":"ready"}"# + "\n")
+        try await waitUntil { source.state == .active }
         processes.last?.exit()
         try await waitUntil { source.state == .unavailable }
 
         let recorded = await delays.values
-        XCTAssertEqual(recorded, [1, 1, 2, 4, 8])
-        XCTAssertEqual(processes.count, MediaRemoteAdapterSource.maximumFailuresBeforeReady + 2)
+        XCTAssertEqual(recorded, [1, 2, 4, 8])
+        XCTAssertEqual(processes.count, MediaRemoteAdapterSource.maximumConsecutiveFailures + 1)
+    }
+
+    @MainActor
+    func testOnlyStableRunWithValidStateResetsBackoff() async throws {
+        var processes: [FakeAdapterProcess] = []
+        let delays = DelayRecorder()
+        var clock = Date(timeIntervalSince1970: 1_000)
+        let source = MediaRemoteAdapterSource(makeProcess: {
+            let process = FakeAdapterProcess()
+            processes.append(process)
+            return process
+        }, sleep: { await delays.record($0) }, now: { clock })
+        defer { source.stop() }
+        source.start()
+        processes[0].exit()
+        try await waitUntil { processes.count == 2 }
+        processes[1].emit("{\"type\":\"ready\"}\n{\"type\":\"idle\"}\n")
+        try await waitUntil { source.state == .active }
+        clock.addTimeInterval(MediaRemoteAdapterSource.stableRunDuration)
+        processes[1].exit()
+        try await waitUntil { processes.count == 3 }
+        // Waiting a long time without any valid state must NOT reset backoff.
+        processes[2].emit("{\"type\":\"ready\"}\n")
+        try await waitUntil { source.state == .active }
+        clock.addTimeInterval(MediaRemoteAdapterSource.stableRunDuration)
+        processes[2].exit()
+        try await waitUntil { processes.count == 4 }
+        let recorded = await delays.values
+        XCTAssertEqual(recorded, [1, 1, 2])
+    }
+
+    @MainActor
+    func testCommandsReportFailedWriteAndLateOutputAfterExitIsIgnored() async throws {
+        let process = FakeAdapterProcess()
+        let source = MediaRemoteAdapterSource(makeProcess: { process }, sleep: { _ in
+            try? await Task.sleep(for: .seconds(30))
+        })
+        defer { source.stop() }
+        source.start()
+        process.emit("{\"type\":\"ready\"}\n")
+        try await waitUntil { source.state == .active }
+        process.acceptsWrites = false
+        XCTAssertFalse(source.send(.nextTrack))
+        process.exit()
+        try await waitUntil { source.state == .starting }
+        process.emit("{\"type\":\"ready\"}\n{\"type\":\"nowPlaying\",\"title\":\"Stale\"}\n")
+        process.exit()
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(source.state, .starting)
+        XCTAssertNil(source.snapshot)
     }
 
     @MainActor
@@ -240,6 +287,7 @@ private actor DelayRecorder {
 
 private final class FakeAdapterProcess: MediaRemoteAdapterProcess, @unchecked Sendable {
     var launchError: Error?
+    var acceptsWrites = true
     private(set) var writtenLines: [String] = []
     private(set) var didTerminate = false
     private var onOutput: (@Sendable (Data) -> Void)?
@@ -254,8 +302,9 @@ private final class FakeAdapterProcess: MediaRemoteAdapterProcess, @unchecked Se
         self.onExit = onExit
     }
 
-    func write(line: String) {
+    func write(line: String) -> Bool {
         writtenLines.append(line)
+        return acceptsWrites
     }
 
     func terminate() {

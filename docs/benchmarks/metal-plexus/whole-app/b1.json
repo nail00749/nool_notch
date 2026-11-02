@@ -1,0 +1,30 @@
+{
+  "renderer": "metal",
+  "label": "b1",
+  "pid": 33619,
+  "started": 1792572566.1729631,
+  "duration": 32.592132806777954,
+  "cpu": [
+    13.1,
+    15.3,
+    16.5,
+    14.3,
+    14.5,
+    16.6,
+    14.5,
+    17.1,
+    48.3,
+    17.5,
+    14.6,
+    15.6,
+    17.8,
+    15.4,
+    18.5
+  ],
+  "mean": 17.973333333333333,
+  "median": 15.6,
+  "minimum": 13.1,
+  "maximum": 48.3,
+  "preferencesBefore": "a367643c0a1bfb4a2786b678be0aafb6cc67cc640c17f7d2de6f36915d1f1d77",
+  "preferencesAfter": "a367643c0a1bfb4a2786b678be0aafb6cc67cc640c17f7d2de6f36915d1f1d77"
+}

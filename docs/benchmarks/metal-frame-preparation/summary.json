@@ -1,0 +1,14 @@
+{
+  "before-frame-cost": {
+    "mean": 17.96,
+    "median": 15.95,
+    "min": 11.0,
+    "max": 32.5
+  },
+  "after-frame-cost": {
+    "mean": 16.356666666666666,
+    "median": 16.15,
+    "min": 13.3,
+    "max": 19.7
+  }
+}

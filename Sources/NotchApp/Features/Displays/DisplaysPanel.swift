@@ -166,9 +166,8 @@ private struct DisplayControls: View {
     }
 
     private var frequencyVariants: [DisplayModeOption] {
-        var seen = Set<Double>()
-        let variants = currentVariants.filter { $0.isHiDPI == display.currentMode?.isHiDPI }
-        return variants.filter { seen.insert($0.refreshRate).inserted }
+        guard let current = display.currentMode else { return [] }
+        return DisplayModeOption.frequencyVariants(display.modes, current: current)
     }
 
     var body: some View {

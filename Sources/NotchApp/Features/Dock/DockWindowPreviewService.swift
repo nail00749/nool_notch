@@ -300,8 +300,15 @@ enum DockFullscreenDetection {
     }
 
     static func owner(windows: [Window], display: CGRect, topInset: CGFloat) -> Int32? {
-        guard let owner = windows.first?.pid, windows.allSatisfy({ $0.pid == owner }) else { return nil }
         let tolerance: CGFloat = 1
+        // WindowServer can round a neighbouring display's window one point across
+        // the shared edge. That sliver is not another application's occupancy of
+        // this Space. Use the same tolerance as the edge-to-edge geometry check.
+        let windows = windows.filter {
+            let intersection = $0.frame.intersection(display)
+            return intersection.width > tolerance && intersection.height > tolerance
+        }
+        guard let owner = windows.first?.pid, windows.allSatisfy({ $0.pid == owner }) else { return nil }
         let fills = windows.contains { window in
             abs(window.frame.minX - display.minX) <= tolerance
                 && abs(window.frame.maxX - display.maxX) <= tolerance

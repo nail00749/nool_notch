@@ -30,10 +30,12 @@ struct LiveWallpaperLibrary: Sendable {
             .appendingPathComponent("Wallpapers", isDirectory: true)
     }
 
+    static let wallpaperEngineExtension = "noolwe"
+
     /// Only plain file names inside the library are accepted; stored names never address other folders.
     static func isAcceptableFileName(_ name: String) -> Bool {
-        !name.isEmpty && !name.hasPrefix(".") && !name.contains("/") && name != ".."
-            && supportedExtensions.contains((name as NSString).pathExtension.lowercased())
+        !name.isEmpty && !name.hasPrefix(".") && !name.contains("/") && !name.contains("\\") && name != ".."
+            && supportedExtensions.union([wallpaperEngineExtension]).contains((name as NSString).pathExtension.lowercased())
     }
 
     static func isImageFileName(_ name: String) -> Bool {
@@ -42,7 +44,7 @@ struct LiveWallpaperLibrary: Sendable {
 
     func url(for fileName: String) -> URL? {
         guard Self.isAcceptableFileName(fileName) else { return nil }
-        return directory.appendingPathComponent(fileName, isDirectory: false)
+        return directory.appendingPathComponent(fileName, isDirectory: (fileName as NSString).pathExtension.lowercased() == Self.wallpaperEngineExtension)
     }
 
     func ensureDirectory() throws {
@@ -57,8 +59,10 @@ struct LiveWallpaperLibrary: Sendable {
             .compactMap { name in
                 guard let url = url(for: name) else { return nil }
                 var isDirectory: ObjCBool = false
-                guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-                      !isDirectory.boolValue else { return nil }
+                guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return nil }
+                if (name as NSString).pathExtension.lowercased() == Self.wallpaperEngineExtension {
+                    guard isDirectory.boolValue, Self.isStoredWallpaperEngineProject(at: url) else { return nil }
+                } else if isDirectory.boolValue { return nil }
                 return LiveWallpaperItem(fileName: name, url: url)
             }
     }
@@ -81,6 +85,150 @@ struct LiveWallpaperLibrary: Sendable {
             throw error
         }
         return LiveWallpaperItem(fileName: fileName, url: destination)
+    }
+
+    /// Imports only the package and bounded metadata. All I/O must run off the main actor.
+    func importWallpaperEngine(from source: URL) throws -> LiveWallpaperItem {
+        try WallpaperEnginePackage.rejectSymlinks(at: source)
+        let values = try source.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
+        let isFolder = values.isDirectory == true
+        let isManifest = source.lastPathComponent.lowercased() == "project.json"
+        guard isFolder || isManifest || (values.isRegularFile == true && source.pathExtension.lowercased() == "pkg") else {
+            throw WallpaperEngineImportError.invalid("выберите scene.pkg, project.json или папку проекта.")
+        }
+        let root = isFolder ? source : source.deletingLastPathComponent()
+        let manifestURL = isManifest ? source : root.appendingPathComponent("project.json")
+        var manifest: [String: Any]?
+        if FileManager.default.fileExists(atPath: manifestURL.path) {
+            manifest = try WallpaperEnginePackage.jsonObject(
+                WallpaperEnginePackage.boundedData(at: manifestURL, maximum: WallpaperEnginePackage.maximumJSONSize), description: "project.json")
+            guard (manifest?["type"] as? String)?.lowercased() == "scene" else {
+                throw WallpaperEngineImportError.invalid("project.json должен описывать обои типа scene.")
+            }
+        } else if isManifest {
+            throw WallpaperEngineImportError.invalid("project.json не найден.")
+        }
+        let packageURL: URL
+        if !isFolder && !isManifest {
+            packageURL = source
+        } else if let file = manifest?["file"] as? String {
+            guard WallpaperEnginePackage.isSafeRelativePath(file),
+                  ["pkg", "json"].contains((file as NSString).pathExtension.lowercased()) else {
+                throw WallpaperEngineImportError.invalid("недопустимый путь к пакету в project.json.")
+            }
+            if file.lowercased() == "scene.json" {
+                packageURL = root.appendingPathComponent("scene.pkg")
+            } else {
+                guard (file as NSString).pathExtension.lowercased() == "pkg" else {
+                    throw WallpaperEngineImportError.invalid("выберите проект с упакованным scene.pkg.")
+                }
+                packageURL = root.appendingPathComponent(file)
+            }
+        } else {
+            packageURL = root.appendingPathComponent("scene.pkg")
+        }
+        _ = try WallpaperEnginePackage.validate(at: packageURL)
+        let fallbackTitle = packageURL.lastPathComponent.lowercased() == "scene.pkg"
+            ? root.lastPathComponent : packageURL.deletingPathExtension().lastPathComponent
+        let title = (manifest?["title"] as? String) ?? fallbackTitle
+        try ensureDirectory()
+        let fileName = uniqueFileName(for: sanitizedImportName(title))
+        let destination = directory.appendingPathComponent(fileName, isDirectory: true)
+        let temporary = directory.appendingPathComponent(".\(UUID().uuidString).partial", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false)
+            let copiedPackage = temporary.appendingPathComponent("scene.pkg")
+            try FileManager.default.copyItem(at: packageURL, to: copiedPackage)
+            // Recheck the actual copy, so a changing source cannot publish a malformed library item.
+            _ = try WallpaperEnginePackage.validate(at: copiedPackage)
+            do {
+                var metadata = manifest ?? ["type": "scene", "title": title]
+                metadata["type"] = "scene"
+                metadata["title"] = title
+                metadata["file"] = "scene.pkg"
+                metadata.removeValue(forKey: "preview")
+                if let preview = manifest?["preview"] as? String {
+                    guard WallpaperEnginePackage.isSafeRelativePath(preview),
+                          ["png", "jpg", "jpeg", "gif"].contains((preview as NSString).pathExtension.lowercased()) else {
+                        throw WallpaperEngineImportError.invalid("недопустимый путь к обложке в project.json.")
+                    }
+                    let previewURL = root.appendingPathComponent(preview)
+                    if FileManager.default.fileExists(atPath: previewURL.path) {
+                        metadata["preview"] = try Self.copyWallpaperEnginePreview(from: previewURL, to: temporary)
+                    }
+                }
+                let data = try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys])
+                guard data.count <= WallpaperEnginePackage.maximumJSONSize else {
+                    throw WallpaperEngineImportError.invalid("project.json превышает допустимый размер.")
+                }
+                try data.write(to: temporary.appendingPathComponent("project.json"), options: .atomic)
+            }
+            try FileManager.default.moveItem(at: temporary, to: destination)
+        } catch {
+            try? FileManager.default.removeItem(at: temporary)
+            throw error
+        }
+        return LiveWallpaperItem(fileName: fileName, url: destination)
+    }
+
+    /// Keep animated covers static in the library and decode only a bounded first-frame thumbnail.
+    private static func copyWallpaperEnginePreview(from source: URL, to directory: URL) throws -> String {
+        let maximumSize = 16 * 1024 * 1024
+        let data = try WallpaperEnginePackage.boundedData(at: source, maximum: maximumSize)
+        guard let imageSource = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetCount(imageSource) > 0,
+              let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0, width <= 16_777_216 / height else {
+            throw WallpaperEngineImportError.invalid("обложка проекта не является изображением допустимого размера.")
+        }
+        if source.pathExtension.lowercased() == "gif" {
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 2048,
+                kCGImageSourceShouldCacheImmediately: true
+            ]
+            guard let image = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options as CFDictionary) else {
+                throw WallpaperEngineImportError.invalid("не удалось прочитать первый кадр обложки проекта.")
+            }
+            let name = "preview.png"
+            let output = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            CGImageDestinationAddImage(destination, image, nil)
+            guard CGImageDestinationFinalize(destination), output.length <= maximumSize else {
+                throw WallpaperEngineImportError.invalid("не удалось сохранить обложку проекта.")
+            }
+            try (output as Data).write(to: directory.appendingPathComponent(name), options: .atomic)
+            return name
+        }
+        let name = "preview." + source.pathExtension.lowercased()
+        try data.write(to: directory.appendingPathComponent(name), options: .atomic)
+        return name
+    }
+
+    private func sanitizedImportName(_ title: String) -> String {
+        let printable = title.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }
+        let base = Self.sanitizedBaseName(String(String.UnicodeScalarView(printable)).replacingOccurrences(of: "\\", with: "-"))
+        var bounded = ""
+        for character in base {
+            guard bounded.utf8.count + String(character).utf8.count <= 180 else { break }
+            bounded.append(character)
+        }
+        return (bounded.isEmpty ? "Wallpaper" : bounded) + "." + Self.wallpaperEngineExtension
+    }
+
+    /// Library enumeration checks metadata and file type, not a potentially large package index.
+    private static func isStoredWallpaperEngineProject(at url: URL) -> Bool {
+        guard (try? WallpaperEnginePackage.regularFileSize(at: url.appendingPathComponent("scene.pkg"), maximum: WallpaperEnginePackage.maximumPackageSize)) != nil else { return false }
+        let manifest = url.appendingPathComponent("project.json")
+        guard FileManager.default.fileExists(atPath: manifest.path) else { return false }
+        guard let data = try? WallpaperEnginePackage.boundedData(at: manifest, maximum: WallpaperEnginePackage.maximumJSONSize),
+              let object = try? WallpaperEnginePackage.jsonObject(data, description: "project.json") else { return false }
+        return (object["type"] as? String)?.lowercased() == "scene" && object["file"] as? String == "scene.pkg"
     }
 
     func trash(_ item: LiveWallpaperItem) throws {

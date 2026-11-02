@@ -81,7 +81,9 @@ private struct DockStrip: View {
     }
     private func context(for item: DockElement) -> DockIntegrationContext {
         DockIntegrationContext(model: model, preferences: preferences, interactionChanged: interaction("integration:\(item.id)"),
-                               openLauncher: feature.openLauncher, openDisplays: feature.openDisplays)
+                               openLauncher: feature.openLauncher, openDisplays: feature.openDisplays,
+                               popoverEdge: edge, surfaceGeneration: feature.surfaceGeneration,
+                               openSpeedTest: feature.openSpeedTest)
     }
 
     var body: some View {
@@ -126,7 +128,7 @@ private struct DockStrip: View {
             .overlay { RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(.white.opacity(0.15), lineWidth: 0.7) }
             .foregroundStyle(.white).preferredColorScheme(.dark)
             .onHover { hoverChanged($0) }
-            .popover(isPresented: Binding(get: { shownError != nil }, set: { if !$0 { shownError = nil } }),
+            .dockPopover(isPresented: Binding(get: { shownError != nil }, set: { if !$0 { shownError = nil } }),
                      arrowEdge: edge) {
                 Text(shownError ?? "").font(.system(size: 12)).padding(12).frame(maxWidth: 320)
             }
@@ -164,9 +166,12 @@ private struct DockStrip: View {
             .frame(width: length / preferences.scale, height: logicalHeight)
             .scaleEffect(preferences.scale)
             .frame(width: length, height: height)
-            .modifier(DockPopoverAnchor(isPresented: previewBinding(item.applicationPath), arrowEdge: edge) {
+            .modifier(DockHoverTitle(title: item.title, position: preferences.position,
+                                    enabled: item.applicationPath != nil && canShowTitle,
+                                    generation: feature.surfaceGeneration))
+            .dockPopover(isPresented: previewBinding(item.applicationPath), arrowEdge: edge) {
                 if let path = item.applicationPath { windowPreview(path: path, title: item.title) }
-            })
+            }
             // Dwelling on an application or folder groups into it: the target lifts and glows.
             .scaleEffect(groupTarget == item.id ? 1.12 : 1)
             .background {
@@ -196,9 +201,11 @@ private struct DockStrip: View {
             .frame(width: DockLayout.baseCellWidth, height: logicalHeight)
             .scaleEffect(preferences.scale)
             .frame(width: cell, height: height)
-            .modifier(DockPopoverAnchor(isPresented: previewBinding(path), arrowEdge: edge) {
+            .modifier(DockHoverTitle(title: title, position: preferences.position, enabled: canShowTitle,
+                                    generation: feature.surfaceGeneration))
+            .dockPopover(isPresented: previewBinding(path), arrowEdge: edge) {
                 windowPreview(path: path, title: title)
-            })
+            }
             .onDrag { beginDrag("running:\(path)") }
             .contextMenu { appMenu(path: path, pinnedID: nil) }
             .onDrop(of: [.fileURL], isTargeted: Binding(get: { springKey == "running:\(path)" }, set: { targeted in
@@ -301,7 +308,7 @@ private struct DockStrip: View {
             }.help(element.title)
             .background(DockAnchorView(id: element.id, registry: feature.anchors))
             .background(.white.opacity(downloadsTargeted ? 0.12 : 0), in: RoundedRectangle(cornerRadius: 12))
-            .popover(isPresented: expansion(element.id), arrowEdge: edge) {
+            .dockPopover(isPresented: expansion(element.id), arrowEdge: edge) {
                 DockStackSurface(provider: feature.stacks, preferences: preferences, element: element,
                                  interactionChanged: interaction("stack"), sortOverride: $preferences.downloadsSort,
                                  styleOverride: $preferences.downloadsStyle)
@@ -333,10 +340,17 @@ private struct DockStrip: View {
             .onAppear { trash.refresh() }
     }
 
-    /// Dock items dragged onto Trash are unpinned; files from Finder or stacks move to Trash.
+    /// Dock items are unpinned or removed from recents; external files move to Trash.
     private func dropOnTrash(_ providers: [NSItemProvider]) -> Bool {
         if let id = dragID {
-            if !id.hasPrefix("running:") {
+            if id.hasPrefix("running:") {
+                let path = String(id.dropFirst("running:".count))
+                if preferences.recentApplications.contains(path),
+                   !applications.running.contains(where: { $0.path == path }) {
+                    preferences.removeRecentApplication(path)
+                    DockTrashModel.play("dock/poof item off dock.aif")
+                }
+            } else {
                 preferences.remove(id: id)
                 DockTrashModel.play("dock/poof item off dock.aif")
             }
@@ -359,7 +373,7 @@ private struct DockStrip: View {
             DockFolderIcon(element: item, applications: applications).frame(width: DockLayout.iconSize, height: DockLayout.iconSize)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .dockTapTarget(item.title) { toggleExpansion(item.id) }.help(item.title)
-                .popover(isPresented: expansion(item.id), arrowEdge: edge) {
+                .dockPopover(isPresented: expansion(item.id), arrowEdge: edge) {
                     folder(item)
                 }
         case .stack:
@@ -368,7 +382,7 @@ private struct DockStrip: View {
                           style: stackBinding("style", item: item, fallback: DockStackStyle.automatic).wrappedValue)
             }
                 .background(DockAnchorView(id: item.id, registry: feature.anchors))
-                .popover(isPresented: expansion(item.id), arrowEdge: edge) {
+                .dockPopover(isPresented: expansion(item.id), arrowEdge: edge) {
                     DockStackSurface(provider: feature.stacks, preferences: preferences,
                                      element: item, interactionChanged: interaction("stack"))
                 }
@@ -411,6 +425,10 @@ private struct DockStrip: View {
                 previewPath = path
             }
         }
+    }
+
+    private var canShowTitle: Bool {
+        previewPath == nil && expandedID == nil && dragID == nil && feature.fan.presentedID == nil
     }
 
     /// Click modifiers follow the system Dock: ⌘ reveals in Finder, ⌥ hides others (or the app itself).
@@ -500,9 +518,9 @@ private struct DockStrip: View {
                             appIcon(path: child.applicationPath ?? "", title: child.title, id: child.id, inFolder: true).frame(width: 64, height: 57)
                             Text(child.title).font(.system(size: 10)).lineLimit(2).multilineTextAlignment(.center)
                         }.frame(width: 72, height: 83)
-                            .modifier(DockPopoverAnchor(isPresented: previewBinding(child.applicationPath)) {
+                            .dockPopover(isPresented: previewBinding(child.applicationPath)) {
                                 if let path = child.applicationPath { windowPreview(path: path, title: child.title) }
-                            })
+                            }
                             .onDrag { beginDrag(child.id) }
                             .onDrop(of: [.utf8PlainText, .fileURL], delegate: DockElementDropDelegate(
                                 item: child, length: 72, vertical: false, preferences: preferences, applications: applications,
@@ -711,7 +729,7 @@ struct DockApplicationIcon: View {
                     .frame(maxWidth: .infinity).accessibilityHidden(true)
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            .dockTapTarget(badge.map { "\(title), уведомления: \($0)" } ?? title, action: action).help(title)
+            .dockTapTarget(badge.map { "\(title), уведомления: \($0)" } ?? title, action: action)
             .background(.white.opacity(running?.isActive == true ? 0.055 : 0), in: RoundedRectangle(cornerRadius: 12))
             .onHover { hovered = $0 }
             .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.72), value: hovered)
@@ -781,18 +799,6 @@ private struct DockSystemIcon: View {
                     .foregroundStyle(.white.opacity(0.8)).accessibilityHidden(true)
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
-    }
-}
-
-/// Attach only after the cell's logical frame, scale and physical frame.
-/// Otherwise SwiftUI resolves the arrow from the pre-transform inner icon.
-struct DockPopoverAnchor<Popup: View>: ViewModifier {
-    @Binding var isPresented: Bool
-    var arrowEdge: Edge = .top
-    @ViewBuilder var popup: () -> Popup
-    func body(content: Content) -> some View {
-        content.popover(isPresented: $isPresented, attachmentAnchor: .rect(.bounds),
-                        arrowEdge: arrowEdge, content: popup)
     }
 }
 

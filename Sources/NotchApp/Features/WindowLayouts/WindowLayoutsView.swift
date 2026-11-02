@@ -7,6 +7,7 @@ import SwiftUI
 struct WindowLayoutsView: View {
     @ObservedObject var manager: WindowLayoutManager
     let targetPID: pid_t?
+    var shortcuts: WindowShortcutController? = nil
 
     @State private var isBusy = false
     @State private var message: String?
@@ -33,6 +34,7 @@ struct WindowLayoutsView: View {
                 if let message {
                     statusMessage(message)
                 }
+                if let shortcuts { WindowShortcutSettingsView(controller: shortcuts, settings: shortcuts.settings) }
             }
             .padding(22)
         }

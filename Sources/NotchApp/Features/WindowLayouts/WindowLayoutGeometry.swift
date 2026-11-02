@@ -30,20 +30,53 @@ enum WindowLayoutGeometry {
                                     width: visible.width / 2, height: visible.height)
         case .maximize:
             return visible
+        case .restore:
+            // Restoration needs this window's history and is handled by the AX worker.
+            return nil
+        case .topLeft, .topRight, .bottomLeft, .bottomRight:
+            let right = action == .topRight || action == .bottomRight
+            let bottom = action == .bottomLeft || action == .bottomRight
+            return WindowLayoutRect(x: visible.x + (right ? visible.width / 2 : 0),
+                                    y: visible.y + (bottom ? visible.height / 2 : 0),
+                                    width: visible.width / 2, height: visible.height / 2)
+        case .leftThird, .centerThird, .rightThird, .leftTwoThirds, .rightTwoThirds:
+            let third = visible.width / 3
+            let offset: Double = switch action {
+            case .centerThird, .rightTwoThirds: third
+            case .rightThird: third * 2
+            default: 0
+            }
+            let width = action == .leftTwoThirds || action == .rightTwoThirds ? third * 2 : third
+            return WindowLayoutRect(x: visible.x + offset, y: visible.y,
+                                    width: width, height: visible.height)
         case .center:
             return clamp(WindowLayoutRect(
                 x: visible.centerX - current.width / 2,
                 y: visible.centerY - current.height / 2,
                 width: current.width, height: current.height
             ), to: visible)
-        case .nextDisplay:
-            guard screens.count > 1,
-                  let sourceIndex = screens.firstIndex(where: { $0.id == source.id }) else {
+        case .nextDisplay, .previousDisplay:
+            let ordered = screens.sorted {
+                if $0.frame.x != $1.frame.x { return $0.frame.x < $1.frame.x }
+                if $0.frame.y != $1.frame.y { return $0.frame.y < $1.frame.y }
+                return $0.id < $1.id
+            }
+            guard ordered.count > 1,
+                  let sourceIndex = ordered.firstIndex(where: { $0.id == source.id }) else {
                 return nil
             }
-            let destination = screens[(sourceIndex + 1) % screens.count].visibleFrame
+            let step = action == .nextDisplay ? 1 : ordered.count - 1
+            let destination = ordered[(sourceIndex + step) % ordered.count].visibleFrame
             return restore(normalize(current, in: visible), to: destination)
         }
+    }
+
+    static func originalTarget(_ original: WindowLayoutOriginalPlacement,
+                               current: WindowLayoutRect,
+                               screens: [WindowLayoutScreen]) -> WindowLayoutRect? {
+        guard let destination = screens.first(where: { $0.id == original.displayID })
+                ?? screen(for: current, in: screens) else { return nil }
+        return clamp(original.frame, to: destination.visibleFrame)
     }
 
     static func normalize(_ rect: WindowLayoutRect, in visible: WindowLayoutRect) -> WindowLayoutRect {

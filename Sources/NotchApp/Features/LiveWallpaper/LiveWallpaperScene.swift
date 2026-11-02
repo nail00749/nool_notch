@@ -45,6 +45,18 @@ enum LiveWallpaperMotion {
     }
 }
 
+/// SpriteKit scenes the desktop renderer hosts in an `SKView`.
+@MainActor
+protocol LiveWallpaperSpriteScene: SKScene {
+    var completedUpdateCount: UInt64 { get }
+    func update(settings: LiveWallpaperSceneSettings, screenFrame: CGRect)
+    func setEnergy(_ value: Double)
+    func resumeClock()
+    func snapshot(in view: SKView) -> CGImage?
+}
+
+extension LiveWallpaperParticleScene: LiveWallpaperSpriteScene {}
+
 /// One display's scene: a background (preset gradient or picture), particles and cursor interaction.
 /// The cursor is read from `NSEvent.mouseLocation`, so the click-through window needs no permissions.
 @MainActor
@@ -60,6 +72,11 @@ final class LiveWallpaperParticleScene: SKScene {
         var life: CGFloat
     }
 
+    private struct TintGroup {
+        let base: NSColor
+        var nodes: [SKSpriteNode]
+    }
+
     private let content: LiveWallpaperContent
     private var screenFrame: CGRect
     private var settings: LiveWallpaperSceneSettings
@@ -70,22 +87,31 @@ final class LiveWallpaperParticleScene: SKScene {
     private var style: LiveWallpaperParticleStyle = .none
     private var parallax = CGVector.zero
     private var lastUpdate: TimeInterval?
-    private var lastLinkUpdate: CGFloat = -1
+    /// Playback intent and actual SpriteKit progress are separate states.
+    private(set) var completedUpdateCount: UInt64 = 0
+    private var linkClock = LiveWallpaperLinkClock()
+    private var plexusLinks = LiveWallpaperPlexusLinks()
+    private var lineSegments: [LiveWallpaperPlexusSegment] = []
+    private var lineRenderer: (([LiveWallpaperPlexusSegment], CGSize) -> Void)?
     private var elapsed: CGFloat = 0
     private var nextShootingStar: CGFloat = 4
     private var image: CGImage?
     private var glows: [(node: SKSpriteNode, depth: CGFloat, base: CGPoint)] = []
+    private var tintGroups: [TintGroup] = []
     /// CPU load the scene reacts to (0...1) and its smoothed value, so readings every few seconds
     /// turn into gradual changes instead of jumps.
     private var targetEnergy: CGFloat = 0
     private var energy: CGFloat = 0
     private var tintedEnergy: CGFloat = 0
     private static let baseColorKey = "nool.baseColor"
+    private let cursorProvider: (() -> CGPoint?)?
 
-    init(size: CGSize, screenFrame: CGRect, content: LiveWallpaperContent, settings: LiveWallpaperSceneSettings) {
+    init(size: CGSize, screenFrame: CGRect, content: LiveWallpaperContent, settings: LiveWallpaperSceneSettings,
+         cursorProvider: (() -> CGPoint?)? = nil) {
         self.content = content
         self.screenFrame = screenFrame
         self.settings = settings
+        self.cursorProvider = cursorProvider
         super.init(size: size)
         scaleMode = .resizeFill
         anchorPoint = .zero
@@ -102,6 +128,97 @@ final class LiveWallpaperParticleScene: SKScene {
     @available(*, unavailable)
     required init?(coder aDecoder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+    /// Initial geometry for the Metal renderer and comparison tests: export a fresh scene. The seed
+    /// excludes clocks, parallax and energy, and shares the actual SpriteKit texture pixels.
+    func exportPlexusSeed() -> LiveWallpaperPlexusSeed? {
+        guard style == .plexus, let background, let texture = background.texture else { return nil }
+        return LiveWallpaperPlexusSeed(
+            size: size, settings: settings, gradient: texture.cgImage(), glow: Self.glowTexture.cgImage(),
+            backgroundSize: background.size,
+            clouds: glows.map {
+                .init(base: $0.base, size: $0.node.size, depth: $0.depth,
+                      color: ($0.node.userData?[Self.baseColorKey] as? NSColor) ?? $0.node.color,
+                      alpha: $0.node.alpha)
+            },
+            particles: particles.map {
+                .init(position: $0.position, velocity: $0.velocity, drift: $0.drift, depth: $0.depth,
+                      size: $0.node.size, color: ($0.node.userData?[Self.baseColorKey] as? NSColor) ?? $0.node.color,
+                      alpha: $0.baseAlpha)
+            })
+    }
+
+    /// Restore an exact shared initial fixture for A/B prototype runs. Production never calls this.
+    /// Validate before mutating so a mismatched scene remains intact.
+    @discardableResult
+    func restorePlexusPrototypeSeed(_ seed: LiveWallpaperPlexusSeed) -> Bool {
+        guard style == .plexus, size == seed.size, settings == seed.settings,
+              particles.count == seed.particles.count, glows.count == seed.clouds.count,
+              let background else { return false }
+        background.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        background.size = seed.backgroundSize
+        for index in glows.indices {
+            let cloud = seed.clouds[index]
+            let node = glows[index].node
+            node.position = cloud.base
+            node.size = cloud.size
+            node.color = cloud.color
+            node.alpha = cloud.alpha
+            node.userData = [Self.baseColorKey: cloud.color]
+            glows[index] = (node, cloud.depth, cloud.base)
+        }
+        for index in particles.indices {
+            let initial = seed.particles[index]
+            let old = particles[index]
+            let node = old.node
+            node.position = initial.position
+            node.size = initial.size
+            node.color = initial.color
+            node.alpha = initial.alpha
+            node.userData = [Self.baseColorKey: initial.color]
+            particles[index] = Particle(node: node, position: initial.position, velocity: initial.velocity,
+                                        drift: initial.drift, depth: initial.depth, phase: old.phase,
+                                        baseAlpha: initial.alpha, life: old.life)
+        }
+        elapsed = 0
+        parallax = .zero
+        lastUpdate = nil
+        targetEnergy = 0
+        energy = 0
+        tintedEnergy = 0
+        linkClock.reset()
+        lineSegments.removeAll(keepingCapacity: true)
+        if let lineRenderer {
+            for node in lineNodes { node.path = nil }
+            lineRenderer([], size)
+        } else { updateShapePaths() }
+        rebuildTintGroups()
+        return true
+    }
+
+    /// An optional batched renderer owns only the frontmost Plexus lines.
+    /// Keep SpriteKit nodes as a fallback and for wallpaper export.
+    func setLineRenderer(_ renderer: (([LiveWallpaperPlexusSegment], CGSize) -> Void)?) {
+        lineRenderer = renderer
+        linkClock.reset()
+        if let renderer {
+            for node in lineNodes { node.isHidden = true; node.path = nil }
+            renderer(lineSegments, size)
+        } else {
+            updateShapePaths()
+            for node in lineNodes { node.isHidden = false }
+        }
+    }
+
+    func snapshot(in view: SKView) -> CGImage? {
+        guard lineRenderer != nil else { return view.texture(from: self)?.cgImage() }
+        updateShapePaths()
+        for node in lineNodes { node.isHidden = false }
+        defer {
+            for node in lineNodes { node.isHidden = true; node.path = nil }
+        }
+        return view.texture(from: self)?.cgImage()
+    }
+
     func update(settings next: LiveWallpaperSceneSettings, screenFrame frame: CGRect) {
         let needsRebuild = next.density != settings.density || next.imageParticles != settings.imageParticles
             || next.parallax != settings.parallax || frame.size != screenFrame.size
@@ -116,7 +233,10 @@ final class LiveWallpaperParticleScene: SKScene {
     }
 
     /// Resets timing after a pause so particles do not jump.
-    func resumeClock() { lastUpdate = nil }
+    func resumeClock() {
+        lastUpdate = nil
+        linkClock.reset()
+    }
 
     override func didChangeSize(_ oldSize: CGSize) {
         super.didChangeSize(oldSize)
@@ -147,27 +267,18 @@ final class LiveWallpaperParticleScene: SKScene {
 
         let damping = exp(-dt * 2.2)
         for index in particles.indices {
-            var particle = particles[index]
-            let rendered = CGPoint(x: particle.position.x + parallax.dx * particle.depth,
-                                   y: particle.position.y + parallax.dy * particle.depth)
-            let push = LiveWallpaperMotion.cursorAcceleration(
-                particle: rendered, cursor: cursor, mode: settings.cursorMode, strength: settings.cursorStrength)
-            particle.velocity.dx = particle.drift.dx + (particle.velocity.dx + push.dx * dt - particle.drift.dx) * damping
-            particle.velocity.dy = particle.drift.dy + (particle.velocity.dy + push.dy * dt - particle.drift.dy) * damping
-            particle.position.x += particle.velocity.dx * dt
-            particle.position.y += particle.velocity.dy * dt
-            animate(&particle, dt: dt)
-            wrap(&particle)
-            particle.node.position = CGPoint(x: particle.position.x + parallax.dx * particle.depth,
-                                             y: particle.position.y + parallax.dy * particle.depth)
-            particles[index] = particle
+            updateParticle(&particles[index], cursor: cursor, dt: dt, damping: damping)
         }
         // Re-tessellating the line shapes is the costly part, so links refresh at most 30 times a second.
-        if style == .plexus, elapsed - lastLinkUpdate >= 1.0 / 31 || lastLinkUpdate > elapsed {
-            lastLinkUpdate = elapsed
+        if style == .plexus, linkClock.shouldRefresh(at: currentTime) {
             drawLinks()
         }
         if style == .stars, case .scene = content { updateShootingStars(dt: dt) }
+    }
+
+    override func didFinishUpdate() {
+        super.didFinishUpdate()
+        completedUpdateCount &+= 1
     }
 
     /// Re-tints only after a visible change, since it touches every particle node.
@@ -175,15 +286,36 @@ final class LiveWallpaperParticleScene: SKScene {
         guard abs(energy - tintedEnergy) > 0.03 || (energy < 0.01 && tintedEnergy != 0) else { return }
         tintedEnergy = energy < 0.01 ? 0 : energy
         let warm = NSColor(red: 1, green: 0.45, blue: 0.25, alpha: 1)
-        for node in particles.map(\.node) + glows.map(\.node) {
-            guard let base = node.userData?[Self.baseColorKey] as? NSColor else { continue }
-            node.color = base.blended(withFraction: tintedEnergy * 0.7, of: warm) ?? base
+        for group in tintGroups {
+            let tint = group.base.blended(withFraction: tintedEnergy * 0.7, of: warm) ?? group.base
+            for node in group.nodes { node.color = tint }
         }
+    }
+
+    /// Most styles share one particle color. Group once when nodes are built, so a tint change
+    /// performs the exact original AppKit blend once per base color instead of once per particle.
+    private func rebuildTintGroups() {
+        tintGroups.removeAll(keepingCapacity: true)
+        var indices: [NSColor: Int] = [:]
+        func add(_ node: SKSpriteNode) {
+            guard let base = node.userData?[Self.baseColorKey] as? NSColor else { return }
+            if let index = indices[base] {
+                tintGroups[index].nodes.append(node)
+            } else {
+                indices[base] = tintGroups.count
+                tintGroups.append(TintGroup(base: base, nodes: [node]))
+            }
+        }
+        for particle in particles { add(particle.node) }
+        for glow in glows { add(glow.node) }
     }
 
     // MARK: Building
 
     private func rebuild() {
+        linkClock.reset()
+        lineSegments.removeAll(keepingCapacity: true)
+        lineRenderer?([], size)
         tintedEnergy = 0
         background?.removeFromParent()
         background = makeBackground()
@@ -192,7 +324,7 @@ final class LiveWallpaperParticleScene: SKScene {
             switch content {
             case .scene(let preset): preset.particles
             case .image: settings.imageParticles
-            case .video: .none
+            case .video, .wallpaperEngine: .none
             }
         }()
         for glow in glows { glow.node.removeFromParent() }
@@ -210,10 +342,12 @@ final class LiveWallpaperParticleScene: SKScene {
                 node.lineWidth = 1
                 node.isAntialiased = true
                 node.zPosition = 5
+                node.isHidden = lineRenderer != nil
                 particleLayer.addChild(node)
                 return node
             }
         }
+        rebuildTintGroups()
     }
 
     private func makeBackground() -> SKSpriteNode? {
@@ -230,7 +364,7 @@ final class LiveWallpaperParticleScene: SKScene {
         case .scene(let preset):
             node = SKSpriteNode(texture: Self.gradientTexture(preset),
                                 size: CGSize(width: size.width + margin, height: size.height + margin))
-        case .video:
+        case .video, .wallpaperEngine:
             return nil
         }
         node.position = CGPoint(x: size.width / 2, y: size.height / 2)
@@ -246,8 +380,9 @@ final class LiveWallpaperParticleScene: SKScene {
         case .starfield: tints = [NSColor(red: 0.45, green: 0.25, blue: 0.9, alpha: 1), NSColor(red: 0.15, green: 0.4, blue: 0.95, alpha: 1)]
         case .fireflies: tints = [NSColor(red: 0.3, green: 0.75, blue: 0.35, alpha: 1), NSColor(red: 0.6, green: 0.8, blue: 0.2, alpha: 1)]
         case .plexus: tints = [NSColor(red: 0.1, green: 0.6, blue: 0.9, alpha: 1), NSColor(red: 0.35, green: 0.3, blue: 0.9, alpha: 1)]
+        case .reactor: tints = [NSColor(red: 0.05, green: 0.7, blue: 0.95, alpha: 1)]
         case .snow: tints = [NSColor(white: 1, alpha: 1), NSColor(red: 0.6, green: 0.75, blue: 1, alpha: 1)]
-        case .embers: tints = [NSColor(red: 1, green: 0.35, blue: 0.08, alpha: 1), NSColor(red: 0.9, green: 0.15, blue: 0.1, alpha: 1)]
+        case .embers, .cogitator: tints = [NSColor(red: 1, green: 0.35, blue: 0.08, alpha: 1), NSColor(red: 0.9, green: 0.15, blue: 0.1, alpha: 1)]
         }
         let count = max(3, Int(size.width / 700))
         return (0..<count).map { index in
@@ -331,6 +466,22 @@ final class LiveWallpaperParticleScene: SKScene {
 
     // MARK: Per-frame behavior
 
+    /// Mutate the stored value directly: copying a particle also retains/releases its SpriteKit node.
+    private func updateParticle(_ particle: inout Particle, cursor: CGPoint?, dt: CGFloat, damping: CGFloat) {
+        let rendered = CGPoint(x: particle.position.x + parallax.dx * particle.depth,
+                               y: particle.position.y + parallax.dy * particle.depth)
+        let push = LiveWallpaperMotion.cursorAcceleration(
+            particle: rendered, cursor: cursor, mode: settings.cursorMode, strength: settings.cursorStrength)
+        particle.velocity.dx = particle.drift.dx + (particle.velocity.dx + push.dx * dt - particle.drift.dx) * damping
+        particle.velocity.dy = particle.drift.dy + (particle.velocity.dy + push.dy * dt - particle.drift.dy) * damping
+        particle.position.x += particle.velocity.dx * dt
+        particle.position.y += particle.velocity.dy * dt
+        animate(&particle, dt: dt)
+        wrap(&particle)
+        particle.node.position = CGPoint(x: particle.position.x + parallax.dx * particle.depth,
+                                         y: particle.position.y + parallax.dy * particle.depth)
+    }
+
     private func animate(_ particle: inout Particle, dt: CGFloat) {
         switch style {
         case .stars:
@@ -370,37 +521,29 @@ final class LiveWallpaperParticleScene: SKScene {
     /// Links between nearby particles, bucketed by distance so three shape nodes draw every line.
     /// A grid of link-sized cells limits each particle to its neighbours instead of every pair.
     private func drawLinks() {
-        let maxDistance: CGFloat = 170
-        let maxDistanceSquared = maxDistance * maxDistance
-        let paths = [CGMutablePath(), CGMutablePath(), CGMutablePath()]
-        let points = particles.map(\.node.position)
-        struct Cell: Hashable { let x: Int, y: Int }
-        func cell(of point: CGPoint) -> Cell {
-            Cell(x: Int((point.x / maxDistance).rounded(.down)), y: Int((point.y / maxDistance).rounded(.down)))
+        lineSegments.removeAll(keepingCapacity: true)
+        plexusLinks.updatePoints(count: particles.count) { particles[$0].node.position }
+        plexusLinks.forEachLink { start, end, bucket in
+            lineSegments.append(LiveWallpaperPlexusSegment(start: start, end: end, bucket: bucket))
         }
-        var grid: [Cell: [Int]] = [:]
-        for index in points.indices { grid[cell(of: points[index]), default: []].append(index) }
-        for i in points.indices {
-            let home = cell(of: points[i])
-            for dx in -1...1 {
-                for dy in -1...1 {
-                    guard let neighbours = grid[Cell(x: home.x + dx, y: home.y + dy)] else { continue }
-                    for j in neighbours where j > i {
-                        let distanceSquared = (points[i].x - points[j].x) * (points[i].x - points[j].x)
-                            + (points[i].y - points[j].y) * (points[i].y - points[j].y)
-                        guard distanceSquared < maxDistanceSquared else { continue }
-                        let bucket = min(2, Int(distanceSquared.squareRoot() / maxDistance * 3))
-                        paths[bucket].move(to: points[i])
-                        paths[bucket].addLine(to: points[j])
-                    }
+        if let cursor = localCursor(), settings.cursorMode != .off {
+            let squaredRadius = LiveWallpaperMotion.cursorRadius * LiveWallpaperMotion.cursorRadius
+            plexusLinks.forEachPoint { point in
+                let dx = point.x - cursor.x, dy = point.y - cursor.y
+                if dx * dx + dy * dy < squaredRadius {
+                    lineSegments.append(LiveWallpaperPlexusSegment(start: cursor, end: point, bucket: 0))
                 }
             }
         }
-        if let cursor = localCursor(), settings.cursorMode != .off {
-            for point in points where hypot(point.x - cursor.x, point.y - cursor.y) < LiveWallpaperMotion.cursorRadius {
-                paths[0].move(to: cursor)
-                paths[0].addLine(to: point)
-            }
+        if let lineRenderer { lineRenderer(lineSegments, size) }
+        else { updateShapePaths() }
+    }
+
+    private func updateShapePaths() {
+        let paths = [CGMutablePath(), CGMutablePath(), CGMutablePath()]
+        for segment in lineSegments {
+            paths[segment.bucket].move(to: segment.start)
+            paths[segment.bucket].addLine(to: segment.end)
         }
         for (node, path) in zip(lineNodes, paths) { node.path = path }
     }
@@ -422,6 +565,7 @@ final class LiveWallpaperParticleScene: SKScene {
     }
 
     private func localCursor() -> CGPoint? {
+        if let cursorProvider { return cursorProvider() }
         let location = NSEvent.mouseLocation
         guard screenFrame.contains(location) else { return nil }
         return CGPoint(x: location.x - screenFrame.minX, y: location.y - screenFrame.minY)
@@ -430,7 +574,9 @@ final class LiveWallpaperParticleScene: SKScene {
     // MARK: Textures
 
     private static let glowTexture: SKTexture = {
-        let side = 64
+        // The same glow also covers clouds thousands of points wide. A tiny particle atlas
+        // magnified to that size exposes its texels even with bilinear sampling.
+        let side = 512
         let space = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
                                       space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
@@ -442,19 +588,56 @@ final class LiveWallpaperParticleScene: SKScene {
         let center = CGPoint(x: CGFloat(side) / 2, y: CGFloat(side) / 2)
         context.drawRadialGradient(gradient, startCenter: center, startRadius: 0, endCenter: center,
                                    endRadius: CGFloat(side) / 2, options: [])
-        return context.makeImage().map { SKTexture(cgImage: $0) } ?? SKTexture()
+        let texture = context.makeImage().map { SKTexture(cgImage: $0) } ?? SKTexture()
+        texture.filteringMode = .linear
+        return texture
     }()
 
+    private static var gradientTextures: [LiveWallpaperScenePreset: SKTexture] = [:]
+
     private static func gradientTexture(_ preset: LiveWallpaperScenePreset) -> SKTexture {
+        if let texture = gradientTextures[preset] { return texture }
+        let width = 1_024, height = 2_048
         let space = CGColorSpaceCreateDeviceRGB()
         let (top, bottom) = preset.gradient
-        guard let context = CGContext(data: nil, width: 4, height: 256, bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+        let bytesPerRow = width * 4
+        // Keep Core Graphics' original generic-RGB to device-RGB conversion and raster direction.
+        // A floating-point strip retains the shades that an 8-bit CGContext would round away.
+        let floatBitmap = CGBitmapInfo.floatComponents.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+            | CGImageAlphaInfo.premultipliedLast.rawValue
+        guard let strip = CGContext(data: nil, width: 1, height: height, bitsPerComponent: 32,
+                                    bytesPerRow: 4 * MemoryLayout<Float>.size, space: space, bitmapInfo: floatBitmap),
               let gradient = CGGradient(colorsSpace: space, colors: [
                   CGColor(red: bottom.x, green: bottom.y, blue: bottom.z, alpha: 1),
                   CGColor(red: top.x, green: top.y, blue: top.z, alpha: 1)
-              ] as CFArray, locations: [0, 1]) else { return SKTexture() }
-        context.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0, y: 256), options: [])
-        return context.makeImage().map { SKTexture(cgImage: $0) } ?? SKTexture()
+              ] as CFArray, locations: [0, 1]),
+              let colors = strip.data?.assumingMemoryBound(to: Float.self),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: bytesPerRow, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let data = context.data?.assumingMemoryBound(to: UInt8.self) else { return SKTexture() }
+        strip.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0, y: height), options: [])
+        for y in 0..<height {
+            let color = SIMD3(Double(colors[y * 4]), Double(colors[y * 4 + 1]), Double(colors[y * 4 + 2])) * 255
+            for x in 0..<width {
+                // Stable stochastic rounding distributes the two adjacent 8-bit shades instead
+                // of stretching a single quantized row across the whole screen. Shared RGB noise
+                // avoids colored speckles. This is generated once, never in the animation loop.
+                var hash = UInt32(y * width + x) &+ 0x9e3779b9
+                hash = (hash ^ (hash >> 16)) &* 0x21f0aaad
+                hash = (hash ^ (hash >> 15)) &* 0x735a2d97
+                hash ^= hash >> 15
+                let noise = Double(hash & 0xffff) / 65_536
+                let offset = y * bytesPerRow + x * 4
+                data[offset] = UInt8(clamping: Int(color.x + noise))
+                data[offset + 1] = UInt8(clamping: Int(color.y + noise))
+                data[offset + 2] = UInt8(clamping: Int(color.z + noise))
+                data[offset + 3] = 255
+            }
+        }
+        let texture = context.makeImage().map { SKTexture(cgImage: $0) } ?? SKTexture()
+        texture.filteringMode = .linear
+        gradientTextures[preset] = texture
+        return texture
     }
 }

@@ -1,0 +1,30 @@
+{
+  "renderer": "previous",
+  "label": "quality-a2",
+  "pid": 96646,
+  "started": 1792577926.588932,
+  "duration": 33.380712032318115,
+  "cpu": [
+    10.3,
+    16.4,
+    12.0,
+    12.0,
+    14.0,
+    12.0,
+    12.1,
+    13.7,
+    11.8,
+    25.2,
+    13.7,
+    15.1,
+    11.3,
+    22.0,
+    20.1
+  ],
+  "mean": 14.78,
+  "median": 13.7,
+  "minimum": 10.3,
+  "maximum": 25.2,
+  "preferencesBefore": "035c89ad4a3e6731898c6f77a985a9d4c0e40f7f12a4368b1036e9334c6e2c67",
+  "preferencesAfter": "035c89ad4a3e6731898c6f77a985a9d4c0e40f7f12a4368b1036e9334c6e2c67"
+}

@@ -5,16 +5,21 @@ final class NotchAppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: NotchWindowCoordinator!
     private var launcher: LauncherWindowCoordinator!
     private var screenParametersObserver: NSObjectProtocol?
-    private var isRepositionScheduled = false
+    private var screenParametersChanges: ScreenParametersChangeObserver?
     private var pendingWidgetOpen = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         AppAppearanceSettings.shared.applyCurrentTheme()
+        _ = NooLLinkService.shared
+        _ = NooLAirDropCoordinator.shared
         launcher = LauncherWindowCoordinator()
         coordinator = NotchWindowCoordinator(launcher: launcher)
         launcher.onOpenSettings = { [weak self] in self?.coordinator.showSettingsWindow(section: .launcher) }
         coordinator.show()
+        screenParametersChanges = ScreenParametersChangeObserver { [weak self] in
+            self?.coordinator.reposition()
+        }
         if pendingWidgetOpen {
             coordinator.openWidgetLimits()
             pendingWidgetOpen = false
@@ -26,13 +31,7 @@ final class NotchAppDelegate: NSObject, NSApplicationDelegate {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                // Coalesce notification bursts into one reposition per main-queue turn.
-                guard let self, !self.isRepositionScheduled else { return }
-                self.isRepositionScheduled = true
-                DispatchQueue.main.async { [weak self] in
-                    self?.isRepositionScheduled = false
-                    self?.coordinator.reposition()
-                }
+                self?.screenParametersChanges?.parametersDidChange()
             }
         }
     }
@@ -51,6 +50,13 @@ final class NotchAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        NooLAirDropCoordinator.shared.stop()
+        NooLLinkService.shared.stop()
+        if let screenParametersObserver {
+            NotificationCenter.default.removeObserver(screenParametersObserver)
+            self.screenParametersObserver = nil
+        }
+        screenParametersChanges = nil
         coordinator?.stop()
         launcher?.stop()
     }
@@ -76,8 +82,11 @@ final class NotchAppDelegate: NSObject, NSApplicationDelegate {
                 alert.runModal()
                 return
             }
+            await CoolingStore.shared.shutdown()
             coordinator?.stop()
             launcher.stop()
+            await launcher.waitForWindowOperations()
+            await launcher.waitForNetworkOperations()
             await coordinator.waitForFileActions()
             await coordinator.waitForDisplayOperations()
             await coordinator.waitForDockOperations()

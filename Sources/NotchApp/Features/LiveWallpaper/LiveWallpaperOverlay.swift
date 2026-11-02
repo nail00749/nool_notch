@@ -1,5 +1,7 @@
 import NotchCore
 import SwiftUI
+import AppKit
+import QuartzCore
 
 enum LiveWallpaperOverlayPosition: String, Codable, CaseIterable, Sendable {
     case topLeft, topRight, bottomLeft, bottomRight, center
@@ -57,6 +59,7 @@ enum LiveWallpaperOverlaySize: String, Codable, CaseIterable, Sendable {
 /// speed up with CPU load.
 struct LiveWallpaperOverlaySettings: Codable, Equatable, Sendable {
     var showsQuotas = false
+    var hiddenQuotaProviderIDs: Set<String> = []
     var showsSystem = false
     var metrics: [SystemMonitorMetric] = [.cpu, .memory, .disk]
     var position: LiveWallpaperOverlayPosition = .bottomRight
@@ -75,6 +78,7 @@ struct LiveWallpaperOverlaySettings: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = Self()
         showsQuotas = try container.decodeIfPresent(Bool.self, forKey: .showsQuotas) ?? defaults.showsQuotas
+        hiddenQuotaProviderIDs = try container.decodeIfPresent(Set<String>.self, forKey: .hiddenQuotaProviderIDs) ?? []
         showsSystem = try container.decodeIfPresent(Bool.self, forKey: .showsSystem) ?? defaults.showsSystem
         metrics = (try? container.decodeIfPresent([SystemMonitorMetric].self, forKey: .metrics)) ?? defaults.metrics
         position = (try? container.decodeIfPresent(LiveWallpaperOverlayPosition.self, forKey: .position)) ?? defaults.position
@@ -126,7 +130,9 @@ struct LiveWallpaperOverlayView: View {
                 LiveWallpaperSystemGauges(metrics: settings.metrics, snapshot: model.data.system, scale: scale)
             }
             if settings.showsQuotas {
-                LiveWallpaperQuotaBlock(providers: model.data.quotas, scale: scale)
+                LiveWallpaperQuotaBlock(providers: model.data.quotas.filter {
+                    !settings.hiddenQuotaProviderIDs.contains($0.id)
+                }, scale: scale)
             }
         }
         .foregroundStyle(.white)
@@ -201,13 +207,7 @@ private struct LiveWallpaperRing: View {
     var body: some View {
         VStack(spacing: 8 * scale) {
             ZStack {
-                Circle().stroke(.white.opacity(0.16), lineWidth: 5 * scale)
-                Circle()
-                    .trim(from: 0, to: CGFloat(fraction ?? 0))
-                    .stroke(LiveWallpaperOverlayPalette.load(fraction ?? 0),
-                            style: StrokeStyle(lineWidth: 5 * scale, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .animation(.easeOut(duration: 0.8), value: fraction)
+                LiveWallpaperMeter(fraction: fraction ?? 0, load: fraction ?? 0, kind: .ring, scale: scale)
                 Text(fraction.map { "\(Int(($0 * 100).rounded()))" } ?? "—")
                     .font(.system(size: 24 * scale, weight: .light, design: .rounded))
                     .monospacedDigit()
@@ -272,13 +272,7 @@ private struct LiveWallpaperQuotaBar: View {
                 .font(.system(size: 12 * scale, weight: .semibold))
                 .opacity(0.65)
                 .frame(width: 22 * scale, alignment: .leading)
-            ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.16))
-                Capsule()
-                    .fill(LiveWallpaperOverlayPalette.load(1 - (remaining ?? 1)))
-                    .frame(width: 180 * scale * CGFloat(remaining ?? 0))
-                    .animation(.easeOut(duration: 0.8), value: remaining)
-            }
+            LiveWallpaperMeter(fraction: remaining ?? 0, load: 1 - (remaining ?? 1), kind: .bar, scale: scale)
             .frame(width: 180 * scale, height: 5 * scale)
             Text(remaining.map { "\(Int(($0 * 100).rounded()))%" } ?? "—")
                 .font(.system(size: 15 * scale, weight: .light, design: .rounded))
@@ -296,10 +290,170 @@ private struct LiveWallpaperQuotaBar: View {
 enum LiveWallpaperOverlayPalette {
     /// Calm white-cyan under light load, warming to amber and coral as usage climbs.
     static func load(_ fraction: Double) -> Color {
+        Color(nsColor: nativeLoad(fraction))
+    }
+
+    static func nativeLoad(_ fraction: Double) -> NSColor {
         switch fraction {
-        case ..<0.6: Color(red: 0.72, green: 0.92, blue: 1)
-        case ..<0.85: Color(red: 1, green: 0.78, blue: 0.4)
-        default: Color(red: 1, green: 0.45, blue: 0.4)
+        case ..<0.6: NSColor(srgbRed: 0.72, green: 0.92, blue: 1, alpha: 1)
+        case ..<0.85: NSColor(srgbRed: 1, green: 0.78, blue: 0.4, alpha: 1)
+        default: NSColor(srgbRed: 1, green: 0.45, blue: 0.4, alpha: 1)
         }
+    }
+}
+
+/// Only readings update SwiftUI. Core Animation interpolates the stroke/width between readings,
+/// avoiding a full-screen hosting-view layout on each frame of the 0.8-second transition.
+private struct LiveWallpaperMeter: NSViewRepresentable {
+    let fraction: Double
+    let load: Double
+    let kind: LiveWallpaperMeterView.Kind
+    let scale: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeNSView(context: Context) -> LiveWallpaperMeterView { LiveWallpaperMeterView() }
+
+    func updateNSView(_ view: LiveWallpaperMeterView, context: Context) {
+        view.update(fraction: fraction, load: load, kind: kind, scale: scale, reduceMotion: reduceMotion)
+    }
+
+    static func dismantleNSView(_ view: LiveWallpaperMeterView, coordinator: ()) { view.stopAnimations() }
+}
+
+@MainActor
+final class LiveWallpaperMeterView: NSView {
+    enum Kind: Equatable { case ring, bar }
+    static let animationDuration = 0.8
+    private(set) var kind: Kind = .ring
+    private(set) var scale: CGFloat = 1
+    private(set) var fraction: Double = 0
+    private var load: Double = 0
+    private var configured = false
+    private var geometryBounds: CGRect?
+    let trackLayer = CAShapeLayer()
+    let valueLayer = CAShapeLayer()
+
+    override var isFlipped: Bool { true }
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.masksToBounds = false
+        layer?.addSublayer(trackLayer)
+        layer?.addSublayer(valueLayer)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func update(fraction: Double, load: Double, kind: Kind, scale: CGFloat, reduceMotion: Bool) {
+        let fraction = fraction.isFinite ? min(1, max(0, fraction)) : 0
+        let load = load.isFinite ? min(1, max(0, load)) : 0
+        let geometryChanged = !configured || self.kind != kind || self.scale != scale
+        let valueChanged = self.fraction != fraction || self.load != load
+        if reduceMotion { stopAnimations() }
+        guard geometryChanged || valueChanged else { return }
+        let animate = configured && !geometryChanged && !reduceMotion && window != nil
+        let previousValue = valueLayer.presentation() ?? valueLayer
+        let previousEnd = previousValue.strokeEnd
+        let previousBounds = previousValue.bounds
+        let previousColor = kind == .ring ? previousValue.strokeColor : previousValue.backgroundColor
+        self.kind = kind
+        self.scale = scale
+        self.fraction = fraction
+        self.load = load
+        configured = true
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if geometryChanged {
+            stopAnimations()
+            geometryBounds = nil
+            updateGeometry()
+        }
+        let color = LiveWallpaperOverlayPalette.nativeLoad(load).cgColor
+        switch kind {
+        case .ring:
+            valueLayer.strokeEnd = fraction
+            valueLayer.strokeColor = color
+        case .bar:
+            valueLayer.bounds = CGRect(x: 0, y: 0, width: bounds.width * fraction, height: bounds.height)
+            valueLayer.backgroundColor = color
+        }
+        CATransaction.commit()
+        if animate {
+            if kind == .ring {
+                addAnimation("strokeEnd", from: previousEnd, to: fraction)
+                addAnimation("strokeColor", from: previousColor, to: color)
+            } else {
+                addAnimation("bounds", from: NSValue(rect: previousBounds), to: NSValue(rect: valueLayer.bounds))
+                addAnimation("backgroundColor", from: previousColor, to: color)
+            }
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        updateGeometry()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { stopAnimations() }
+    }
+
+    func stopAnimations() {
+        trackLayer.removeAllAnimations()
+        valueLayer.removeAllAnimations()
+    }
+
+    private func updateGeometry() {
+        guard geometryBounds != bounds else { return }
+        geometryBounds = bounds
+        stopAnimations()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        trackLayer.frame = bounds
+        valueLayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        valueLayer.frame = bounds
+        trackLayer.fillColor = nil
+        valueLayer.fillColor = nil
+        trackLayer.strokeColor = nil
+        valueLayer.strokeColor = nil
+        trackLayer.backgroundColor = nil
+        valueLayer.backgroundColor = nil
+        switch kind {
+        case .ring:
+            let path = CGMutablePath()
+            path.addArc(center: CGPoint(x: bounds.midX, y: bounds.midY), radius: bounds.width / 2,
+                        startAngle: -.pi / 2, endAngle: 3 * .pi / 2, clockwise: false)
+            trackLayer.path = path
+            valueLayer.path = path
+            trackLayer.lineWidth = 5 * scale
+            valueLayer.lineWidth = 5 * scale
+            valueLayer.lineCap = .round
+            valueLayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            trackLayer.strokeColor = NSColor.white.withAlphaComponent(0.16).cgColor
+            valueLayer.strokeColor = LiveWallpaperOverlayPalette.nativeLoad(load).cgColor
+            valueLayer.strokeEnd = fraction
+        case .bar:
+            trackLayer.path = nil
+            valueLayer.path = nil
+            trackLayer.backgroundColor = NSColor.white.withAlphaComponent(0.16).cgColor
+            valueLayer.backgroundColor = LiveWallpaperOverlayPalette.nativeLoad(load).cgColor
+            trackLayer.cornerRadius = bounds.height / 2
+            valueLayer.cornerRadius = bounds.height / 2
+            valueLayer.anchorPoint = .zero
+            valueLayer.position = .zero
+            valueLayer.bounds = CGRect(x: 0, y: 0, width: bounds.width * fraction, height: bounds.height)
+        }
+        CATransaction.commit()
+    }
+
+    private func addAnimation(_ keyPath: String, from: Any?, to: Any?) {
+        let animation = CABasicAnimation(keyPath: keyPath)
+        animation.fromValue = from
+        animation.toValue = to
+        animation.duration = Self.animationDuration
+        animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        valueLayer.add(animation, forKey: keyPath)
     }
 }

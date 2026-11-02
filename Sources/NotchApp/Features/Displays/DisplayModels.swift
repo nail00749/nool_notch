@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import IOKit.graphics
 
 struct DisplayInfo: Identifiable, Equatable {
     let id: String
@@ -50,6 +51,8 @@ struct DisplayModeOption: Identifiable, Hashable, Codable {
     let pixelWidth: Int
     let pixelHeight: Int
     let refreshRate: Double
+    // Optional for compatibility with previously encoded mode descriptions.
+    let ioFlags: UInt32?
 
     var isHiDPI: Bool { pixelWidth > width }
 
@@ -58,18 +61,19 @@ struct DisplayModeOption: Identifiable, Hashable, Codable {
         return "\(width) × \(height)\(isHiDPI ? " · HiDPI" : "")\(rate)"
     }
 
-    init(id: UInt32, width: Int, height: Int, pixelWidth: Int, pixelHeight: Int, refreshRate: Double) {
+    init(id: UInt32, width: Int, height: Int, pixelWidth: Int, pixelHeight: Int, refreshRate: Double, ioFlags: UInt32? = nil) {
         self.id = id
         self.width = width
         self.height = height
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
         self.refreshRate = refreshRate
+        self.ioFlags = ioFlags
     }
 
     init(_ mode: CGDisplayMode) {
         self.init(id: UInt32(bitPattern: mode.ioDisplayModeID), width: mode.width, height: mode.height,
-                  pixelWidth: mode.pixelWidth, pixelHeight: mode.pixelHeight, refreshRate: mode.refreshRate)
+                  pixelWidth: mode.pixelWidth, pixelHeight: mode.pixelHeight, refreshRate: mode.refreshRate, ioFlags: mode.ioFlags)
     }
 
     /// Prefer the actual current mode when duplicate driver modes describe the same choice.
@@ -79,11 +83,22 @@ struct DisplayModeOption: Identifiable, Hashable, Codable {
             let height: Int
             let refreshRate: Double
             let isHiDPI: Bool
+            let pixelWidth: Int
+            let pixelHeight: Int
         }
         var unique: [Key: DisplayModeOption] = [:]
         for mode in modes {
-            let key = Key(width: mode.width, height: mode.height, refreshRate: mode.refreshRate, isHiDPI: mode.isHiDPI)
-            if unique[key] == nil || mode.id == currentModeID { unique[key] = mode }
+            let key = Key(width: mode.width, height: mode.height, refreshRate: mode.refreshRate, isHiDPI: mode.isHiDPI,
+                          pixelWidth: mode.pixelWidth, pixelHeight: mode.pixelHeight)
+            if let existing = unique[key] {
+                // Identical UI labels can conceal different driver timings. Preserve
+                // a working current mode; otherwise prefer the driver's default.
+                if existing.id == currentModeID { continue }
+                let preferred = (mode.ioFlags ?? 0) & UInt32(kDisplayModeDefaultFlag) != 0
+                let existingPreferred = (existing.ioFlags ?? 0) & UInt32(kDisplayModeDefaultFlag) != 0
+                if mode.id == currentModeID || (preferred && !existingPreferred) ||
+                    (preferred == existingPreferred && mode.id < existing.id) { unique[key] = mode }
+            } else { unique[key] = mode }
         }
         return unique.values.sorted {
             if $0.width != $1.width { return $0.width > $1.width }
@@ -92,6 +107,13 @@ struct DisplayModeOption: Identifiable, Hashable, Codable {
             if $0.refreshRate != $1.refreshRate { return $0.refreshRate > $1.refreshRate }
             return $0.id < $1.id
         }
+    }
+
+    static func frequencyVariants(_ modes: [DisplayModeOption], current: DisplayModeOption) -> [DisplayModeOption] {
+        deduplicated(modes.filter {
+            $0.width == current.width && $0.height == current.height &&
+            $0.pixelWidth == current.pixelWidth && $0.pixelHeight == current.pixelHeight
+        }, currentModeID: current.id)
     }
 }
 

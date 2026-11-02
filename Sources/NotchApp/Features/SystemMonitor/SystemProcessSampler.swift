@@ -21,6 +21,21 @@ struct MonitoredSystemProcess: Identifiable, Sendable, Equatable {
     // Activity Monitor's per-core convention: a multicore process may exceed 100%.
     let cpuPercent: Double?
     let residentMemoryBytes: UInt64
+    let parentPID: Int32?
+    let executablePath: String?
+    let applicationPath: String?
+
+    init(id: String, pid: Int32, name: String, cpuPercent: Double?, residentMemoryBytes: UInt64,
+         parentPID: Int32? = nil, executablePath: String? = nil, applicationPath: String? = nil) {
+        self.id = id
+        self.pid = pid
+        self.name = name
+        self.cpuPercent = cpuPercent
+        self.residentMemoryBytes = residentMemoryBytes
+        self.parentPID = parentPID
+        self.executablePath = executablePath
+        self.applicationPath = applicationPath
+    }
 }
 
 struct SystemProcessSnapshot: Sendable {
@@ -64,6 +79,23 @@ struct SystemProcessRawReading: Sendable {
     let userTime: UInt64
     let systemTime: UInt64
     let residentMemoryBytes: UInt64
+    let parentPID: Int32?
+    let executablePath: String?
+    let applicationPath: String?
+
+    init(id: String, pid: Int32, name: String, userTime: UInt64, systemTime: UInt64,
+         residentMemoryBytes: UInt64, parentPID: Int32? = nil,
+         executablePath: String? = nil, applicationPath: String? = nil) {
+        self.id = id
+        self.pid = pid
+        self.name = name
+        self.userTime = userTime
+        self.systemTime = systemTime
+        self.residentMemoryBytes = residentMemoryBytes
+        self.parentPID = parentPID
+        self.executablePath = executablePath
+        self.applicationPath = applicationPath
+    }
 }
 
 // Calculation is independent of libproc so PID reuse, warm-up and counter
@@ -129,7 +161,10 @@ struct SystemProcessCalculator {
             pid: reading.pid,
             name: reading.name,
             cpuPercent: cpuPercent,
-            residentMemoryBytes: reading.residentMemoryBytes
+            residentMemoryBytes: reading.residentMemoryBytes,
+            parentPID: reading.parentPID,
+            executablePath: reading.executablePath,
+            applicationPath: reading.applicationPath
         )
     }
 }
@@ -137,6 +172,13 @@ struct SystemProcessCalculator {
 actor SystemProcessSampler: SystemProcessSampling {
     private static let maximumPIDs = 16_384
     private var calculator: SystemProcessCalculator
+    private struct PathMetadata {
+        let executablePath: String?
+        let applicationPath: String?
+    }
+    // Includes failed lookups; protected processes must not trigger a path read
+    // every two seconds. Entries are keyed by PID plus kernel start time.
+    private var pathCache: [String: PathMetadata] = [:]
 
     init() {
         var timebase = mach_timebase_info_data_t()
@@ -151,6 +193,7 @@ actor SystemProcessSampler: SystemProcessSampling {
         let sampledAt = Date()
         guard !Task.isCancelled, let pids = Self.listPIDs() else {
             calculator.reset()
+            pathCache.removeAll(keepingCapacity: true)
             return SystemProcessSnapshot(sampledAt: sampledAt, processes: [], skippedProcessCount: 0)
         }
 
@@ -160,20 +203,24 @@ actor SystemProcessSampler: SystemProcessSampling {
         for pid in pids {
             if Task.isCancelled {
                 calculator.reset()
+                pathCache.removeAll(keepingCapacity: true)
                 return SystemProcessSnapshot(sampledAt: sampledAt, processes: [], skippedProcessCount: skipped)
             }
-            guard let reading = Self.readProcess(pid) else {
+            guard let reading = readProcess(pid) else {
                 skipped += 1 // Gone or protected by the OS; no guessed values.
                 continue
             }
             readings.append(reading)
         }
+        let currentIDs = Set(readings.map(\.id))
+        pathCache = pathCache.filter { currentIDs.contains($0.key) }
         let processes = calculator.calculate(readings, uptime: ProcessInfo.processInfo.systemUptime)
         return SystemProcessSnapshot(sampledAt: sampledAt, processes: processes, skippedProcessCount: skipped)
     }
 
     func reset() async {
         calculator.reset()
+        pathCache.removeAll(keepingCapacity: true)
     }
 
     private static func listPIDs() -> [Int32]? {
@@ -186,7 +233,7 @@ actor SystemProcessSampler: SystemProcessSampling {
         return Array(pids.prefix(Int(count)).filter { $0 > 0 })
     }
 
-    private static func readProcess(_ pid: Int32) -> SystemProcessRawReading? {
+    private func readProcess(_ pid: Int32) -> SystemProcessRawReading? {
         // One kernel read keeps the name, start time and counters on the same PID.
         var info = proc_taskallinfo()
         let size = Int32(MemoryLayout<proc_taskallinfo>.size)
@@ -196,19 +243,55 @@ actor SystemProcessSampler: SystemProcessSampling {
         guard result == size, info.pbsd.pbi_pid == UInt32(pid),
               info.pbsd.pbi_start_tvusec < 1_000_000 else { return nil }
 
-        let name = decodedName(info.pbsd.pbi_name).isEmpty
-            ? decodedName(info.pbsd.pbi_comm)
-            : decodedName(info.pbsd.pbi_name)
+        let name = Self.decodedName(info.pbsd.pbi_name).isEmpty
+            ? Self.decodedName(info.pbsd.pbi_comm)
+            : Self.decodedName(info.pbsd.pbi_name)
         guard !name.isEmpty else { return nil }
         let id = "\(pid):\(info.pbsd.pbi_start_tvsec):\(info.pbsd.pbi_start_tvusec)"
+        let metadata: PathMetadata
+        if let cached = pathCache[id] {
+            metadata = cached
+        } else {
+            let executablePath = Self.readExecutablePath(pid, expectedInfo: info.pbsd)
+            metadata = PathMetadata(executablePath: executablePath,
+                                    applicationPath: executablePath.flatMap(SystemProcessGrouping.applicationPath(forExecutablePath:)))
+            if pathCache.count < Self.maximumPIDs { pathCache[id] = metadata }
+        }
         return SystemProcessRawReading(
             id: id,
             pid: pid,
             name: (name as NSString).lastPathComponent,
             userTime: info.ptinfo.pti_total_user,
             systemTime: info.ptinfo.pti_total_system,
-            residentMemoryBytes: info.ptinfo.pti_resident_size
+            residentMemoryBytes: info.ptinfo.pti_resident_size,
+            parentPID: info.pbsd.pbi_ppid > 0 ? Int32(exactly: info.pbsd.pbi_ppid) : nil,
+            executablePath: metadata.executablePath,
+            applicationPath: metadata.applicationPath
         )
+    }
+
+    private static func readExecutablePath(_ pid: Int32, expectedInfo: proc_bsdinfo) -> String? {
+        // PROC_PIDPATHINFO_MAXSIZE is 4 * MAXPATHLEN in the public SDK, but
+        // that expression macro is not imported by Swift.
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        let count = buffer.withUnsafeMutableBytes {
+            proc_pidpath(pid, $0.baseAddress, UInt32($0.count))
+        }
+        guard count > 0 else { return nil }
+        // A process may exit and its PID may be reused between the two kernel
+        // calls. Do not attach the replacement's executable to the old reading.
+        var confirmed = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        let result = withUnsafeMutablePointer(to: &confirmed) {
+            proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, $0, size)
+        }
+        guard result == size, confirmed.pbi_pid == expectedInfo.pbi_pid,
+              confirmed.pbi_start_tvsec == expectedInfo.pbi_start_tvsec,
+              confirmed.pbi_start_tvusec == expectedInfo.pbi_start_tvusec else { return nil }
+        let path = buffer.withUnsafeBytes { bytes in
+            String(decoding: bytes.prefix(while: { $0 != 0 }), as: UTF8.self)
+        }
+        return path.hasPrefix("/") ? path : nil
     }
 
     private static func decodedName<T>(_ value: T) -> String {

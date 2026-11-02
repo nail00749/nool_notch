@@ -328,8 +328,15 @@ struct SystemMonitorSettingsView: View {
                     Toggle("Показывать мониторинг", isOn: preference(\.enabled)).frame(minHeight: 40)
                     Text("В покое виден только тонкий маркер у края или в углу экрана. Наведите указатель, чтобы открыть показатели; они скроются после ухода указателя.")
                         .settingsHintStyle()
-                    Text("Нажмите на CPU или ОЗУ, чтобы увидеть пять самых ресурсоёмких процессов.")
+                    Text("Нажмите на CPU или ОЗУ, чтобы увидеть группы приложений со значками и раскрыть их процессы.")
                         .settingsHintStyle()
+                }
+            }
+            SettingsCard(title: "Охлаждение", icon: "fanblades") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Температуры, обороты вентиляторов и управление охлаждением в отдельной панели.")
+                        .settingsHintStyle()
+                    Button("Открыть охлаждение") { CoolingWindowCoordinator.shared.show() }
                 }
             }
             SettingsCard(title: "Размещение", icon: "rectangle.inset.filled") {

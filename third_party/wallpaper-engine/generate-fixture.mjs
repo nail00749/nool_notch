@@ -1,0 +1,23 @@
+import fs from 'node:fs';
+import zlib from 'node:zlib';
+import {create,fx,pt,buildScenePkg,parsePkg,getEntry} from './fixture-api.mjs';
+const enc=new TextEncoder();
+function png(w,h){const stride=w*3+1;const raw=Buffer.alloc(stride*h);for(let y=0;y<h;y++)for(let x=0;x<w;x++){const p=y*stride+1+x*3;raw[p]=15+Math.floor(x/w*55);raw[p+1]=25+Math.floor(y/h*100);raw[p+2]=(Math.floor(x/12)+Math.floor(y/12))%2?200:80;}const chunk=(type,data)=>{const len=Buffer.alloc(4);len.writeUInt32BE(data.length);const td=Buffer.concat([Buffer.from(type),data]);const crc=Buffer.alloc(4);crc.writeUInt32BE(zlib.crc32(td));return Buffer.concat([len,td,crc]);};const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(w);ihdr.writeUInt32BE(h,4);ihdr[8]=8;ihdr[9]=2;return new Uint8Array(Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',ihdr),chunk('IDAT',zlib.deflateSync(raw)),chunk('IEND',Buffer.alloc(0))]));}
+const doc=create.newDocument('NooL animated scene fixture',640,360,[.02,.03,.06]);
+const img={name:'NooL checker gradient.png',bytes:png(320,180),ext:'png',width:320,height:180};
+const files=create.imageLayerFiles('background',img).map(f=>({path:f.name,data:f.data}));
+const id=create.addImageLayer(doc,'background',img,'cover');
+const obj=doc.scene.objects.find(o=>o.id===id);
+fx.addEffect(obj,'wave');
+fx.setEffectParam(obj,0,'amplitude',.06);
+fx.setEffectParam(obj,0,'speed',2);
+for(const f of fx.effectFiles(fx.effectById('wave')))files.push({path:f.name,data:f.data});
+for(const f of pt.particleLayerFiles(doc,'snow','snow'))files.push({path:f.name,data:f.data});
+pt.addParticleLayer(doc,'snow','Animated snow','snow');
+files.push({path:'scene.json',data:enc.encode(JSON.stringify(doc.scene))});
+const result=buildScenePkg(files);
+const pkg=parsePkg(result.pkg);
+if(!getEntry(pkg,'scene.json')||!result.entries.some(x=>x.endsWith('.tex')))throw new Error('fixture roundtrip failed');
+const dir='/tmp/nool-wallpaper-engine-fixture';fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(dir+'/scene.pkg',result.pkg);fs.writeFileSync(dir+'/project.json',JSON.stringify(doc.project,null,2)+'\n');
+fs.writeFileSync(dir+'/fixture-manifest.json',JSON.stringify({title:doc.title,entries:result.entries,converted:result.converted,scene:doc.scene},null,2)+'\n');
+console.log(JSON.stringify({directory:dir,pkgBytes:result.pkg.length,entries:result.entries.length,converted:result.converted}));

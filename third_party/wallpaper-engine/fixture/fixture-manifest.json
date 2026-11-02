@@ -1,0 +1,79 @@
+{
+  "title": "NooL animated scene fixture",
+  "entries": [
+    "effects/wwgl_wave/effect.json",
+    "materials/editor/background.json",
+    "materials/editor/background.tex",
+    "materials/editor/particles/snow.json",
+    "materials/effects/wwgl_wave.json",
+    "models/editor/background.json",
+    "particles/editor/snow.json",
+    "scene.json",
+    "shaders/effects/wwgl_wave.frag",
+    "shaders/effects/wwgl_wave.vert"
+  ],
+  "converted": [
+    "materials/editor/background.tex"
+  ],
+  "scene": {
+    "camera": {
+      "center": "0.000 0.000 -1.000",
+      "eye": "0.000 0.000 0.000",
+      "up": "0.000 1.000 0.000"
+    },
+    "general": {
+      "ambientcolor": "0.300 0.300 0.300",
+      "bloom": false,
+      "clearcolor": "0.020 0.030 0.060",
+      "norecompile": true,
+      "orthogonalprojection": {
+        "width": 640,
+        "height": 360
+      },
+      "skylightcolor": "0.300 0.300 0.300"
+    },
+    "objects": [
+      {
+        "angles": "0.000 0.000 0.000",
+        "id": 1,
+        "image": "models/editor/background.json",
+        "name": "NooL checker gradient",
+        "origin": "320.000 180.000 0.000",
+        "scale": "2.000 2.000 1.000",
+        "effects": [
+          {
+            "file": "effects/wwgl_wave/effect.json",
+            "name": "wave",
+            "visible": true,
+            "passes": [
+              {
+                "constantshadervalues": {
+                  "amplitude": 0.06,
+                  "frequency": 4,
+                  "speed": 2
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "angles": "0.000 0.000 0.000",
+        "id": 2,
+        "instanceoverride": {
+          "alpha": 1,
+          "count": 1,
+          "lifetime": 1,
+          "rate": 1,
+          "size": 1,
+          "speed": 1
+        },
+        "name": "Animated snow",
+        "origin": "320.000 180.000 0.000",
+        "particle": "particles/editor/snow.json",
+        "scale": "1.000 1.000 1.000",
+        "visible": true
+      }
+    ]
+  }
+}

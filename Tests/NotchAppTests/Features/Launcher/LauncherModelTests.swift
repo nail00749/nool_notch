@@ -1,7 +1,65 @@
+import AppKit
+import Combine
 import XCTest
 @testable import NotchApp
 
 final class LauncherModelTests: XCTestCase {
+    @MainActor
+    func testSourceUpdatesWaitForPresentationAndUnchangedResultsDoNotPublish() async throws {
+        let suite = "launcher-source-publications-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name(suite))
+        pasteboard.clearContents()
+        let clipboard = LauncherClipboardStore(persistenceURL: directory.appendingPathComponent("history.json"),
+                                                pasteboard: pasteboard)
+        defer { clipboard.stop() }
+        let settings = LauncherSettings(defaults: defaults)
+        settings.clipboardEnabled = true
+        clipboard.configure(enabled: true, limit: 100, retentionDays: 7)
+        await clipboard.waitForPersistence()
+        let model = LauncherModel(settings: settings, clipboard: clipboard, snippets: LauncherSnippetStore(url: nil))
+        defer { model.dismiss() }
+        var publications = 0
+        let observation = model.objectWillChange.sink { publications += 1 }
+        defer { observation.cancel() }
+
+        pasteboard.clearContents()
+        pasteboard.setString("saved while closed", forType: .string)
+        clipboard.captureIfChanged()
+        await clipboard.waitForPersistence()
+        for _ in 0..<20 { model.clipboard.objectWillChange.send() }
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(publications, 0, "A hidden launcher must not rank source notifications")
+        XCTAssertTrue(model.results.isEmpty)
+
+        model.present()
+        model.category = .clipboard
+        for _ in 0..<100 where model.results.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(model.results.map(\.title), ["saved while closed"])
+        // Allow the application scan started by present() to settle; in the
+        // clipboard category it cannot change any visible result or status.
+        try await Task.sleep(for: .milliseconds(150))
+        publications = 0
+        for _ in 0..<20 { model.clipboard.objectWillChange.send() }
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(publications, 0, "Identical rankings and status must not invalidate the visible view")
+
+        pasteboard.clearContents()
+        pasteboard.setString("saved while open", forType: .string)
+        clipboard.captureIfChanged()
+        await clipboard.waitForPersistence()
+        for _ in 0..<100 where model.results.count != 2 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(Set(model.results.map(\.title)), ["saved while closed", "saved while open"])
+        XCTAssertGreaterThan(publications, 0, "Real source changes must still update the visible launcher")
+    }
+
     @MainActor
     func testChangingInputImmediatelyInvalidatesTheActionableSelection() async throws {
         let suite = "launcher-model-\(UUID().uuidString)"
@@ -54,6 +112,15 @@ final class LauncherModelTests: XCTestCase {
     func testArithmeticOnlyAppearsInAllCategory() {
         XCTAssertEqual(LauncherModel.searchResults([], clipboard: [], query: "24 * 7", category: .all).first?.payload, .calculation("168"))
         XCTAssertTrue(LauncherModel.searchResults([], clipboard: [], query: "24 * 7", category: .files).isEmpty)
+    }
+
+    func testCurrencyResultPrecedesSearchMatchesOnlyInAllCategory() {
+        let conversion = LauncherResult(id: "currency", title: "20 000 ₽", subtitle: "250 USD → RUB",
+                                        payload: .calculation("20 000 ₽"))
+        XCTAssertEqual(LauncherModel.searchResults([], clipboard: [], query: "250$", category: .all,
+                                                   currency: conversion).first, conversion)
+        XCTAssertTrue(LauncherModel.searchResults([], clipboard: [], query: "250$", category: .files,
+                                                  currency: conversion).isEmpty)
     }
 
     func testNoolMetadataMatchesRemainVisibleOnlyInAllScope() {

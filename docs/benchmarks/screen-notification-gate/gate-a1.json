@@ -1,0 +1,30 @@
+{
+  "renderer": "before-gate",
+  "label": "gate-a1",
+  "pid": 41743,
+  "started": 1792573511.3573272,
+  "duration": 32.193686723709106,
+  "cpu": [
+    12.3,
+    15.6,
+    39.2,
+    31.7,
+    13.2,
+    13.8,
+    14.1,
+    10.7,
+    52.8,
+    20.9,
+    14.3,
+    16.2,
+    18.3,
+    13.9,
+    15.9
+  ],
+  "mean": 20.19333333333333,
+  "median": 15.6,
+  "minimum": 10.7,
+  "maximum": 52.8,
+  "preferencesBefore": "a367643c0a1bfb4a2786b678be0aafb6cc67cc640c17f7d2de6f36915d1f1d77",
+  "preferencesAfter": "a367643c0a1bfb4a2786b678be0aafb6cc67cc640c17f7d2de6f36915d1f1d77"
+}

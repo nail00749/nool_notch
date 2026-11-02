@@ -43,6 +43,7 @@ final class LauncherModel: ObservableObject {
     let clipboard: LauncherClipboardStore
     let snippets: LauncherSnippetStore
     let settings: LauncherSettings
+    let currency: LauncherCurrencyStore
     let modules: AppModuleStore
     let icons = LauncherIcons()
     let aiChat: AIChatStore
@@ -66,9 +67,10 @@ final class LauncherModel: ObservableObject {
          files: LauncherFileProvider = LauncherFileProvider(), clipboard: LauncherClipboardStore = LauncherClipboardStore(),
          aiChat: AIChatStore? = nil, windowLayouts: WindowLayoutManager? = nil,
          snippets: LauncherSnippetStore? = nil, workspaces: WorkspaceStore? = nil,
-         modules: AppModuleStore? = nil) {
+         modules: AppModuleStore? = nil, currency: LauncherCurrencyStore? = nil) {
         let selectedModules = modules ?? AppModuleStore(defaults: nil)
         self.settings = settings
+        self.currency = currency ?? LauncherCurrencyStore()
         self.modules = selectedModules
         previouslyEnabledModules = selectedModules.enabledModules
         self.applications = applications
@@ -91,7 +93,10 @@ final class LauncherModel: ObservableObject {
             }.store(in: &subscriptions)
         Publishers.Merge3(applications.objectWillChange, files.objectWillChange, clipboard.objectWillChange)
             .receive(on: RunLoop.main)
-            .sink { [weak self] in self?.rebuild() }
+            .sink { [weak self] in
+                guard let self, self.isVisible else { return }
+                self.rebuild()
+            }
             .store(in: &subscriptions)
         self.snippets.objectWillChange.receive(on: RunLoop.main)
             .sink { [weak self] in
@@ -102,6 +107,11 @@ final class LauncherModel: ObservableObject {
         self.modules.changes.sink { [weak self] _ in self?.moduleAvailabilityChanged() }
             .store(in: &subscriptions)
         self.displays.objectWillChange.receive(on: RunLoop.main)
+            .sink { [weak self] in
+                guard let self, self.isVisible else { return }
+                self.rebuild()
+            }.store(in: &subscriptions)
+        self.currency.objectWillChange.receive(on: RunLoop.main)
             .sink { [weak self] in
                 guard let self, self.isVisible else { return }
                 self.rebuild()
@@ -173,7 +183,9 @@ final class LauncherModel: ObservableObject {
         message = displays.errorMessage
     }
 
-    func clearPreviewKeyboardSelection() { previewKeyboardSelectionID = nil }
+    func clearPreviewKeyboardSelection() {
+        if previewKeyboardSelectionID != nil { previewKeyboardSelectionID = nil }
+    }
 
     func selectResult(_ id: String) {
         clearPreviewKeyboardSelection()
@@ -352,6 +364,7 @@ final class LauncherModel: ObservableObject {
         files.stop()
         refreshTask?.cancel()
         refreshTask = nil
+        currency.stop()
         query = ""
     }
 
@@ -361,6 +374,7 @@ final class LauncherModel: ObservableObject {
         } else {
             clipboard.stop()
         }
+        currency.update(input: query, defaultTarget: settings.defaultCurrency)
         queryChanged()
     }
 
@@ -401,12 +415,31 @@ final class LauncherModel: ObservableObject {
         if actionResult != nil { moveAction(offset); return }
         guard jiraActionDestination == nil else { return }
         guard !showsQuickAI else { return }
-        selectedID = LauncherSelection.moved(current: selectedID, offset: offset, ids: results.map(\.id))
+        // With a query, keep native caret editing and visit every result using ↑/↓.
+        // An empty field uses spatial navigation across the application tiles.
+        if usesApplicationGrid && query.isEmpty {
+            selectedID = LauncherResultLayout.verticalSelection(current: selectedID, offset: offset, results: results)
+        } else {
+            selectedID = LauncherSelection.moved(current: selectedID, offset: offset, ids: results.map(\.id))
+        }
         if let selectedResult, case .file = selectedResult.payload {
             previewKeyboardSelectionID = selectedResult.id
         } else {
             clearPreviewKeyboardSelection()
         }
+    }
+
+    var usesApplicationGrid: Bool {
+        settings.applicationLayout == .grid && (category == .all || category == .applications)
+    }
+
+    func moveApplicationHorizontally(_ offset: Int) -> Bool {
+        guard query.isEmpty, usesApplicationGrid, actionResult == nil, jiraActionDestination == nil,
+              !showsQuickAI, selectedNoolEvent == nil,
+              let selectedResult, case .application = selectedResult.payload else { return false }
+        selectedID = LauncherResultLayout.horizontalSelection(current: selectedID, offset: offset, results: results)
+        clearPreviewKeyboardSelection()
+        return true
     }
 
     func cycleCategory(backwards: Bool = false) {
@@ -426,6 +459,7 @@ final class LauncherModel: ObservableObject {
         // Otherwise a fast Return could launch the previous query's selection.
         results = []
         selectedID = nil
+        currency.update(input: query, defaultTarget: settings.defaultCurrency)
         if isVisible, category == .all || category == .files {
             files.search(query: query, folders: settings.folders)
         } else {
@@ -465,32 +499,40 @@ final class LauncherModel: ObservableObject {
         noolResults = Dictionary(matchesInNool.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let noolCandidates = matchesInNool.map { LauncherResult(nool: $0) }
         let candidates = matches
+        let currencyResult = currency.result
         rankingTask = Task { [weak self] in
             let worker = Task.detached(priority: .userInitiated) {
-                Self.searchResults(candidates, clipboard: clipboardItems, query: input, category: scope, nool: noolCandidates)
+                Self.searchResults(candidates, clipboard: clipboardItems, query: input, category: scope,
+                                   nool: noolCandidates, currency: currencyResult)
             }
             let found = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
             guard !Task.isCancelled, let self, self.rankingGeneration == generation else { return }
-            self.results = found
-            self.selectedID = LauncherSelection.preserved(current: self.selectedID, ids: found.map(\.id))
+            if self.results != found { self.results = found }
+            let selection = LauncherSelection.preserved(current: self.selectedID, ids: found.map(\.id))
+            if self.selectedID != selection { self.selectedID = selection }
             if self.previewKeyboardSelectionID != self.selectedID { self.clearPreviewKeyboardSelection() }
             if let target = self.actionResult, !found.contains(target) { self.closeActions() }
         }
-        isSearching = ((category == .all || category == .files) && files.isSearching)
+        let searching = ((category == .all || category == .files) && files.isSearching)
             || ((category == .all || category == .applications) && applications.isLoading)
+            || (category == .all && currency.isLoading)
+        if isSearching != searching { isSearching = searching }
         var errors: [String] = []
         if category == .all || category == .files, let error = files.errorMessage { errors.append(error) }
         if category == .all || category == .applications, let error = applications.errorMessage { errors.append(error) }
         if modules.isEnabled(.clipboard), category == .clipboard, let error = clipboard.errorMessage { errors.append(error) }
         if modules.isEnabled(.clipboard), category == .all || category == .clipboard, let error = snippets.errorMessage { errors.append(error) }
-        sourceError = errors.first
+        if category == .all, let error = currency.errorMessage { errors.append(error) }
+        if sourceError != errors.first { sourceError = errors.first }
     }
 
     nonisolated static func searchResults(_ candidates: [LauncherResult], clipboard: [LauncherClipboardItem],
-                                         query: String, category: LauncherCategory, nool: [LauncherResult] = []) -> [LauncherResult] {
+                                         query: String, category: LauncherCategory, nool: [LauncherResult] = [],
+                                         currency: LauncherResult? = nil) -> [LauncherResult] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count <= 512 else { return [] }
         var found: [LauncherResult] = []
+        if category == .all, let currency { found.append(currency) }
         if category == .all, let value = LauncherCalculator.evaluate(trimmed) {
             found.append(LauncherResult(id: "calculator", title: value, subtitle: "Результат · Enter — скопировать",
                                         payload: .calculation(value)))

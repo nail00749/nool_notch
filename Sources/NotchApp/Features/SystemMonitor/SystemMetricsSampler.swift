@@ -1,9 +1,47 @@
 import Darwin
+import Dispatch
 import Foundation
 
 struct SystemInterfaceCounters: Sendable, Equatable {
     let received: UInt64
     let sent: UInt64
+}
+
+enum SystemMemoryDetailsCalculator {
+    static func bytes(pages: UInt64?, pageSize: UInt64?) -> UInt64? {
+        guard let pages, let pageSize, pageSize > 0 else { return nil }
+        let (bytes, overflow) = pages.multipliedReportingOverflow(by: pageSize)
+        return overflow ? nil : bytes
+    }
+
+    static func pressure(rawValue: UInt32?) -> SystemMemoryPressure? {
+        // XNU's read-only kern.memorystatus_vm_pressure_level returns dispatch levels,
+        // not internal VM levels or a percentage. Unknown/unavailable values stay nil.
+        // bsd/kern/kern_memorystatus_notify.c: sysctl_memorystatus_vm_pressure_level.
+        switch rawValue {
+        case UInt32(DispatchSource.MemoryPressureEvent.normal.rawValue): .normal
+        case UInt32(DispatchSource.MemoryPressureEvent.warning.rawValue): .warning
+        case UInt32(DispatchSource.MemoryPressureEvent.critical.rawValue): .critical
+        default: nil
+        }
+    }
+
+    static func make(pageSize: UInt64? = nil, compressorPages: UInt64? = nil,
+                     externalPages: UInt64? = nil, wiredPages: UInt64? = nil,
+                     swapUsedBytes: UInt64? = nil, swapTotalBytes: UInt64? = nil,
+                     pressureRawValue: UInt32? = nil) -> SystemMemoryDetails? {
+        let swapValid: Bool
+        if let used = swapUsedBytes, let total = swapTotalBytes { swapValid = used <= total }
+        else { swapValid = false }
+        let details = SystemMemoryDetails(
+            compressedBytes: bytes(pages: compressorPages, pageSize: pageSize),
+            cachedBytes: bytes(pages: externalPages, pageSize: pageSize),
+            wiredBytes: bytes(pages: wiredPages, pageSize: pageSize),
+            swapUsedBytes: swapValid ? swapUsedBytes : nil,
+            swapTotalBytes: swapValid ? swapTotalBytes : nil,
+            pressure: pressure(rawValue: pressureRawValue))
+        return details == SystemMemoryDetails() ? nil : details
+    }
 }
 
 // Pure delta handling is kept separate from the OS reads so warm-up, resets,
@@ -105,6 +143,13 @@ struct SystemMetricsCalculator {
 }
 
 actor SystemMetricsSampler: SystemMetricsSampling {
+    private struct MemoryVMReading {
+        let usage: SystemResourceUsage?
+        let pageSize: UInt64
+        let compressorPages: UInt64
+        let externalPages: UInt64
+        let wiredPages: UInt64
+    }
     private var calculator = SystemMetricsCalculator()
     private var cachedDisk: SystemResourceUsage?
     private var diskSampledAt: TimeInterval?
@@ -122,6 +167,12 @@ actor SystemMetricsSampler: SystemMetricsSampling {
         }
         let cpu = calculator.cpuFraction(ticks: host == MACH_PORT_NULL ? nil : Self.readCPUTicks(host: host))
         let memory = host == MACH_PORT_NULL ? nil : Self.readMemory(host: host)
+        let swap = Self.readSwapUsage()
+        let memoryDetails = SystemMemoryDetailsCalculator.make(
+            pageSize: memory?.pageSize, compressorPages: memory?.compressorPages,
+            externalPages: memory?.externalPages, wiredPages: memory?.wiredPages,
+            swapUsedBytes: swap?.used, swapTotalBytes: swap?.total,
+            pressureRawValue: Self.readMemoryPressure())
         let network = calculator.networkRate(counters: Self.readNetworkCounters(), uptime: uptime)
 
         if diskSampledAt == nil || uptime - (diskSampledAt ?? uptime) >= 30 {
@@ -131,9 +182,10 @@ actor SystemMetricsSampler: SystemMetricsSampling {
         return SystemMetricsSnapshot(
             sampledAt: now,
             cpuFraction: cpu,
-            memory: memory,
+            memory: memory?.usage,
             disk: cachedDisk,
-            network: network
+            network: network,
+            memoryDetails: memoryDetails
         )
     }
 
@@ -158,7 +210,7 @@ actor SystemMetricsSampler: SystemMetricsSampling {
         return withUnsafeBytes(of: info.cpu_ticks) { Array($0.bindMemory(to: UInt32.self)) }
     }
 
-    private static func readMemory(host: host_t) -> SystemResourceUsage? {
+    private static func readMemory(host: host_t) -> MemoryVMReading? {
         var info = vm_statistics64_data_t()
         let expectedCount = mach_msg_type_number_t(
             MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size
@@ -175,8 +227,8 @@ actor SystemMetricsSampler: SystemMetricsSampling {
             return nil
         }
         var pageSize: vm_size_t = 0
-        guard host_page_size(host, &pageSize) == KERN_SUCCESS else { return nil }
-        return SystemMetricsCalculator.memoryUsage(
+        guard host_page_size(host, &pageSize) == KERN_SUCCESS, pageSize > 0 else { return nil }
+        let usage = SystemMetricsCalculator.memoryUsage(
             totalBytes: ProcessInfo.processInfo.physicalMemory,
             pageSize: UInt64(pageSize),
             activePages: UInt64(info.active_count),
@@ -186,6 +238,25 @@ actor SystemMetricsSampler: SystemMetricsSampling {
             purgeablePages: UInt64(info.purgeable_count),
             externalPages: UInt64(info.external_page_count)
         )
+        return MemoryVMReading(usage: usage, pageSize: UInt64(pageSize),
+            compressorPages: UInt64(info.compressor_page_count), externalPages: UInt64(info.external_page_count),
+            wiredPages: UInt64(info.wire_count))
+    }
+
+    private static func readSwapUsage() -> (used: UInt64, total: UInt64)? {
+        var usage = xsw_usage()
+        var size = MemoryLayout<xsw_usage>.size
+        guard sysctlbyname("vm.swapusage", &usage, &size, nil, 0) == 0,
+              size == MemoryLayout<xsw_usage>.size, usage.xsu_used <= usage.xsu_total else { return nil }
+        return (usage.xsu_used, usage.xsu_total)
+    }
+
+    private static func readMemoryPressure() -> UInt32? {
+        var level: UInt32 = 0
+        var size = MemoryLayout<UInt32>.size
+        guard sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0) == 0,
+              size == MemoryLayout<UInt32>.size else { return nil }
+        return level
     }
 
     private static func readDisk() -> SystemResourceUsage? {

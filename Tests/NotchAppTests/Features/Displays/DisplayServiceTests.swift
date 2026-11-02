@@ -2,6 +2,30 @@ import XCTest
 @testable import NotchApp
 
 final class DisplayServiceTests: XCTestCase {
+    func testLegacyModeDescriptionWithoutFlagsStillDecodes() throws {
+        let json = #"{"id":1,"width":1920,"height":1080,"pixelWidth":3840,"pixelHeight":2160,"refreshRate":60}"#
+        let decoded = try JSONDecoder().decode(DisplayModeOption.self, from: Data(json.utf8))
+        XCTAssertNil(decoded.ioFlags)
+        XCTAssertEqual(decoded, mode(id: 1))
+    }
+
+    func testOdysseyFrequencyPrefersDriverDefaultRegardlessOfEnumerationOrder() {
+        let current = DisplayModeOption(id: 436, width: 5120, height: 1440, pixelWidth: 5120, pixelHeight: 1440, refreshRate: 120, ioFlags: 0x2000003)
+        let alternate = DisplayModeOption(id: 434, width: 5120, height: 1440, pixelWidth: 5120, pixelHeight: 1440, refreshRate: 240, ioFlags: 0x2000003)
+        let preferred = DisplayModeOption(id: 435, width: 5120, height: 1440, pixelWidth: 5120, pixelHeight: 1440, refreshRate: 240, ioFlags: 0x2000007)
+        for modes in [[alternate, preferred, current], [preferred, current, alternate]] {
+            XCTAssertEqual(DisplayModeOption.frequencyVariants(modes, current: current).map(\.id), [435, 436])
+            XCTAssertEqual(DisplayModeOption.frequencyVariants(modes, current: alternate).map(\.id), [434, 436])
+        }
+    }
+
+    func testFrequencyDoesNotChangePixelGeometry() {
+        let current = mode(id: 1)
+        let other = mode(id: 2, pixelWidth: 4096, pixelHeight: 2304, refreshRate: 120)
+        XCTAssertEqual(DisplayModeOption.deduplicated([current, other], currentModeID: 1).count, 2)
+        XCTAssertEqual(DisplayModeOption.frequencyVariants([current, other], current: current).map(\.id), [1])
+    }
+
     func testModeDeduplicationPreservesCurrentDriverMode() {
         let duplicate = mode(id: 1)
         let current = mode(id: 2)

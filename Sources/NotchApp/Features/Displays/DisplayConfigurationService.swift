@@ -324,10 +324,14 @@ final class CoreGraphicsDisplayConfigurationService: DisplayConfigurationServing
     }
 
     private func resolvePresetMode(_ saved: SavedDisplayMode, displayID: UInt32, uuid: String) throws -> CGDisplayMode {
-        if let mode = allModes(displayID).first(where: { $0.isUsableForDesktopGUI() && saved.matches(DisplayModeOption($0)) }) {
+        let current = CGDisplayCopyDisplayMode(displayID)
+        let candidates = allModes(displayID).filter { $0.isUsableForDesktopGUI() && saved.matches(DisplayModeOption($0)) }
+        let preferred = DisplayModeOption.deduplicated(candidates.map(DisplayModeOption.init),
+            currentModeID: current.map { UInt32(bitPattern: $0.ioDisplayModeID) }).first
+        if let preferred, let mode = candidates.first(where: { UInt32(bitPattern: $0.ioDisplayModeID) == preferred.id }) {
             return mode
         }
-        if let mode = CGDisplayCopyDisplayMode(displayID), mode.isUsableForDesktopGUI(), saved.matches(DisplayModeOption(mode)) {
+        if let mode = current, mode.isUsableForDesktopGUI(), saved.matches(DisplayModeOption(mode)) {
             return mode
         }
         throw DisplayPresetError.modeUnavailable(displayUUID: uuid)

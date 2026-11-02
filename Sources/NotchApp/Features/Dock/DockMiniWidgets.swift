@@ -17,13 +17,7 @@ struct DockMiniGauge<Center: View>: View {
     var body: some View {
         VStack(spacing: 2) {
             ZStack {
-                Circle().stroke(.white.opacity(0.12), lineWidth: 3)
-                if let fraction {
-                    Circle().trim(from: 0, to: min(max(fraction, 0), 1))
-                        .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                        .animation(.easeOut(duration: 0.35), value: fraction)
-                }
+                DockMiniGaugeRing(fraction: fraction, color: color)
                 center().foregroundStyle(color)
             }.frame(width: size, height: size)
             Text(value)
@@ -124,6 +118,7 @@ final class DockSystemLoadStore: ObservableObject {
     static let shared = DockSystemLoadStore()
 
     @Published private(set) var snapshot: SystemMetricsSnapshot?
+    @Published private(set) var history = SystemMetricsHistory()
 
     private let sampler: any SystemMetricsSampling
     private let interval: TimeInterval
@@ -168,6 +163,7 @@ final class DockSystemLoadStore: ObservableObject {
     private func reconcile() {
         pollingTask?.cancel()
         pollingTask = nil
+        history = SystemMetricsHistory()
         guard viewers > 0, asleep == false else { return }
         let sampler = sampler
         let interval = interval
@@ -178,6 +174,7 @@ final class DockSystemLoadStore: ObservableObject {
                 let next = await sampler.sample()
                 guard Task.isCancelled == false else { return }
                 self?.snapshot = next
+                self?.history.append(next)
                 try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
             }
         }
@@ -187,10 +184,24 @@ final class DockSystemLoadStore: ObservableObject {
 struct DockSystemLoadWidget: View {
     let span: Int
     @ObservedObject var store: DockSystemLoadStore
+    let interactionChanged: (Bool) -> Void
+    let arrowEdge: Edge
+    let dismissalEpoch: Int
+    @StateObject private var hover: DockSystemLoadHoverState
+    @StateObject private var details: DockSystemLoadDetailState
 
-    init(span: Int, store: DockSystemLoadStore = .shared) {
+    init(span: Int, store: DockSystemLoadStore = .shared,
+         interactionChanged: @escaping (Bool) -> Void = { _ in },
+         arrowEdge: Edge = .top, dismissalEpoch: Int = 0,
+         hover: DockSystemLoadHoverState = DockSystemLoadHoverState(),
+         details: DockSystemLoadDetailState = DockSystemLoadDetailState()) {
         self.span = span
         self.store = store
+        self.interactionChanged = interactionChanged
+        self.arrowEdge = arrowEdge
+        self.dismissalEpoch = dismissalEpoch
+        _hover = StateObject(wrappedValue: hover)
+        _details = StateObject(wrappedValue: details)
     }
 
     static func metrics(span: Int) -> [SystemMonitorMetric] {
@@ -208,18 +219,33 @@ struct DockSystemLoadWidget: View {
                 DockMiniGauge(fraction: reading.fraction,
                               color: reading.fraction.map(DockMiniWidgetLayout.loadColor) ?? .white.opacity(0.7),
                               value: metric == .network ? Self.compactRate(store.snapshot?.network) : reading.value) {
-                    Image(systemName: metric.symbol).font(.system(size: 10, weight: .medium))
-                }.help("\(metric.title): \(reading.value) — \(reading.detail)")
+                    DockSystemLoadActivityIcon(
+                        metric: metric,
+                        color: reading.fraction.map(DockMiniWidgetLayout.loadColor) ?? .white.opacity(0.7),
+                        hasSample: metric == .network ? store.snapshot?.network != nil : reading.fraction != nil,
+                        receivedBytesPerSecond: store.snapshot?.network?.receivedBytesPerSecond ?? 0,
+                        sentBytesPerSecond: store.snapshot?.network?.sentBytesPerSecond ?? 0
+                    )
+                    .frame(width: 28, height: 28)
+                }
             }
         }
         .padding(.horizontal, 6).dockWidgetSurface()
-        .dockTapTarget("Нагрузка системы") {
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.ActivityMonitor") {
-                NSWorkspace.shared.openApplication(at: url, configuration: .init())
-            }
+        .dockTapTarget("Сводка нагрузки системы") { hover.open() }
+        .onHover { hover.widgetHovered($0) }
+        .dockPopover(isPresented: Binding(get: { hover.isPresented }, set: { hover.presentationChanged($0) }),
+                     arrowEdge: arrowEdge) {
+            DockSystemLoadSummary(snapshot: store.snapshot, history: store.history.samples, details: details,
+                                  hoverChanged: { hover.panelHovered($0) })
         }
+        .onChange(of: hover.isPresented) { _, visible in
+            if !visible { details.reset() }
+            interactionChanged(visible)
+        }
+        .onChange(of: dismissalEpoch) { _, _ in hover.dismiss() }
+        .onChange(of: arrowEdge) { _, _ in hover.dismiss() }
         .onAppear { store.beginViewing() }
-        .onDisappear { store.endViewing() }
+        .onDisappear { details.reset(); hover.dismiss(); interactionChanged(false); store.endViewing() }
     }
 
     /// Download rate in at most four characters plus unit, e.g. "1.2M", "640K".
@@ -228,6 +254,75 @@ struct DockSystemLoadWidget: View {
         if value >= 1_000_000 { return String(format: "↓%.1fM", value / 1_000_000) }
         if value >= 1_000 { return String(format: "↓%.0fK", value / 1_000) }
         return String(format: "↓%.0fB", value)
+    }
+
+}
+
+/// Delayed hover bridges the small gap to the popover without keeping hidden
+/// Dock surfaces alive. Sampling remains owned by the visible widget.
+@MainActor
+final class DockSystemLoadHoverState: ObservableObject {
+    @Published private(set) var isPresented = false
+    private var widgetIsHovered = false
+    private var panelIsHovered = false
+    private var suppressedUntilExit = false
+    private var pending: Task<Void, Never>?
+    private let openDelay: Duration
+    private let closeDelay: Duration
+
+    init(openDelay: Duration = .milliseconds(300), closeDelay: Duration = .milliseconds(240)) {
+        self.openDelay = openDelay
+        self.closeDelay = closeDelay
+    }
+
+    func widgetHovered(_ inside: Bool) {
+        widgetIsHovered = inside
+        if !inside { suppressedUntilExit = false }
+        reconcile()
+    }
+
+    func panelHovered(_ inside: Bool) {
+        panelIsHovered = inside
+        reconcile()
+    }
+
+    func open() {
+        pending?.cancel()
+        suppressedUntilExit = false
+        isPresented = true
+    }
+
+    func presentationChanged(_ visible: Bool) {
+        if visible { open() } else { dismiss() }
+    }
+
+    func dismiss() {
+        pending?.cancel()
+        pending = nil
+        isPresented = false
+        panelIsHovered = false
+        suppressedUntilExit = widgetIsHovered
+    }
+
+    private func reconcile() {
+        pending?.cancel()
+        pending = nil
+        if panelIsHovered || (widgetIsHovered && isPresented) { return }
+        let opening = widgetIsHovered && !suppressedUntilExit
+        guard opening || isPresented else { return }
+        let delay = opening ? openDelay : closeDelay
+        pending = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: delay) } catch { return }
+            guard let self else { return }
+            if opening {
+                guard self.widgetIsHovered, !self.suppressedUntilExit else { return }
+                self.isPresented = true
+            } else {
+                guard !self.widgetIsHovered, !self.panelIsHovered else { return }
+                self.isPresented = false
+            }
+            self.pending = nil
+        }
     }
 }
 
@@ -392,7 +487,7 @@ struct DockTogglesWidget: View {
         .help("Щелчок: открыть управление\nПрокрутка: громкость")
         .onAppear { store.beginViewing() }
         .onDisappear { store.endViewing() }
-        .popover(isPresented: $showsPanel, arrowEdge: .top) {
+        .dockPopover(isPresented: $showsPanel, arrowEdge: .top) {
             DockTogglesPanel(controls: controls)
                 .onAppear { interactionChanged(true) }
                 .onDisappear { interactionChanged(false) }

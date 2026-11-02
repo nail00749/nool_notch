@@ -11,6 +11,8 @@ let package = Package(
         .executable(name: "NotchApp", targets: ["NotchApp"]),
         .executable(name: "NoolAgentBridge", targets: ["NoolAgentBridge"]),
         .executable(name: "NoolDockRecovery", targets: ["NoolDockRecovery"]),
+        .library(name: "NoolCoolingCore", targets: ["NoolCoolingCore"]),
+        .executable(name: "NoolCoolingHelper", targets: ["NoolCoolingHelper"]),
         .library(
             name: "NoolMediaRemoteAdapter",
             type: .dynamic,
@@ -22,9 +24,20 @@ let package = Package(
             name: "NotchCore",
             path: "Sources/NotchCore"
         ),
+        .target(
+            name: "NoolCoolingCore",
+            path: "Sources/NoolCoolingCore",
+            linkerSettings: [.linkedFramework("IOKit")]
+        ),
+        .executableTarget(
+            name: "NoolCoolingHelper",
+            dependencies: ["NoolCoolingCore"],
+            path: "Sources/NoolCoolingHelper",
+            linkerSettings: [.linkedFramework("Security"), .linkedFramework("IOKit")]
+        ),
         .executableTarget(
             name: "NotchApp",
-            dependencies: ["NotchCore"],
+            dependencies: ["NotchCore", "NoolCoolingCore"],
             path: "Sources/NotchApp",
             resources: [
                 .process("Resources")
@@ -53,6 +66,11 @@ let package = Package(
                 .linkedFramework("AppKit"),
                 .linkedFramework("Foundation")
             ]
+        ),
+        .testTarget(
+            name: "NoolCoolingCoreTests",
+            dependencies: ["NoolCoolingCore"],
+            path: "Tests/NoolCoolingCoreTests"
         ),
         .testTarget(
             name: "NotchAppTests",

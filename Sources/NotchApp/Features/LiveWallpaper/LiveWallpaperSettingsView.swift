@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct LiveWallpaperSettingsView: View {
     @ObservedObject var controller: LiveWallpaperController
+    @ObservedObject var model: NotchViewModel
     @State private var isDropTargeted = false
     @State private var target: LiveWallpaperTarget = .allDisplays
 
@@ -13,7 +14,7 @@ struct LiveWallpaperSettingsView: View {
         VStack(spacing: 12) {
             SettingsCard(title: "Живые обои", icon: "play.rectangle") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Toggle("Показывать видео на рабочем столе", isOn: preference(\.enabled))
+                    Toggle("Показывать живые обои на рабочем столе", isOn: preference(\.enabled))
                         .frame(minHeight: 40)
                     Text(statusText)
                         .font(.system(size: 11, weight: .medium))
@@ -37,7 +38,7 @@ struct LiveWallpaperSettingsView: View {
                     LazyVGrid(columns: columns, spacing: 10) {
                         ForEach(LiveWallpaperItem.presets) { item in tile(item) }
                     }
-                    sectionTitle("Видео и картинки")
+                    sectionTitle("Мои обои")
                     if controller.fileItems.isEmpty {
                         emptyLibrary
                     } else {
@@ -55,6 +56,11 @@ struct LiveWallpaperSettingsView: View {
                             .buttonStyle(.plain).foregroundStyle(NotchPalette.accent)
                     }
                     .frame(minHeight: 40)
+                    Button("Импорт Wallpaper Engine…", action: chooseWallpaperEngine)
+                        .buttonStyle(.bordered)
+                        .disabled(controller.isImporting)
+                    Text("Wallpaper Engine: выберите scene.pkg или папку проекта. Экспериментальная поддержка сцен, анимаций и эффектов. SceneScript, звук и реакция на системное аудио пока не поддерживаются; некоторые эффекты могут отличаться.")
+                        .settingsHintStyle()
                     Text("Видео MP4, MOV, M4V и картинки JPEG, PNG, HEIC копируются в локальную папку NooL. Картинка становится сценой с параллаксом и частицами. Файлы можно перетащить сюда.")
                         .settingsHintStyle()
                 }
@@ -70,16 +76,26 @@ struct LiveWallpaperSettingsView: View {
                 } isTargeted: { isDropTargeted = $0 }
             }
 
+            if controller.usesWallpaperEngine {
+                SettingsCard(title: "Wallpaper Engine", icon: "sparkles.tv") {
+                    Picker("Частота кадров", selection: scenePreference(\.framesPerSecond)) {
+                        Text("30 FPS").tag(30)
+                        Text("60 FPS").tag(60)
+                    }
+                    .pickerStyle(.segmented)
+                }
+            }
+
             SettingsCard(title: "Воспроизведение", icon: "slider.horizontal.3") {
                 VStack(alignment: .leading, spacing: 12) {
                     Picker("Масштаб", selection: preference(\.scaleMode)) {
                         ForEach(LiveWallpaperScaleMode.allCases) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.segmented)
-                    slider("Громкость", value: preference(\.volume), range: 0...1,
+                    slider("Громкость видео", value: preference(\.volume), range: 0...1,
                            valueLabel: controller.preferences.volume == 0
                                ? "Без звука" : "\(Int(controller.preferences.volume * 100))%")
-                    slider("Скорость", value: preference(\.playbackRate), range: 0.25...2,
+                    slider("Скорость видео", value: preference(\.playbackRate), range: 0.25...2,
                            valueLabel: String(format: "%.2g×", controller.preferences.playbackRate))
                 }
             }
@@ -260,6 +276,10 @@ struct LiveWallpaperSettingsView: View {
             .overlay {
                 if let fileName, let image = controller.thumbnails[fileName] {
                     Image(nsImage: image).resizable().scaledToFill()
+                } else if let fileName, case .wallpaperEngine = controller.item(named: fileName)?.content {
+                    Image(systemName: "sparkles.tv")
+                        .font(.system(size: 24))
+                        .foregroundStyle(NotchPalette.secondary)
                 } else if fileName != nil {
                     ProgressView().controlSize(.small)
                 } else {
@@ -323,6 +343,25 @@ struct LiveWallpaperSettingsView: View {
                 .disabled(!overlay.showsSystem)
                 Toggle("Лимиты AI-провайдеров", isOn: overlayPreference(\.showsQuotas))
                     .frame(minHeight: 32)
+                if overlay.showsQuotas {
+                    ForEach(model.visibleQuotaProviders, id: \.id) { provider in
+                        Toggle(provider.displayName, isOn: Binding(get: {
+                            !controller.preferences.overlay.hiddenQuotaProviderIDs.contains(provider.id)
+                        }, set: { visible in
+                            var preferences = controller.preferences
+                            if visible {
+                                preferences.overlay.hiddenQuotaProviderIDs.remove(provider.id)
+                            } else {
+                                preferences.overlay.hiddenQuotaProviderIDs.insert(provider.id)
+                            }
+                            controller.setPreferences(preferences)
+                        }))
+                    }
+                    if model.visibleQuotaProviders.isEmpty {
+                        Text("Включите провайдеров в модуле «Лимиты», чтобы выбрать их для обоев.")
+                            .settingsHintStyle()
+                    }
+                }
                 Toggle("Сцены ускоряются и теплеют под нагрузкой CPU", isOn: overlayPreference(\.scenesReactToLoad))
                     .frame(minHeight: 32)
                 Picker("Положение", selection: overlayPreference(\.position)) {
@@ -346,7 +385,7 @@ struct LiveWallpaperSettingsView: View {
                        valueLabel: "\(Int(overlay.opacity * 100))%")
                 Toggle("Только на главном экране", isOn: overlayPreference(\.mainDisplayOnly))
                     .frame(minHeight: 32)
-                Text("Данные рисуются прямо в обоях под иконками рабочего стола и обновляются раз в 2 секунды, пока обои воспроизводятся. Лимиты берутся у включённых провайдеров модуля «Лимиты».")
+                Text("Данные рисуются прямо в обоях под иконками рабочего стола и обновляются раз в 2 секунды, пока обои воспроизводятся. Выберите выше, какие из включённых провайдеров модуля «Лимиты» показывать на обоях.")
                     .settingsHintStyle()
             }
         }
@@ -467,6 +506,19 @@ struct LiveWallpaperSettingsView: View {
         panel.canChooseDirectories = false
         panel.allowedContentTypes = [.mpeg4Movie, .quickTimeMovie, UTType("com.apple.m4v-video") ?? .movie,
                                      .jpeg, .png, .heic]
+        guard panel.runModal() == .OK else { return }
+        controller.importVideos(panel.urls)
+    }
+
+    private func chooseWallpaperEngine() {
+        let panel = NSOpenPanel()
+        panel.title = "Импорт сцены Wallpaper Engine"
+        panel.message = "Выберите scene.pkg, project.json или папку проекта. ZIP-архив сначала распакуйте в Finder."
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = [.folder, .json, UTType(filenameExtension: "pkg") ?? .data]
+        panel.treatsFilePackagesAsDirectories = false
         guard panel.runModal() == .OK else { return }
         controller.importVideos(panel.urls)
     }

@@ -20,6 +20,49 @@ private struct WindowRestoreResult: Sendable {
     let unsupported: Int
 }
 
+struct WindowLayoutOriginalPlacement: Equatable, Sendable {
+    let frame: WindowLayoutRect
+    let displayID: String
+}
+
+/// A window retains its first successful pre-command placement until restoration succeeds.
+/// Process launch dates prevent a reused PID from inheriting another application's history.
+struct WindowLayoutRestoreHistory<Window: Equatable> {
+    private struct Entry {
+        let pid: pid_t
+        let launchDate: Date
+        let window: Window
+        let placement: WindowLayoutOriginalPlacement
+    }
+    private let limit: Int
+    private var entries: [Entry] = []
+
+    init(limit: Int = 120) { self.limit = max(1, limit) }
+
+    mutating func original(pid: pid_t, launchDate: Date?, window: Window) -> WindowLayoutOriginalPlacement? {
+        discardOldProcess(pid: pid, launchDate: launchDate)
+        guard let launchDate else { return nil }
+        return entries.first { $0.pid == pid && $0.launchDate == launchDate && $0.window == window }?.placement
+    }
+
+    mutating func finish(action: WindowLayoutAction, didApply: Bool, pid: pid_t, launchDate: Date?,
+                         window: Window, original: WindowLayoutOriginalPlacement) {
+        discardOldProcess(pid: pid, launchDate: launchDate)
+        guard didApply, let launchDate else { return }
+        let index = entries.firstIndex { $0.pid == pid && $0.launchDate == launchDate && $0.window == window }
+        if action == .restore {
+            if let index { entries.remove(at: index) }
+        } else if index == nil {
+            entries.append(Entry(pid: pid, launchDate: launchDate, window: window, placement: original))
+            if entries.count > limit { entries.removeFirst(entries.count - limit) }
+        }
+    }
+
+    private mutating func discardOldProcess(pid: pid_t, launchDate: Date?) {
+        entries.removeAll { $0.pid == pid && $0.launchDate != launchDate }
+    }
+}
+
 @MainActor
 final class WindowLayoutManager: ObservableObject {
     private static let defaultsKey = "nool.windowLayouts.v1"
@@ -58,7 +101,8 @@ final class WindowLayoutManager: ObservableObject {
         guard let pid, pid != ProcessInfo.processInfo.processIdentifier else {
             return "Откройте окно другого приложения и повторите действие."
         }
-        return await worker.perform(action, pid: pid, screens: Self.screens())
+        let launchDate = NSRunningApplication(processIdentifier: pid)?.launchDate
+        return await worker.perform(action, pid: pid, launchDate: launchDate, screens: Self.screens())
     }
 
     func saveLayout(name: String) async -> String {
@@ -169,9 +213,34 @@ private actor WindowLayoutAXWorker {
     private static let timeout: Float = 0.25
     private static let maximumApps = 64
     private static let maximumWindows = 120
+    private struct WindowIdentity: Equatable {
+        let element: AXUIElement
+        static func == (lhs: Self, rhs: Self) -> Bool { CFEqual(lhs.element, rhs.element) }
+    }
+    private var history = WindowLayoutRestoreHistory<WindowIdentity>()
+    private var fullscreenWindows: [UUID: AXUIElement] = [:]
+    private var frameWindows: [UUID: AXUIElement] = [:]
 
-    func perform(_ action: WindowLayoutAction, pid: pid_t,
-                 screens: [WindowLayoutScreen]) -> String {
+    private struct FrameBackend: WindowFrameApplicationBackend {
+        let worker: WindowLayoutAXWorker
+        let token: UUID
+        func readFrame() async -> WindowLayoutRect? { await worker.readFrame(token) }
+        func setPosition(x: Double, y: Double) async -> Bool { await worker.setPosition(x: x, y: y, token: token) }
+        func setSize(width: Double, height: Double) async -> Bool { await worker.setSize(width: width, height: height, token: token) }
+        func pause() async throws { try await Task.sleep(for: .milliseconds(50)) }
+    }
+
+    private struct FullscreenBackend: WindowFullscreenTransferBackend {
+        let worker: WindowLayoutAXWorker
+        let token: UUID
+        func read() async -> WindowFullscreenState? { await worker.fullscreenState(token) }
+        func setFullscreen(_ enabled: Bool) async -> Bool { await worker.setFullscreen(enabled, token: token) }
+        func move(to frame: WindowLayoutRect) async -> Bool { await worker.moveFullscreenWindow(to: frame, token: token) }
+        func pause() async throws { try await Task.sleep(for: .milliseconds(100)) }
+    }
+
+    func perform(_ action: WindowLayoutAction, pid: pid_t, launchDate: Date?,
+                 screens: [WindowLayoutScreen]) async -> String {
         guard !Task.isCancelled else { return "Операция отменена." }
         guard !screens.isEmpty else { return "Не найден доступный дисплей." }
         let application = AXUIElementCreateApplication(pid)
@@ -181,21 +250,109 @@ private actor WindowLayoutAXWorker {
             return "У приложения нет активного окна."
         }
         AXUIElementSetMessagingTimeout(window, Self.timeout)
-        guard Self.isRegularWindow(window) else { return "Это окно нельзя переместить." }
+        let transfersDisplay = action == .nextDisplay || action == .previousDisplay
+        guard Self.isRegularWindow(window, allowFullscreen: transfersDisplay) else { return "Это окно нельзя переместить." }
         guard let current = Self.frame(of: window) else { return "Не удалось прочитать положение окна." }
-        guard let target = WindowLayoutGeometry.target(for: action, current: current,
-                                                       screens: screens) else {
-            return action == .nextDisplay ? "Подключён только один дисплей." : "Не найден доступный дисплей."
+        let identity = WindowIdentity(element: window)
+        if transfersDisplay, Self.boolAttribute(window, "AXFullScreen") == true {
+            let token = UUID()
+            fullscreenWindows[token] = window
+            defer { fullscreenWindows.removeValue(forKey: token) }
+            let result = await WindowFullscreenTransfer.run(action: action,
+                initial: .init(isFullscreen: true, frame: current, canMoveAndResize: Self.canMove(window, changeSize: true)),
+                screens: screens, backend: FullscreenBackend(worker: self, token: token))
+            if let original = result.normalOriginal {
+                history.finish(action: action, didApply: result.didMove, pid: pid, launchDate: launchDate,
+                               window: identity, original: original)
+            }
+            return result.message
         }
-        let changeSize = action != .center
-            || target.width != current.width || target.height != current.height
+        let original = history.original(pid: pid, launchDate: launchDate, window: identity)
+        let target: WindowLayoutRect?
+        if action == .restore {
+            guard let original else { return "Для этого окна ещё нет сохранённого размера." }
+            target = WindowLayoutGeometry.originalTarget(original, current: current, screens: screens)
+        } else {
+            target = WindowLayoutGeometry.target(for: action, current: current, screens: screens)
+        }
+        guard let target else {
+            return action == .nextDisplay || action == .previousDisplay
+                ? "Подключён только один дисплей." : "Не найден доступный дисплей."
+        }
+        // Repeating an already applied tile must not create a new restore point.
+        if target == current, action != .restore { return "Окно: \(action.title.lowercased())." }
+        let changeSize = target.width != current.width || target.height != current.height
         guard Self.canMove(window, changeSize: changeSize) else {
             return "Окно не поддерживает изменение положения или размера."
         }
-        return Self.apply(target, to: window, original: current,
-                          changeSize: changeSize)
-            ? "Окно: \(action.title.lowercased())."
-            : "Приложение не разрешило изменить это окно."
+        guard !Task.isCancelled else { return "Операция отменена." }
+        let result = await applyVerified(target, to: window, original: current, changeSize: changeSize)
+        if let source = WindowLayoutGeometry.screen(for: current, in: screens) {
+            history.finish(action: action, didApply: result.didApply || (action != .restore && result.needsRestore),
+                           pid: pid, launchDate: launchDate,
+                           window: identity, original: .init(frame: current, displayID: source.id))
+        }
+        return result.didApply ? "Окно: \(action.title.lowercased())."
+            : "Приложение не применило запрошенное положение или размер окна."
+    }
+
+    private func applyVerified(_ target: WindowLayoutRect, to window: AXUIElement,
+                               original: WindowLayoutRect, changeSize: Bool) async -> WindowFrameApplication.Result {
+        let token = UUID()
+        frameWindows[token] = window
+        defer { frameWindows.removeValue(forKey: token) }
+        WindowFullscreenTransfer.trace("Verified frame original=\(original), target=\(target), resize=\(changeSize)")
+        let result = await WindowFrameApplication.run(target: target, original: original, changeSize: changeSize,
+                                                       backend: FrameBackend(worker: self, token: token))
+        WindowFullscreenTransfer.trace("Verified frame result=\(result.didApply), actual=\(String(describing: Self.frame(of: window)))")
+        return result
+    }
+
+    private func readFrame(_ token: UUID) -> WindowLayoutRect? {
+        frameWindows[token].flatMap { Self.frame(of: $0) }
+    }
+
+    private func setPosition(x: Double, y: Double, token: UUID) -> Bool {
+        guard let window = frameWindows[token] else { return false }
+        var point = CGPoint(x: x, y: y)
+        guard let value = AXValueCreate(.cgPoint, &point) else { return false }
+        let result = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value)
+        WindowFullscreenTransfer.trace("Position AX=\(result.rawValue), actual=\(String(describing: Self.frame(of: window)))")
+        return result == .success
+    }
+
+    private func setSize(width: Double, height: Double, token: UUID) -> Bool {
+        guard let window = frameWindows[token] else { return false }
+        var size = CGSize(width: width, height: height)
+        guard let value = AXValueCreate(.cgSize, &size) else { return false }
+        let result = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value)
+        WindowFullscreenTransfer.trace("Size AX=\(result.rawValue), actual=\(String(describing: Self.frame(of: window)))")
+        return result == .success
+    }
+
+    private func fullscreenState(_ token: UUID) -> WindowFullscreenState? {
+        guard let window = fullscreenWindows[token], Self.isRegularWindow(window, allowFullscreen: true),
+              let frame = Self.frame(of: window), let full = Self.boolAttribute(window, "AXFullScreen") else { return nil }
+        return .init(isFullscreen: full, frame: frame, canMoveAndResize: Self.canMove(window, changeSize: true))
+    }
+
+    private func setFullscreen(_ enabled: Bool, token: UUID) -> Bool {
+        guard let window = fullscreenWindows[token] else { return false }
+        var settable = DarwinBoolean(false)
+        guard AXUIElementIsAttributeSettable(window, "AXFullScreen" as CFString, &settable) == .success,
+              settable.boolValue else { return false }
+        let result = AXUIElementSetAttributeValue(window, "AXFullScreen" as CFString,
+                                           enabled ? kCFBooleanTrue : kCFBooleanFalse)
+        WindowFullscreenTransfer.trace("Set fullscreen=\(enabled), AX result=\(result.rawValue)")
+        return result == .success
+    }
+
+    private func moveFullscreenWindow(to target: WindowLayoutRect, token: UUID) -> Bool {
+        guard let window = fullscreenWindows[token], Self.isRegularWindow(window),
+              let current = Self.frame(of: window) else { return false }
+        let changeSize = target.width != current.width || target.height != current.height
+        guard Self.canMove(window, changeSize: changeSize) else { return false }
+        return Self.apply(target, to: window, original: current, changeSize: changeSize)
     }
 
     func capture(applications: [WindowLayoutApplication],
@@ -231,7 +388,7 @@ private actor WindowLayoutAXWorker {
 
     func restore(_ placements: [SavedWindowPlacement],
                  applications: [WindowLayoutApplication],
-                 screens: [WindowLayoutScreen]) -> WindowRestoreResult {
+                 screens: [WindowLayoutScreen]) async -> WindowRestoreResult {
         guard let fallbackScreen = screens.first else {
             return WindowRestoreResult(restored: 0, unavailable: placements.count, unsupported: 0)
         }
@@ -276,7 +433,7 @@ private actor WindowLayoutAXWorker {
                 unsupported += 1
                 continue
             }
-            if Self.apply(target, to: candidate.element, original: original, changeSize: true) {
+            if await applyVerified(target, to: candidate.element, original: original, changeSize: true).didApply {
                 restored += 1
             } else {
                 unsupported += 1
@@ -297,12 +454,12 @@ private actor WindowLayoutAXWorker {
         }
     }
 
-    private static func isRegularWindow(_ window: AXUIElement) -> Bool {
+    private static func isRegularWindow(_ window: AXUIElement, allowFullscreen: Bool = false) -> Bool {
         guard stringAttribute(window, kAXRoleAttribute) == kAXWindowRole as String else { return false }
         if let subrole = stringAttribute(window, kAXSubroleAttribute),
            subrole != kAXStandardWindowSubrole as String { return false }
         return boolAttribute(window, kAXMinimizedAttribute) != true
-            && boolAttribute(window, "AXFullScreen") != true
+            && (allowFullscreen || boolAttribute(window, "AXFullScreen") != true)
     }
 
     private static func canMove(_ window: AXUIElement, changeSize: Bool) -> Bool {
@@ -335,12 +492,14 @@ private actor WindowLayoutAXWorker {
     private static func apply(_ target: WindowLayoutRect, to window: AXUIElement,
                               original: WindowLayoutRect, changeSize: Bool) -> Bool {
         guard target.isUsable else { return false }
+        WindowFullscreenTransfer.trace("Frame apply original=\(original), target=\(target), resize=\(changeSize)")
         if changeSize {
             var size = CGSize(width: target.width, height: target.height)
             guard let value = AXValueCreate(.cgSize, &size),
                   AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value) == .success else {
                 return false
             }
+            WindowFullscreenTransfer.trace("Frame after size: \(String(describing: frame(of: window)))")
         }
         var position = CGPoint(x: target.x, y: target.y)
         guard let value = AXValueCreate(.cgPoint, &position),
@@ -354,6 +513,7 @@ private actor WindowLayoutAXWorker {
             }
             return false
         }
+        WindowFullscreenTransfer.trace("Frame after position: \(String(describing: frame(of: window)))")
         return true
     }
 

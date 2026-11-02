@@ -51,6 +51,26 @@ final class DockSystemFeaturesTests: XCTestCase {
         XCTAssertTrue(prefs.recentApplications.isEmpty, "Nothing is recorded while the section is off")
     }
 
+    func testRemovingRecentApplicationPersistsAndAllowsLaterLaunch() throws {
+        let (defaults, suite) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let prefs = DockPreferences(defaults: defaults)
+        let removed = "/Applications/Removed.app"
+        let kept = "/Applications/Kept.app"
+        prefs.noteLaunchedApplication(kept)
+        prefs.noteLaunchedApplication(removed)
+        let pinned = prefs.items
+
+        prefs.removeRecentApplication(removed)
+        prefs.removeRecentApplication("/Applications/Unknown.app")
+
+        XCTAssertEqual(prefs.recentApplications, [kept])
+        XCTAssertEqual(DockPreferences(defaults: defaults).recentApplications, [kept])
+        XCTAssertEqual(prefs.items, pinned)
+        prefs.noteLaunchedApplication(removed)
+        XCTAssertEqual(prefs.recentApplications, [removed, kept])
+    }
+
     func testRecentSectionSkipsPinnedRunningAndMissingApplications() throws {
         let (defaults, suite) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }

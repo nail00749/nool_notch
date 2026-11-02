@@ -1,10 +1,37 @@
 import AppKit
+import Combine
 import Foundation
 import XCTest
 @testable import NotchApp
 
 @MainActor
 final class LauncherClipboardStoreTests: XCTestCase {
+    func testUnchangedPollingDoesNotPublishHistoryAgain() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let store = LauncherClipboardStore(persistenceURL: fixture.persistenceURL, pasteboard: fixture.pasteboard)
+        defer { store.stop() }
+        store.configure(enabled: true, limit: 100, retentionDays: 7)
+        await store.waitForPersistence()
+
+        var publications = 0
+        let observation = store.objectWillChange.sink { publications += 1 }
+        defer { observation.cancel() }
+        for _ in 0..<20 { store.captureIfChanged() }
+        XCTAssertEqual(publications, 0, "An unchanged empty history must not invalidate its subscribers")
+
+        fixture.pasteboard.clearContents()
+        fixture.pasteboard.setString("new clipboard item", forType: .string)
+        store.captureIfChanged()
+        await store.waitForPersistence()
+        XCTAssertGreaterThan(publications, 0)
+        XCTAssertEqual(store.items.map(\.text), ["new clipboard item"])
+
+        publications = 0
+        for _ in 0..<20 { store.captureIfChanged() }
+        XCTAssertEqual(publications, 0, "Retaining the same entries must not publish every polling tick")
+    }
+
     func testClipboardIsNotReadUntilHistoryIsEnabled() throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }

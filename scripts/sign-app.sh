@@ -10,12 +10,31 @@ ALLOW_ADHOC="${NOTCHAPP_ALLOW_ADHOC:-0}"
 AVAILABLE_IDENTITIES="$(/usr/bin/security find-identity -v -p codesigning 2>/dev/null || true)"
 WIDGET_PATH="$APP_PATH/Contents/PlugIns/NoolQuotaWidget.appex"
 WIDGET_GROUP="$(/usr/libexec/PlistBuddy -c 'Print :NoolWidgetAppGroup' "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)"
+COOLING_HELPER_PATH="$APP_PATH/Contents/MacOS/NoolCoolingHelper"
+COOLING_HELPER_PLIST="$APP_PATH/Contents/Library/LaunchDaemons/com.nool.cooling-helper.plist"
+COOLING_HELPER_ID="com.nool.cooling-helper"
 ENTITLEMENTS_DIR=""
 trap '[[ -z "$ENTITLEMENTS_DIR" ]] || /bin/rm -rf "$ENTITLEMENTS_DIR"' EXIT
 
 if [[ -d "$WIDGET_PATH" && -z "$WIDGET_GROUP" ]] || [[ ! -d "$WIDGET_PATH" && -n "$WIDGET_GROUP" ]]; then
   print -u2 'error: widget bundle and shared app group must be configured together'
   exit 1
+fi
+
+if [[ -e "$COOLING_HELPER_PATH" || -e "$COOLING_HELPER_PLIST" ]]; then
+  if [[ ! -x "$COOLING_HELPER_PATH" || ! -f "$COOLING_HELPER_PLIST" ]]; then
+    print -u2 'error: cooling helper executable and LaunchDaemon plist must be embedded together'
+    exit 1
+  fi
+  HELPER_LABEL="$(/usr/libexec/PlistBuddy -c 'Print :Label' "$COOLING_HELPER_PLIST")"
+  HELPER_PROGRAM="$(/usr/libexec/PlistBuddy -c 'Print :BundleProgram' "$COOLING_HELPER_PLIST")"
+  HELPER_MACH_SERVICE="$(/usr/libexec/PlistBuddy -c 'Print :MachServices:com.nool.cooling-helper' "$COOLING_HELPER_PLIST")"
+  if [[ "$HELPER_LABEL" != "$COOLING_HELPER_ID" \
+      || "$HELPER_PROGRAM" != 'Contents/MacOS/NoolCoolingHelper' \
+      || "$HELPER_MACH_SERVICE" != true ]]; then
+    print -u2 'error: cooling helper LaunchDaemon identifiers or BundleProgram do not match'
+    exit 1
+  fi
 fi
 
 record_signing_mode() {
@@ -57,6 +76,10 @@ if [[ "$AVAILABLE_IDENTITIES" == *"\"$SIGNING_IDENTITY\""* ]]; then
   if [[ -f "$APP_PATH/Contents/Resources/nool-media-remote-adapter.dylib" ]]; then
     /usr/bin/codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP_PATH/Contents/Resources/nool-media-remote-adapter.dylib"
   fi
+  if [[ -x "$COOLING_HELPER_PATH" ]]; then
+    /usr/bin/codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" \
+      --identifier "$COOLING_HELPER_ID" "$COOLING_HELPER_PATH"
+  fi
   record_signing_mode stable
   /usr/bin/codesign \
     --force \
@@ -77,13 +100,23 @@ else
   fi
   print -u2 -- "warning: signing identity '$SIGNING_IDENTITY' is unavailable; explicit ad-hoc signing enabled"
   record_signing_mode ad-hoc
+  if [[ -x "$COOLING_HELPER_PATH" ]]; then
+    /usr/bin/codesign --force --sign - --identifier "$COOLING_HELPER_ID" "$COOLING_HELPER_PATH"
+  fi
+  if [[ -f "$APP_PATH/Contents/Resources/nool-agent-bridge" ]]; then
+    /usr/bin/codesign --force --sign - --identifier nool-agent-bridge \
+      "$APP_PATH/Contents/Resources/nool-agent-bridge"
+  fi
+  if [[ -f "$APP_PATH/Contents/Resources/nool-dock-recovery" ]]; then
+    /usr/bin/codesign --force --sign - --identifier nool-dock-recovery \
+      "$APP_PATH/Contents/Resources/nool-dock-recovery"
+  fi
   if [[ -f "$APP_PATH/Contents/Resources/nool-media-remote-adapter.dylib" ]]; then
     # --deep does not reach Mach-O files in Resources; perl loads this one.
     /usr/bin/codesign --force --sign - "$APP_PATH/Contents/Resources/nool-media-remote-adapter.dylib"
   fi
   /usr/bin/codesign \
     --force \
-    --deep \
     --sign - \
     --requirements "$DESIGNATED_REQUIREMENT" \
     "$APP_PATH"

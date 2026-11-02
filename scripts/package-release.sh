@@ -31,8 +31,12 @@ BIN_PATH="$("$XCRUN" swift build -c release --arch "$ARCH" --show-bin-path)"
 
 /bin/rm -rf "$APP_PATH"
 /bin/rm -f "$ARCHIVE_PATH" "$CHECKSUM_PATH"
-/bin/mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
+/bin/mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources" \
+  "$APP_PATH/Contents/Library/LaunchDaemons"
 /usr/bin/install -m 755 "$BIN_PATH/NotchApp" "$APP_PATH/Contents/MacOS/NotchApp"
+/usr/bin/install -m 755 "$BIN_PATH/NoolCoolingHelper" "$APP_PATH/Contents/MacOS/NoolCoolingHelper"
+/bin/cp "$PROJECT_ROOT/Resources/com.nool.cooling-helper.plist" \
+  "$APP_PATH/Contents/Library/LaunchDaemons/com.nool.cooling-helper.plist"
 /usr/bin/install -m 755 "$BIN_PATH/NoolAgentBridge" "$APP_PATH/Contents/Resources/nool-agent-bridge"
 /usr/bin/install -m 755 "$BIN_PATH/NoolDockRecovery" "$APP_PATH/Contents/Resources/nool-dock-recovery"
 /usr/bin/install -m 644 "$BIN_PATH/libNoolMediaRemoteAdapter.dylib" "$APP_PATH/Contents/Resources/nool-media-remote-adapter.dylib"

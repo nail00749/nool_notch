@@ -213,6 +213,12 @@ final class DockPreferences: ObservableObject {
         changed()
     }
 
+    func removeRecentApplication(_ path: String) {
+        guard recentApplications.contains(path) else { return }
+        recentApplications.removeAll { $0 == path }
+        changed()
+    }
+
     func clearRecentApplications() {
         guard !recentApplications.isEmpty else { return }
         recentApplications = []
@@ -227,7 +233,7 @@ final class DockPreferences: ObservableObject {
     func addIntegration(_ id: String) -> Bool {
         guard let title = registeredTitles[id], !items.contains(where: { $0.integrationID == id }) else { return false }
         let spans = integrationSpans[id] ?? [1]
-        let preferred = id == "music" || id == "calendar" ? 2 : 1
+        let preferred = ["music", "calendar", "speedtest", "cooling"].contains(id) ? 2 : 1
         return append(DockElement(id: "integration:\(id)", kind: .integration, title: title, integrationID: id,
                                   span: spans.contains(preferred) ? preferred : spans.first ?? 1))
     }

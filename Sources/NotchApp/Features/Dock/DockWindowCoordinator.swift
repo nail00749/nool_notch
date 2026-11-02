@@ -83,6 +83,7 @@ final class DockWindowCoordinator {
     private var hasRecovered = false
     private var requestedSystemState: Bool?
     private var targetFrame: CGRect?
+    private var resizeTask: Task<Void, Never>?
     private let hotKey = DockHotKey()
     private var screenChangeTask: Task<Void, Never>?
     private let genie = DockGenieAnimator()
@@ -151,6 +152,8 @@ final class DockWindowCoordinator {
     }
 
     func stop() {
+        resizeTask?.cancel()
+        resizeTask = nil
         started = false
         cancelPendingReveal()
         screenChangeTask?.cancel()
@@ -272,6 +275,8 @@ final class DockWindowCoordinator {
         defer { synchronizing = false }
         let enabled = started && feature.prefs.isEnabled && model.modules.isEnabled(.dock)
         guard enabled, !sleeping, let screen = selectedScreen() else {
+            resizeTask?.cancel()
+            resizeTask = nil
             cancelScheduledHide()
             overlapTimer?.invalidate()
             overlapTimer = nil
@@ -319,7 +324,12 @@ final class DockWindowCoordinator {
         feature.setActive(true)
         hotKey.setEnabled(prefs.hideHotKeyEnabled)
         if fullscreenNeedsRefresh {
-            fullscreenOwner = environment.fullscreenOwner(screen.frame)
+            let detectedOwner = environment.fullscreenOwner(screen.frame)
+            // A Space slide briefly has no full-screen window in WindowServer's
+            // snapshot. Confirm an exit only once the transition has settled.
+            if detectedOwner != nil || fullscreenRecheck == nil {
+                fullscreenOwner = detectedOwner
+            }
             immersive = fullscreenOwner.map { environment.immersive($0, feature.immersiveOptions) } ?? false
             fullscreenNeedsRefresh = false
         }
@@ -339,9 +349,8 @@ final class DockWindowCoordinator {
                                      showLabels: prefs.showAppLabels, position: position)
         if frame != targetFrame {
             overlapNeedsRefresh = true
+            let previous = targetFrame
             targetFrame = frame
-            presentation.width = frame.width
-            presentation.height = frame.height
             presentation.alignment = switch position {
             case .bottom: .bottom
             case .left: .leading
@@ -349,7 +358,7 @@ final class DockWindowCoordinator {
             }
             feature.availableWidth = position.isVertical ? frame.height : frame.width
             feature.dockFrame = frame
-            panel.setFrame(DockLayout.windowFrame(strip: frame, position: position, scale: scale), display: true)
+            resize(to: frame, from: previous, position: position, scale: scale)
             let triggerBounds = feature.systemDock.isActive || fullscreen ? screen.frame : screen.visibleFrame
             trigger.setFrame(DockLayout.triggerFrame(screenFrame: triggerBounds, dockFrame: frame, position: position),
                              display: true)
@@ -495,8 +504,7 @@ final class DockWindowCoordinator {
         workspaceObservations.append(workspace.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification,
                                                             object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.desktopDidChange()
-                self?.scheduleFullscreenRecheck()
+                self?.scheduleFullscreenRecheck(resetDesktop: true)
             }
         })
         // Switching between a full-screen and a regular application can happen on one Space.
@@ -566,9 +574,7 @@ final class DockWindowCoordinator {
     }
 
     /// Samples immediately, then once more after the full-screen animation settles.
-    private func scheduleFullscreenRecheck() {
-        fullscreenNeedsRefresh = true
-        synchronize()
+    private func scheduleFullscreenRecheck(resetDesktop: Bool = false) {
         fullscreenRecheck?.cancel()
         let delay = environment.fullscreenSettleDelay
         fullscreenRecheck = Task { @MainActor [weak self] in
@@ -577,6 +583,13 @@ final class DockWindowCoordinator {
             self.fullscreenRecheck = nil
             self.fullscreenNeedsRefresh = true
             self.synchronize()
+        }
+        // Arm the transition guard before either path samples window geometry.
+        if resetDesktop {
+            desktopDidChange()
+        } else {
+            fullscreenNeedsRefresh = true
+            synchronize()
         }
     }
 
@@ -724,6 +737,42 @@ final class DockWindowCoordinator {
         fullscreenNeedsRefresh = true
         feature.closeSurfaces()
         synchronize()
+    }
+
+    /// Keep the hosting size and AppKit window in step, including interrupted resizes.
+    private func resize(to frame: CGRect, from previous: CGRect?, position: DockPosition, scale: CGFloat) {
+        resizeTask?.cancel()
+        resizeTask = nil
+        let canAnimate = panelShown && animatesVisibility && previous.map {
+            position.isVertical
+                ? $0.minX == frame.minX && $0.width == frame.width && $0.midY == frame.midY
+                : $0.minY == frame.minY && $0.height == frame.height && $0.midX == frame.midX
+        } == true
+        let apply: (CGRect) -> Void = { [weak self] strip in
+            guard let self else { return }
+            self.presentation.width = strip.width
+            self.presentation.height = strip.height
+            self.panel.setFrame(DockLayout.windowFrame(strip: strip, position: position, scale: scale), display: true)
+        }
+        guard canAnimate else { apply(frame); return }
+        let startSize = CGSize(width: presentation.width, height: presentation.height)
+        resizeTask = Task { @MainActor [weak self] in
+            let start = ContinuousClock.now
+            while !Task.isCancelled {
+                let elapsed = start.duration(to: .now)
+                let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+                let progress = min(1, seconds / 0.24)
+                let eased = 1 - pow(1 - progress, 3)
+                let size = CGSize(width: startSize.width + (frame.width - startSize.width) * eased,
+                                  height: startSize.height + (frame.height - startSize.height) * eased)
+                let origin = CGPoint(x: position.isVertical ? frame.minX : frame.midX - size.width / 2,
+                                     y: position.isVertical ? frame.midY - size.height / 2 : frame.minY)
+                apply(CGRect(origin: origin, size: size))
+                if progress == 1 { break }
+                try? await Task.sleep(for: .milliseconds(8))
+            }
+            if !Task.isCancelled { self?.resizeTask = nil }
+        }
     }
 
     private func cancelScheduledHide() {

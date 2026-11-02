@@ -33,6 +33,10 @@
 	</array>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>NooL Link использует локальную сеть для обмена буфером с подключённым компьютером Windows.</string>
+	<key>NSBonjourServices</key>
+	<array><string>_airdrop._tcp</string></array>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>NooL App показывает ближайшие события в челке.</string>
 	<key>NSAppleEventsUsageDescription</key>

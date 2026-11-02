@@ -45,7 +45,7 @@ enum AppModuleID: String, CaseIterable, Identifiable, Sendable {
         case .music: "Текущий трек и управление воспроизведением"
         case .jira: "Задачи, закрепления и рабочие действия"
         case .liveActivities: "Таймер, батарея, звонки и загрузки"
-        case .fileShelf: "Временная полка, конвертация и переименование"
+        case .fileShelf: "Полка, радиальная конвертация в Finder и переименование"
         case .textRecognition: "Локальный OCR файлов и выбранной области экрана"
         case .systemMonitor: "CPU, память, диск, сеть и процессы"
         case .networkTools: "Замеры скорости, история и диагностика соединения"
@@ -89,7 +89,7 @@ enum AppModuleID: String, CaseIterable, Identifiable, Sendable {
     var permissionSummary: String? {
         switch self {
         case .calendar: "Календарь — при подключении"
-        case .music, .windowManagement, .gestures: "Универсальный доступ — для отдельных действий"
+        case .music, .windowManagement, .gestures, .fileShelf: "Универсальный доступ — для отдельных действий"
         case .textRecognition: "Запись экрана — для захвата области"
         case .lidEffect: "Запись экрана — для эффекта"
         case .quotas: "Уведомления — при включении оповещений"
@@ -103,7 +103,7 @@ enum AppModuleID: String, CaseIterable, Identifiable, Sendable {
         case .agentInbox, .jira, .calendar, .displays: ["Чёлка", "Launcher"]
         case .quotas: ["Чёлка", "Боковая панель", "Стек", "Виджет"]
         case .music, .liveActivities: ["Чёлка", "Dock"]
-        case .fileShelf: ["Чёлка", "Launcher"]
+        case .fileShelf: ["Чёлка", "Launcher", "Finder"]
         case .textRecognition: ["Launcher", "Полка"]
         case .systemMonitor: ["Боковая панель", "Стек"]
         case .dock: ["Dock"]

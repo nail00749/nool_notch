@@ -20,6 +20,10 @@ final class SystemProcessesStore: ObservableObject {
             .filter { sort != .cpu || $0.cpuPercent != nil }
     }
 
+    var groups: [SystemProcessGroup] {
+        SystemProcessGrouping.groups(processes: snapshot?.processes ?? [], sortedBy: sort, limit: 15)
+    }
+
     var isWarmingUp: Bool {
         isRunning && (snapshot == nil || (sort == .cpu && sampleCount < 2))
     }

@@ -75,7 +75,7 @@ final class AppModuleTests: XCTestCase {
         modules.setEnabled(.calendar, enabled: false)
         modules.setEnabled(.liveActivities, enabled: false)
         XCTAssertEqual(items.filter { $0.isAvailable(model) }.map(\.id),
-                       ["note", "batteries", "systemLoad", "quotas", "toggles", "launcher", "displays"])
+                       ["cooling", "speedtest", "note", "batteries", "systemLoad", "quotas", "toggles", "launcher", "displays"])
         modules.setEnabled(.quotas, enabled: false)
         XCTAssertFalse(items.filter { $0.isAvailable(model) }.map(\.id).contains("quotas"))
         modules.applyPreset(.all)

@@ -1,5 +1,6 @@
 import AppKit
 import NotchCore
+import SpriteKit
 import XCTest
 @testable import NotchApp
 
@@ -7,10 +8,12 @@ final class LiveWallpaperPolicyTests: XCTestCase {
     func testOverlaySettingsDecodeSanitizeAndTargetMainDisplay() throws {
         let decoded = try JSONDecoder().decode(LiveWallpaperOverlaySettings.self, from: Data(#"{"showsQuotas":true,"opacity":7,"metrics":["network","cpu"]}"#.utf8))
         XCTAssertTrue(decoded.showsQuotas)
+        XCTAssertTrue(decoded.hiddenQuotaProviderIDs.isEmpty)
         XCTAssertEqual(decoded.position, .bottomRight)
         XCTAssertEqual(decoded.horizontalInset, 64)
         XCTAssertEqual(decoded.verticalInset, 160)
         var custom = decoded
+        custom.hiddenQuotaProviderIDs = ["codex", "claude"]
         custom.horizontalInset = 120
         custom.verticalInset = 240
         XCTAssertEqual(try JSONDecoder().decode(LiveWallpaperOverlaySettings.self,
@@ -154,6 +157,36 @@ final class LiveWallpaperPolicyTests: XCTestCase {
 }
 
 final class LiveWallpaperMotionTests: XCTestCase {
+    @MainActor
+    func testAllParticleStylesPreserveNodesAndResumeWithoutAMotionJump() throws {
+        for preset in LiveWallpaperScenePreset.allCases {
+            var settings = LiveWallpaperSceneSettings()
+            settings.cursorMode = .off
+            settings.parallax = 0
+            settings.imageParticles = preset.particles
+            let size = CGSize(width: 320, height: 220)
+            let scene = LiveWallpaperParticleScene(
+                size: size, screenFrame: CGRect(origin: .zero, size: size),
+                content: .image(URL(fileURLWithPath: "/tmp/nool-test-missing-motion-background.jpg")), settings: settings)
+            let layer = try XCTUnwrap(scene.children.first { $0.zPosition == 10 })
+            let particles = layer.children.compactMap { $0 as? SKSpriteNode }
+            XCTAssertFalse(particles.isEmpty, preset.rawValue)
+            let initial = particles.map(\.position)
+            for frame in 0..<180 { scene.update(Double(frame) / 60) }
+            XCTAssertNotEqual(particles.map(\.position), initial, "Stored motion must advance on successive frames")
+            let positions = particles.map(\.position)
+            let alphas = particles.map(\.alpha)
+            scene.resumeClock()
+            scene.update(1_000)
+            XCTAssertEqual(particles.map(\.position), positions, "The first resumed frame has zero motion time")
+            XCTAssertEqual(particles.map(\.alpha), alphas, "The first resumed frame preserves the pulse/fade phase")
+            scene.update(1_000 + 1.0 / 60)
+            XCTAssertNotEqual(particles.map(\.position), positions)
+            XCTAssertTrue(particles.allSatisfy { $0.parent === layer })
+            XCTAssertTrue(particles.allSatisfy { $0.position.x.isFinite && $0.position.y.isFinite && $0.alpha.isFinite })
+        }
+    }
+
     func testCursorPushesWithinRadiusOnlyAndRespectsMode() {
         let cursor = CGPoint(x: 100, y: 100)
         let near = CGPoint(x: 150, y: 100)
@@ -188,6 +221,312 @@ final class LiveWallpaperMotionTests: XCTestCase {
         XCTAssertLessThanOrEqual(LiveWallpaperMotion.particleCount(style: .plexus, size: CGSize(width: 8000, height: 4000),
                                                                    density: 2), 160)
         XCTAssertEqual(LiveWallpaperMotion.particleCount(style: .none, size: size, density: 1), 0)
+    }
+}
+
+final class LiveWallpaperPlexusTests: XCTestCase {
+    func testLinkClockRefreshesThirtyTimesPerSecondAtThirtyAndSixtyFPS() {
+        for fps in [30, 60] {
+            var clock = LiveWallpaperLinkClock()
+            var refreshes: [Double] = []
+            for frame in 0..<fps * 10 {
+                let time = Double(frame) / Double(fps)
+                if clock.shouldRefresh(at: time) { refreshes.append(time) }
+            }
+            XCTAssertEqual(refreshes.count, 300)
+            for (a, b) in zip(refreshes, refreshes.dropFirst()) {
+                XCTAssertGreaterThanOrEqual(b - a + 1e-9, 1.0 / 30)
+            }
+        }
+    }
+
+    func testClockResetsAfterPauseRebuildAndBackwardRendererTime() {
+        var clock = LiveWallpaperLinkClock()
+        XCTAssertTrue(clock.shouldRefresh(at: 50))
+        XCTAssertFalse(clock.shouldRefresh(at: 50.01))
+        clock.reset()
+        XCTAssertTrue(clock.shouldRefresh(at: 50.01))
+        XCTAssertTrue(clock.shouldRefresh(at: 2))
+        XCTAssertFalse(clock.shouldRefresh(at: .nan))
+        XCTAssertFalse(clock.shouldRefresh(at: .infinity))
+        XCTAssertFalse(clock.shouldRefresh(at: 2.01))
+        XCTAssertTrue(clock.shouldRefresh(at: 100), "A long pause produces one refresh, without catch-up work")
+        XCTAssertFalse(clock.shouldRefresh(at: 100))
+    }
+
+    @MainActor
+    func testSceneCadenceIsIndependentOfEnergyAndResetsOnResumeAndRebuild() throws {
+        for fps in [30, 60] {
+            for energy in [0.0, 1.0] {
+                var settings = LiveWallpaperSceneSettings()
+                settings.density = 2
+                settings.cursorMode = .off
+                settings.parallax = 0
+                settings.framesPerSecond = fps
+                let size = CGSize(width: 1000, height: 500)
+                let scene = LiveWallpaperParticleScene(size: size, screenFrame: CGRect(origin: .zero, size: size),
+                                                      content: .scene(.plexus), settings: settings)
+                scene.setEnergy(energy)
+                var previous: CGPath?
+                var refreshes = 0
+                for frame in 0..<fps * 3 {
+                    scene.update(Double(frame) / Double(fps))
+                    let path = try XCTUnwrap(scene.children.flatMap(\.children)
+                        .compactMap { ($0 as? SKShapeNode)?.path }.first)
+                    if path !== previous { refreshes += 1 }
+                    previous = path
+                }
+                XCTAssertEqual(refreshes, 90, "fps=\(fps), energy=\(energy)")
+                scene.resumeClock()
+                let time = Double(fps * 3 - 1) / Double(fps)
+                scene.update(time)
+                let resumed = try XCTUnwrap(scene.children.flatMap(\.children)
+                    .compactMap { ($0 as? SKShapeNode)?.path }.first)
+                XCTAssertFalse(resumed === previous)
+                settings.density = 1.9
+                scene.update(settings: settings, screenFrame: CGRect(origin: .zero, size: size))
+                scene.update(time)
+                XCTAssertNotNil(scene.children.flatMap(\.children).compactMap { ($0 as? SKShapeNode)?.path }.first,
+                                "Rebuilt shapes get links immediately, even at the previous refresh time")
+            }
+        }
+    }
+
+    func testGridMatchesOriginalNeighborsAndBandsIncludingNegativeCellsAndEdges() {
+        var points = [CGPoint.zero]
+        for distance in [-340.0, -170.001, -170, -169.999, -113.334, -113.333, -56.667, -56.666,
+                         -0.001, 0.001, 56.666, 56.667, 113.333, 113.334, 169.999, 170, 170.001, 340] {
+            points.append(CGPoint(x: distance, y: 0))
+            points.append(CGPoint(x: -0.25, y: distance))
+        }
+        points.append(CGPoint(x: 0, y: -340))
+        for boundary in [CGFloat(170) / 3, CGFloat(340) / 3] {
+            for distance in [boundary.nextDown, boundary, boundary.nextUp] {
+                points.append(CGPoint(x: distance, y: -340))
+            }
+        }
+        var random: UInt64 = 17
+        for _ in 0..<120 {
+            random = random &* 6_364_136_223_846_793_005 &+ 1
+            let x = CGFloat(random % 5_400) - 140
+            random = random &* 6_364_136_223_846_793_005 &+ 1
+            let y = CGFloat(random % 1_720) - 140
+            points.append(CGPoint(x: x, y: y))
+        }
+        var grid = LiveWallpaperPlexusLinks()
+        assertEquivalent(points, grid: &grid)
+        // Reuse after moving to another display-sized geometry and after the particle count shrinks.
+        assertEquivalent(points.map { CGPoint(x: $0.x * 0.3 - 170, y: $0.y * 0.5 - 170) }, grid: &grid)
+        assertEquivalent(Array(points.prefix(9)), grid: &grid)
+        assertEquivalent([], grid: &grid)
+        assertEquivalent([.zero], grid: &grid)
+        assertEquivalent(points, grid: &grid)
+    }
+
+    func testExtremeGridBoundsFallBackWithoutLosingNearbyPairs() {
+        var grid = LiveWallpaperPlexusLinks()
+        assertEquivalent([.zero, CGPoint(x: 1, y: 0), CGPoint(x: 1_000_000_000, y: 0),
+                          CGPoint(x: 1_000_000_001, y: 0)], grid: &grid)
+    }
+
+    @MainActor
+    func testExternalLineRendererGetsSameGeometryAndDisablingRestoresNativePaths() throws {
+        let scene = makeLineScene(size: CGSize(width: 100, height: 100))
+        scene.update(0)
+        let shapes = lineShapes(in: scene)
+        XCTAssertEqual(shapes.count, 3)
+        let nativeSegments = try segments(in: shapes)
+        XCTAssertFalse(nativeSegments.isEmpty)
+        var submissions: [([LiveWallpaperPlexusSegment], CGSize)] = []
+        scene.setLineRenderer { submissions.append(($0, $1)) }
+        let initial = try XCTUnwrap(submissions.last)
+        XCTAssertEqual(initial.1, scene.size)
+        XCTAssertEqual(initial.0.sorted(by: segmentOrder), nativeSegments.sorted(by: segmentOrder))
+        XCTAssertTrue(initial.0.allSatisfy { (0...2).contains($0.bucket) })
+        XCTAssertTrue(shapes.allSatisfy { $0.isHidden && $0.path == nil },
+                      "External rendering must avoid duplicate SpriteKit strokes and their tessellation")
+        scene.update(1.0 / 60)
+        XCTAssertEqual(submissions.count, 2, "Installing the renderer resets the geometry clock")
+        let latest = try XCTUnwrap(submissions.last?.0)
+        scene.setLineRenderer(nil)
+        XCTAssertTrue(shapes.allSatisfy { !$0.isHidden && $0.path != nil })
+        XCTAssertEqual(try segments(in: shapes).sorted(by: segmentOrder), latest.sorted(by: segmentOrder))
+        let count = submissions.count
+        scene.update(1.0 / 30)
+        XCTAssertEqual(submissions.count, count, "No callbacks survive removal of the external renderer")
+    }
+
+    @MainActor
+    func testRebuildingWithoutPlexusClearsExternalLinesAndStopsSubmittingGeometry() throws {
+        var settings = lineSettings()
+        settings.imageParticles = .plexus
+        let size = CGSize(width: 100, height: 100)
+        let scene = LiveWallpaperParticleScene(size: size, screenFrame: CGRect(origin: .zero, size: size),
+                                              content: .image(URL(fileURLWithPath: "/tmp/nool-test-missing-background.jpg")),
+                                              settings: settings)
+        var submissions: [[LiveWallpaperPlexusSegment]] = []
+        scene.setLineRenderer { segments, _ in submissions.append(segments) }
+        scene.update(0)
+        XCTAssertFalse(try XCTUnwrap(submissions.last).isEmpty)
+        settings.imageParticles = .snow
+        scene.update(settings: settings, screenFrame: CGRect(origin: .zero, size: size))
+        XCTAssertTrue(try XCTUnwrap(submissions.last).isEmpty)
+        XCTAssertTrue(lineShapes(in: scene).isEmpty)
+        let count = submissions.count
+        scene.update(1)
+        XCTAssertEqual(submissions.count, count, "A non-Plexus scene must leave the external layer cleared")
+        settings.imageParticles = .plexus
+        scene.update(settings: settings, screenFrame: CGRect(origin: .zero, size: size))
+        scene.update(1)
+        XCTAssertFalse(try XCTUnwrap(submissions.last).isEmpty)
+        XCTAssertTrue(lineShapes(in: scene).allSatisfy { $0.isHidden && $0.path == nil })
+    }
+
+    @MainActor
+    func testWallpaperSnapshotIncludesNativeLinesWhileExternalRendererIsActive() throws {
+        let size = CGSize(width: 320, height: 220)
+        let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let view = SKView(frame: CGRect(origin: .zero, size: size))
+        view.isPaused = true
+        view.ignoresSiblingOrder = true
+        view.allowsTransparency = false
+        window.contentView = view
+        let scene = makeLineScene(size: size)
+        view.presentScene(scene)
+        defer { view.presentScene(nil) }
+        scene.update(0)
+        let reference = try XCTUnwrap(scene.snapshot(in: view))
+        var submissions = 0
+        scene.setLineRenderer { _, _ in submissions += 1 }
+        let snapshot = try XCTUnwrap(scene.snapshot(in: view))
+        XCTAssertEqual(snapshot.width, reference.width)
+        XCTAssertEqual(snapshot.height, reference.height)
+        let actualPixels = rgbaPixels(snapshot), expectedPixels = rgbaPixels(reference)
+        let changedChannels = zip(actualPixels, expectedPixels).filter { $0 != $1 }.count
+        XCTAssertEqual(changedChannels, 0,
+                       "Static wallpaper export retains the original SpriteKit antialiasing and every line")
+        XCTAssertEqual(submissions, 1, "Export does not submit duplicate geometry to the live renderer")
+        XCTAssertTrue(lineShapes(in: scene).allSatisfy { $0.isHidden && $0.path == nil })
+    }
+
+    @MainActor
+    func testFailedWallpaperSnapshotAlsoRestoresExternalRendererState() throws {
+        let scene = makeLineScene(size: CGSize(width: 100, height: 100))
+        scene.update(0)
+        scene.setLineRenderer { _, _ in }
+        let view = FailingWallpaperSnapshotView(frame: CGRect(origin: .zero, size: scene.size))
+        var attempted = false
+        view.onCapture = {
+            attempted = true
+            XCTAssertTrue(self.lineShapes(in: scene).allSatisfy { !$0.isHidden && $0.path != nil })
+        }
+        XCTAssertNil(scene.snapshot(in: view))
+        XCTAssertTrue(attempted)
+        XCTAssertTrue(lineShapes(in: scene).allSatisfy { $0.isHidden && $0.path == nil },
+                      "A failed capture must not leave duplicate native lines in the live wallpaper")
+    }
+
+    private func lineSettings() -> LiveWallpaperSceneSettings {
+        var settings = LiveWallpaperSceneSettings()
+        settings.cursorMode = .off
+        settings.parallax = 0
+        settings.density = 2
+        return settings
+    }
+
+    @MainActor
+    private func makeLineScene(size: CGSize) -> LiveWallpaperParticleScene {
+        LiveWallpaperParticleScene(size: size, screenFrame: CGRect(origin: .zero, size: size),
+                                   content: .scene(.plexus), settings: lineSettings())
+    }
+
+    @MainActor
+    private func lineShapes(in scene: SKScene) -> [SKShapeNode] {
+        scene.children.flatMap(\.children).compactMap { $0 as? SKShapeNode }
+    }
+
+    @MainActor
+    private func segments(in shapes: [SKShapeNode]) throws -> [LiveWallpaperPlexusSegment] {
+        var segments: [LiveWallpaperPlexusSegment] = []
+        for (bucket, shape) in shapes.enumerated() {
+            let path = try XCTUnwrap(shape.path)
+            var start = CGPoint.zero
+            path.applyWithBlock { raw in
+                let element = raw.pointee
+                switch element.type {
+                case .moveToPoint: start = element.points[0]
+                case .addLineToPoint:
+                    segments.append(LiveWallpaperPlexusSegment(start: start, end: element.points[0], bucket: bucket))
+                    start = element.points[0]
+                default: XCTFail("Plexus geometry contains only independent straight segments")
+                }
+            }
+        }
+        return segments
+    }
+
+    private func segmentOrder(_ a: LiveWallpaperPlexusSegment, _ b: LiveWallpaperPlexusSegment) -> Bool {
+        let aKey = [CGFloat(a.bucket), a.start.x, a.start.y, a.end.x, a.end.y]
+        let bKey = [CGFloat(b.bucket), b.start.x, b.start.y, b.end.x, b.end.y]
+        return aKey.lexicographicallyPrecedes(bKey)
+    }
+
+    private func rgbaPixels(_ image: CGImage) -> [UInt8] {
+        var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        pixels.withUnsafeMutableBytes { raw in
+            let context = CGContext(data: raw.baseAddress, width: image.width, height: image.height,
+                                    bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                                    space: CGColorSpaceCreateDeviceRGB(),
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        }
+        return pixels
+    }
+
+    private struct Link: Hashable {
+        let first: Int
+        let second: Int
+        let bucket: Int
+    }
+
+    private func assertEquivalent(_ points: [CGPoint], grid: inout LiveWallpaperPlexusLinks,
+                                  file: StaticString = #filePath, line: UInt = #line) {
+        var expected: [Link: Int] = [:]
+        for first in points.indices {
+            for second in (first + 1)..<points.count {
+                let dx = points[first].x - points[second].x, dy = points[first].y - points[second].y
+                let squared = dx * dx + dy * dy
+                if squared < 170 * 170 {
+                    let link = Link(first: points.firstIndex(of: points[first])!,
+                                    second: points.firstIndex(of: points[second])!,
+                                    bucket: min(2, Int(squared.squareRoot() / 170 * 3)))
+                    expected[link, default: 0] += 1
+                }
+            }
+        }
+        grid.updatePoints(count: points.count) { points[$0] }
+        var actual: [Link: Int] = [:]
+        var visits = 0
+        grid.forEachLink { a, b, bucket in
+            visits += 1
+            let link = Link(first: points.firstIndex(of: a)!, second: points.firstIndex(of: b)!, bucket: bucket)
+            actual[link, default: 0] += 1
+        }
+        XCTAssertEqual(visits, expected.values.reduce(0, +), "Each pair is emitted only once", file: file, line: line)
+        XCTAssertEqual(actual, expected, file: file, line: line)
+    }
+}
+
+@MainActor
+private final class FailingWallpaperSnapshotView: SKView {
+    var onCapture: (() -> Void)?
+
+    override func texture(from node: SKNode) -> SKTexture? {
+        onCapture?()
+        return nil
     }
 }
 
@@ -324,6 +663,32 @@ final class LiveWallpaperControllerTests: XCTestCase {
         XCTAssertEqual(fixture.sampler.sampleCount, samples, "Sampling stops while paused")
     }
 
+    func testReactorSamplesMetricsWithoutOptionalOverlayAndStopsWhenDeselected() async throws {
+        let fixture = try Fixture(files: [])
+        defer { fixture.cleanUp() }
+        var preferences = LiveWallpaperPreferences()
+        preferences.enabled = true
+        preferences.selectedFileName = LiveWallpaperScenePreset.reactor.key
+        fixture.controller.setPreferences(preferences)
+        fixture.controller.start()
+        try await waitUntil { fixture.renderer.overlayData.last?.system?.cpuFraction == 0.75 }
+        XCTAssertFalse(preferences.overlay.needsSystemMetrics)
+        XCTAssertEqual(fixture.renderer.configurations.last??.screens.first?.content, .scene(.reactor))
+        preferences.selectedFileName = LiveWallpaperScenePreset.plexus.key
+        fixture.controller.setPreferences(preferences)
+        let samples = fixture.sampler.sampleCount
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(fixture.sampler.sampleCount, samples)
+        preferences.selectedFileName = LiveWallpaperScenePreset.reactor.key
+        fixture.controller.setPreferences(preferences)
+        try await waitUntil { fixture.sampler.sampleCount > samples }
+        fixture.power.isOnBattery = true
+        fixture.power.onChange?()
+        let pausedSamples = fixture.sampler.sampleCount
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(fixture.sampler.sampleCount, pausedSamples)
+    }
+
     func testMissingSelectedFileHidesWallpaper() async throws {
         let fixture = try Fixture(files: [])
         defer { fixture.cleanUp() }
@@ -415,7 +780,7 @@ final class LiveWallpaperControllerTests: XCTestCase {
 private extension LiveWallpaperContent {
     var fileName: String? {
         switch self {
-        case .video(let url), .image(let url): url.lastPathComponent
+        case .video(let url), .image(let url), .wallpaperEngine(let url): url.lastPathComponent
         case .scene(let preset): preset.key
         }
     }

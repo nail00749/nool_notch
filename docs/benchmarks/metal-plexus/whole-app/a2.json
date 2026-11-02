@@ -1,0 +1,30 @@
+{
+  "renderer": "spritekit",
+  "label": "a2",
+  "pid": 34258,
+  "started": 1792572689.580033,
+  "duration": 32.50624489784241,
+  "cpu": [
+    19.9,
+    21.8,
+    23.5,
+    20.4,
+    25.3,
+    21.4,
+    22.0,
+    22.7,
+    20.1,
+    21.8,
+    21.5,
+    22.4,
+    19.3,
+    20.6,
+    25.0
+  ],
+  "mean": 21.846666666666668,
+  "median": 21.8,
+  "minimum": 19.3,
+  "maximum": 25.3,
+  "preferencesBefore": "a367643c0a1bfb4a2786b678be0aafb6cc67cc640c17f7d2de6f36915d1f1d77",
+  "preferencesAfter": "a367643c0a1bfb4a2786b678be0aafb6cc67cc640c17f7d2de6f36915d1f1d77"
+}

@@ -121,7 +121,10 @@ final class DockIntegrationTests: XCTestCase {
         let settings = DockPreferences(defaults: defaults)
         settings.visibility = .always
         settings.displayUUID = DockWindowCoordinator.uuid(for: screen)
-        let coordinator = DockWindowCoordinator(feature: makeFeature(settings), model: makeModel())
+        let environment = DockCoordinatorEnvironment(
+            fullscreenOwner: { _ in nil }, installEventMonitors: false, animatesVisibility: false)
+        let coordinator = DockWindowCoordinator(feature: makeFeature(settings), model: makeModel(),
+                                                environment: environment)
         defer { coordinator.stop() }
         coordinator.start()
         let panel = coordinator.ownedPanel

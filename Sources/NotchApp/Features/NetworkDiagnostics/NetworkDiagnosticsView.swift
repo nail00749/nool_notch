@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NetworkDiagnosticsView: View {
     @ObservedObject var store: NetworkDiagnosticsStore
+    var start: (() -> Void)? = nil
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
@@ -15,7 +16,7 @@ struct NetworkDiagnosticsView: View {
                     Button(store.isCancelling ? "Остановка…" : "Остановить", action: store.cancel)
                         .buttonStyle(.bordered).disabled(store.isCancelling)
                 } else {
-                    Button("Запустить проверку", action: store.start)
+                    Button("Запустить проверку", action: start ?? store.start)
                         .buttonStyle(.borderedProminent)
                 }
             }

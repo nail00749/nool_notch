@@ -54,6 +54,12 @@ struct CodexStateReader: Sendable {
             throw CodexStateReaderError.databaseUnavailable
         }
         defer { sqlite3_close(database) }
+        // The eligibility guard and selected rows must share one read snapshot:
+        // Codex may update timestamps or migrate indexes between statements.
+        guard sqlite3_exec(database, "BEGIN DEFERRED TRANSACTION;", nil, nil, nil) == SQLITE_OK else {
+            throw CodexStateReaderError.queryFailed
+        }
+        defer { sqlite3_exec(database, "ROLLBACK;", nil, nil, nil) }
 
         let columns = tableColumns(database: database, table: "threads")
         guard columns.contains("id"),
@@ -76,18 +82,28 @@ struct CodexStateReader: Sendable {
             repeating: "?",
             count: acceptedThreadSources.count
         ).joined(separator: ", ")
-        let sql = """
+        let indexedOrder = Self.indexedTimestampOrder(database: database, columns: columns)
+        let indexClause = indexedOrder.map { " INDEXED BY \(Self.quotedIdentifier($0.index))" } ?? ""
+        let orderExpression = indexedOrder.map { Self.quotedIdentifier($0.column) } ?? timestampExpression
+        func query(indexClause: String, orderExpression: String) -> String { """
             SELECT id, \(cwdExpression), \(modelExpression),
                    \(rolloutExpression), \(timestampExpression), \(createdExpression)
-            FROM threads
+            FROM threads\(indexClause)
             WHERE archived = 0
               AND source IN (\(sourcePlaceholders))
-            ORDER BY \(timestampExpression) DESC
+            ORDER BY \(orderExpression) DESC
             LIMIT ?;
-            """
+            """ }
+        let sql = query(indexClause: indexClause, orderExpression: orderExpression)
 
         var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
+        var prepared = sqlite3_prepare_v2(database, sql, -1, &statement, nil)
+        if prepared != SQLITE_OK, indexedOrder != nil {
+            if let statement { sqlite3_finalize(statement) }
+            statement = nil
+            prepared = sqlite3_prepare_v2(database, query(indexClause: "", orderExpression: timestampExpression), -1, &statement, nil)
+        }
+        guard prepared == SQLITE_OK,
               let statement else {
             throw CodexStateReaderError.queryFailed
         }
@@ -227,6 +243,66 @@ struct CodexStateReader: Sendable {
             }
         }
         return columns
+    }
+
+    /// COALESCE/NULLIF and unit conversion prevent SQLite from ordering by its
+    /// existing timestamp index. Use that index only when its raw order is
+    /// provably identical: every primary timestamp is a unique nonzero integer.
+    /// Otherwise retain the original query, including its fallback/tie behavior.
+    /// This checks only the small covering index, never writes the Codex database.
+    static func indexedTimestampOrder(
+        database: OpaquePointer,
+        columns: Set<String>
+    ) -> (column: String, index: String)? {
+        let milliseconds = ["recency_at_ms", "updated_at_ms", "created_at_ms"]
+        let preference = milliseconds + ["recency_at", "updated_at", "created_at"]
+        guard let column = preference.first(where: columns.contains) else { return nil }
+
+        var indexes: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "PRAGMA index_list(threads);", -1, &indexes, nil) == SQLITE_OK,
+              let indexes else { return nil }
+        defer { sqlite3_finalize(indexes) }
+
+        while sqlite3_step(indexes) == SQLITE_ROW {
+            // A partial index cannot cover arbitrary archived/source predicates.
+            guard sqlite3_column_int(indexes, 4) == 0,
+                  let name = sqlite3_column_text(indexes, 1) else { continue }
+            let index = String(cString: name)
+            var info: OpaquePointer?
+            let pragma = "PRAGMA index_info(\(quotedIdentifier(index)));"
+            guard sqlite3_prepare_v2(database, pragma, -1, &info, nil) == SQLITE_OK,
+                  let info else { continue }
+            let firstMatches = sqlite3_step(info) == SQLITE_ROW
+                && sqlite3_column_text(info, 2).map { String(cString: $0) == column } == true
+            sqlite3_finalize(info)
+            guard firstMatches else { continue }
+
+            let identifier = quotedIdentifier(column)
+            // Within ±2^52, distinct integer milliseconds stay distinct after
+            // division by 1000.0. Outside it, rounding can introduce legacy ties.
+            let range = milliseconds.contains(column)
+                ? " OR \(identifier) > 4503599627370496 OR \(identifier) < -4503599627370496"
+                : ""
+            let guardSQL = """
+                SELECT 1 FROM threads INDEXED BY \(quotedIdentifier(index))
+                GROUP BY \(identifier)
+                HAVING COUNT(*) > 1 OR typeof(\(identifier)) != 'integer'
+                    OR \(identifier) = 0\(range)
+                LIMIT 1;
+                """
+            var validation: OpaquePointer?
+            guard sqlite3_prepare_v2(database, guardSQL, -1, &validation, nil) == SQLITE_OK,
+                  let validation else { return nil }
+            let result = sqlite3_step(validation)
+            sqlite3_finalize(validation)
+            guard result == SQLITE_DONE else { return nil }
+            return (column, index)
+        }
+        return nil
+    }
+
+    private static func quotedIdentifier(_ name: String) -> String {
+        "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
     }
 
     private func timestampExpression(columns: Set<String>) -> String? {

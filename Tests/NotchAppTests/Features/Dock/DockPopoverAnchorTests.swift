@@ -150,10 +150,10 @@ private struct AnchorFixture: View {
                 .scaleEffect(scale)
                 .frame(width: DockLayout.baseCellWidth * scale, height: DockLayout.baseHeight * scale)
                 .background(AnchorMarker(id: "dock-test-anchor"))
-                .modifier(DockPopoverAnchor(isPresented: $state.presented) {
+                .dockPopover(isPresented: $state.presented) {
                     Text("Window preview").frame(width: 220, height: 90)
                         .background(AnchorMarker(id: "dock-test-popup"))
-                })
+                }
             Spacer()
         }.frame(width: 620, height: 180)
     }
@@ -175,10 +175,10 @@ private struct GeometryPreviewFixture: View {
     var body: some View {
         Color.clear.frame(width: 64, height: 52)
             .background(AnchorMarker(id: "dock-test-anchor"))
-            .modifier(DockPopoverAnchor(isPresented: $state.presented) {
+            .dockPopover(isPresented: $state.presented) {
                 DockPreviewSurface(service: service, applicationPath: "/Fake.app",
                                    title: "Preview", interactionChanged: { _ in })
                     .background(AnchorMarker(id: "dock-test-popup"))
-            })
+            }
     }
 }

@@ -256,12 +256,11 @@ private final class DynamicDisplayReferencePresetRuntime: DisplayReferencePreset
     typealias GetUInt = @convention(c) (AnyObject, Selector) -> UInt32
     typealias GetIndex = @convention(c) (AnyObject, Selector) -> UInt64
     typealias SetPreset = @convention(c) (AnyObject, Selector, AnyObject) -> Bool
-    private lazy var image = dlopen("/System/Library/PrivateFrameworks/MonitorPanel.framework/MonitorPanel", RTLD_LAZY | RTLD_LOCAL)
     private struct Record { let option: DisplayReferencePresetOption; let object: NSObject }
 
     func state(_ target: DisplayHardwareTarget) throws -> DisplayReferencePresetState? {
-        try autoreleasepool {
-            guard let display = try display(target),
+        try MonitorPanelAccess.shared.withManager { manager in
+            guard let manager, let display = try display(target, manager: manager),
                   let has = method(display, "hasPresets", result: "B"), bool(display, has, "hasPresets"),
                   method(display, "setActivePreset:", result: "B", parameters: ["@"]) != nil,
                   let list = try records(display, target: target),
@@ -273,8 +272,8 @@ private final class DynamicDisplayReferencePresetRuntime: DisplayReferencePreset
     }
 
     func select(_ presetID: String, for target: DisplayHardwareTarget) throws {
-        try autoreleasepool {
-            guard let display = try display(target), let list = try records(display, target: target),
+        try MonitorPanelAccess.shared.withManager { manager in
+            guard let manager, let display = try display(target, manager: manager), let list = try records(display, target: target),
                   let selected = list.first(where: { $0.option.id == presetID }),
                   let setter = method(display, "setActivePreset:", result: "B", parameters: ["@"]) else {
                 throw DisplayReferencePresetError.unavailable
@@ -313,9 +312,7 @@ private final class DynamicDisplayReferencePresetRuntime: DisplayReferencePreset
         return Record(option: option, object: candidate)
     }
 
-    private func display(_ target: DisplayHardwareTarget) throws -> NSObject? {
-        guard image != nil, let cls = NSClassFromString("MPDisplayMgr") as? NSObject.Type else { return nil }
-        let manager = cls.init()
+    private func display(_ target: DisplayHardwareTarget, manager: NSObject) throws -> NSObject? {
         guard let displays = object(manager, "displays") as? [NSObject], displays.count <= 128 else { return nil }
         let matches = displays.filter { display in
             guard let getID = method(display, "displayID", result: "i") else { return false }

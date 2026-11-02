@@ -9,8 +9,13 @@ if [[ -d "/Applications/Xcode-beta.app/Contents/Developer" ]]; then
 fi
 
 XCRUN="/usr/bin/xcrun"
-"$XCRUN" swift build
-BIN_PATH="$("$XCRUN" swift build --show-bin-path)"
+BUILD_CONFIGURATION="${NOTCHAPP_BUILD_CONFIGURATION:-debug}"
+if [[ "$BUILD_CONFIGURATION" != "debug" && "$BUILD_CONFIGURATION" != "release" ]]; then
+  print -u2 -- "error: NOTCHAPP_BUILD_CONFIGURATION must be debug or release"
+  exit 1
+fi
+"$XCRUN" swift build -c "$BUILD_CONFIGURATION"
+BIN_PATH="$("$XCRUN" swift build -c "$BUILD_CONFIGURATION" --show-bin-path)"
 APP_PATH="$PROJECT_ROOT/Build/NooL App.app"
 LEGACY_APP_PATH="$PROJECT_ROOT/Build/NotchApp.app"
 EXPECTED_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PROJECT_ROOT/Resources/Info.plist")"
@@ -46,8 +51,13 @@ if [[ -e "$LEGACY_APP_PATH" || -L "$LEGACY_APP_PATH" ]]; then
   /bin/mv "$LEGACY_APP_PATH" "$APP_PATH"
 fi
 
-mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
+mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources" \
+  "$APP_PATH/Contents/Library/LaunchDaemons"
 cp "$BIN_PATH/NotchApp" "$APP_PATH/Contents/MacOS/NotchApp"
+cp "$BIN_PATH/NoolCoolingHelper" "$APP_PATH/Contents/MacOS/NoolCoolingHelper"
+chmod 755 "$APP_PATH/Contents/MacOS/NoolCoolingHelper"
+cp "$PROJECT_ROOT/Resources/com.nool.cooling-helper.plist" \
+  "$APP_PATH/Contents/Library/LaunchDaemons/com.nool.cooling-helper.plist"
 cp "$BIN_PATH/NoolAgentBridge" "$APP_PATH/Contents/Resources/nool-agent-bridge"
 chmod 755 "$APP_PATH/Contents/Resources/nool-agent-bridge"
 cp "$BIN_PATH/NoolDockRecovery" "$APP_PATH/Contents/Resources/nool-dock-recovery"
@@ -62,7 +72,9 @@ for RESOURCE_BUNDLE in "${RESOURCE_BUNDLES[@]}"; do
   /bin/rm -rf "$APP_PATH/Contents/Resources/$BUNDLE_NAME"
   /bin/cp -R "$RESOURCE_BUNDLE" "$APP_PATH/Contents/Resources/$BUNDLE_NAME"
 done
-"$PROJECT_ROOT/scripts/embed-widget.sh" "$APP_PATH"
+WIDGET_CONFIGURATION=Debug
+if [[ "$BUILD_CONFIGURATION" == "release" ]]; then WIDGET_CONFIGURATION=Release; fi
+"$PROJECT_ROOT/scripts/embed-widget.sh" "$APP_PATH" "$WIDGET_CONFIGURATION"
 "$PROJECT_ROOT/scripts/sign-app.sh" "$APP_PATH"
 
 # Replace the running instance so the app cannot keep an older binary in memory.

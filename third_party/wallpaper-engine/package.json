@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "esbuild": "0.28.2",
+    "mediabunny": "1.56.0",
+    "vite": "6.4.3"
+  }
+}

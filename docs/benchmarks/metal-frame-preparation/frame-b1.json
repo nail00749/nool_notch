@@ -1,0 +1,30 @@
+{
+  "renderer": "after-frame-cost",
+  "label": "frame-b1",
+  "pid": 56218,
+  "started": 1792574856.7737951,
+  "duration": 32.25760102272034,
+  "cpu": [
+    13.3,
+    13.6,
+    15.2,
+    13.6,
+    14.7,
+    19.1,
+    13.6,
+    17.8,
+    15.5,
+    17.9,
+    16.0,
+    16.2,
+    17.7,
+    15.4,
+    18.1
+  ],
+  "mean": 15.846666666666666,
+  "median": 15.5,
+  "minimum": 13.3,
+  "maximum": 19.1,
+  "preferencesBefore": "a367643c0a1bfb4a2786b678be0aafb6cc67cc640c17f7d2de6f36915d1f1d77",
+  "preferencesAfter": "a367643c0a1bfb4a2786b678be0aafb6cc67cc640c17f7d2de6f36915d1f1d77"
+}

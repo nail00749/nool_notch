@@ -161,7 +161,7 @@ protocol MediaRemoteAdapterProcess: AnyObject {
         onOutput: @escaping @Sendable (Data) -> Void,
         onExit: @escaping @Sendable () -> Void
     ) throws
-    func write(line: String)
+    @discardableResult func write(line: String) -> Bool
     func terminate()
 }
 
@@ -190,7 +190,7 @@ final class PerlMediaRemoteAdapterProcess: MediaRemoteAdapterProcess, @unchecked
     private let adapterURL: URL?
     private let lock = NSLock()
     private var process: Process?
-    private var input: FileHandle?
+    private var input: MediaRemoteCommandChannel?
 
     init(adapterURL: URL? = PerlMediaRemoteAdapterProcess.locateAdapter()) {
         self.adapterURL = adapterURL
@@ -227,9 +227,12 @@ final class PerlMediaRemoteAdapterProcess: MediaRemoteAdapterProcess, @unchecked
         process.arguments = ["-e", Self.loaderScript, adapterURL.path]
         // An empty environment keeps PERL5OPT/PERL5LIB from injecting code.
         process.environment = [:]
-        let stdinPipe = Pipe()
+        let stdinChannel = try MediaRemoteCommandChannel.make()
+        // Process duplicates this descriptor onto the child's stdin. Keeping a
+        // parent copy open would hide peer termination from the writer.
+        defer { try? stdinChannel.reader.close() }
         let stdoutPipe = Pipe()
-        process.standardInput = stdinPipe
+        process.standardInput = stdinChannel.reader
         process.standardOutput = stdoutPipe
         process.standardError = FileHandle.nullDevice
 
@@ -244,20 +247,27 @@ final class PerlMediaRemoteAdapterProcess: MediaRemoteAdapterProcess, @unchecked
         }
         process.terminationHandler = { _ in
             output.readabilityHandler = nil
+            stdinChannel.writer.close()
             onExit()
         }
 
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            output.readabilityHandler = nil
+            stdinChannel.writer.close()
+            throw error
+        }
         lock.withLock {
             self.process = process
-            self.input = stdinPipe.fileHandleForWriting
+            self.input = stdinChannel.writer
         }
     }
 
-    func write(line: String) {
+    @discardableResult
+    func write(line: String) -> Bool {
         let handle = lock.withLock { input }
-        guard let handle, let data = (line + "\n").data(using: .utf8) else { return }
-        try? handle.write(contentsOf: data)
+        return handle?.write(line: line) ?? false
     }
 
     func terminate() {
@@ -268,7 +278,7 @@ final class PerlMediaRemoteAdapterProcess: MediaRemoteAdapterProcess, @unchecked
             return pair
         }
         // Closing stdin is the adapter's own shutdown signal.
-        try? input?.close()
+        input?.close()
         if process?.isRunning == true {
             process?.terminate()
         }
@@ -290,7 +300,8 @@ final class MediaRemoteAdapterSource {
     typealias Sleep = @Sendable (TimeInterval) async -> Void
 
     static let restartDelays: [TimeInterval] = [1, 2, 4, 8, 16, 30, 60]
-    static let maximumFailuresBeforeReady = 4
+    static let maximumConsecutiveFailures = 4
+    static let stableRunDuration: TimeInterval = 30
 
     private let makeProcess: ProcessFactory
     private let sleep: Sleep
@@ -298,6 +309,8 @@ final class MediaRemoteAdapterSource {
     private var process: (any MediaRemoteAdapterProcess)?
     private var generation: UInt64 = 0
     private var consecutiveFailures = 0
+    private var readyAt: Date?
+    private var receivedValidState = false
     private var restartTask: Task<Void, Never>?
     private var snapshotBuilder = MediaRemoteAdapterSnapshotBuilder()
 
@@ -350,17 +363,16 @@ final class MediaRemoteAdapterSource {
         guard isActive, let process else { return false }
         switch command {
         case .togglePlayPause:
-            process.write(line: "toggle")
+            return process.write(line: "toggle")
         case .nextTrack:
-            process.write(line: "next")
+            return process.write(line: "next")
         case .previousTrack:
-            process.write(line: "previous")
+            return process.write(line: "previous")
         case .seek(let time):
             let position = max(0, time)
             guard position.isFinite else { return false }
-            process.write(line: String(format: "seek %.3f", position))
+            return process.write(line: String(format: "seek %.3f", position))
         }
-        return true
     }
 
     func requestRefresh() {
@@ -371,6 +383,8 @@ final class MediaRemoteAdapterSource {
     private func launch() {
         generation &+= 1
         let launchGeneration = generation
+        readyAt = nil
+        receivedValidState = false
         state = .starting
         let process = makeProcess()
         self.process = process
@@ -403,12 +417,14 @@ final class MediaRemoteAdapterSource {
         for event in events {
             switch event {
             case .ready:
-                consecutiveFailures = 0
+                if readyAt == nil { readyAt = now() }
                 state = .active
             case .idle:
+                receivedValidState = true
                 snapshotBuilder.reset()
                 publish(nil)
             case .nowPlaying(let payload):
+                receivedValidState = true
                 publish(snapshotBuilder.snapshot(from: payload, receivedAt: now()))
             case .command:
                 break
@@ -421,12 +437,18 @@ final class MediaRemoteAdapterSource {
 
     private func handleExit(generation: UInt64) {
         guard generation == self.generation, state != .unavailable else { return }
+        // Ignore buffered output and duplicate exit events from this dead process.
+        self.generation &+= 1
+        let exitGeneration = self.generation
         process = nil
+        if let readyAt, receivedValidState, now().timeIntervalSince(readyAt) >= Self.stableRunDuration {
+            consecutiveFailures = 0
+        }
         consecutiveFailures += 1
         snapshotBuilder.reset()
         publish(nil)
 
-        if consecutiveFailures > Self.maximumFailuresBeforeReady {
+        if consecutiveFailures > Self.maximumConsecutiveFailures {
             giveUp()
             return
         }
@@ -439,7 +461,7 @@ final class MediaRemoteAdapterSource {
             await sleep(delay)
             guard Task.isCancelled == false,
                   let self,
-                  self.generation == generation else { return }
+                  self.generation == exitGeneration else { return }
             self.restartTask = nil
             self.launch()
         }

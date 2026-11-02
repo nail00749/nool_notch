@@ -13,6 +13,7 @@
 #import <Foundation/Foundation.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <math.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -78,8 +79,21 @@ static void writeLine(NSString *line) {
     }
 }
 
+static NSData *serializeObject(NSDictionary *object, NSJSONWritingOptions options) {
+    // MediaRemote metadata is external input. Foundation can raise instead of
+    // returning an NSError for non-finite numbers or unsupported JSON values.
+    @try {
+        if (![NSJSONSerialization isValidJSONObject:object]) {
+            return nil;
+        }
+        return [NSJSONSerialization dataWithJSONObject:object options:options error:NULL];
+    } @catch (__unused NSException *exception) {
+        return nil;
+    }
+}
+
 static void emitObject(NSDictionary *object) {
-    NSData *json = [NSJSONSerialization dataWithJSONObject:object options:0 error:NULL];
+    NSData *json = serializeObject(object, 0);
     if (json == nil) {
         return;
     }
@@ -103,6 +117,11 @@ static id valueForKeys(NSDictionary *info, NSArray<NSString *> *keys, Class expe
 static NSString *stringForKeys(NSDictionary *info, NSArray<NSString *> *keys) {
     NSString *value = valueForKeys(info, keys, [NSString class]);
     return value.length > 0 ? value : nil;
+}
+
+static NSNumber *finiteNumberForKeys(NSDictionary *info, NSArray<NSString *> *keys) {
+    NSNumber *value = valueForKeys(info, keys, [NSNumber class]);
+    return value != nil && isfinite(value.doubleValue) ? value : nil;
 }
 
 static NSString *clientString(MRClientStringFunction function, id client) {
@@ -151,14 +170,16 @@ static void emitSnapshot(NSDictionary *info, BOOL isPlaying, int pid, id client)
     if (album) object[@"album"] = album;
     if (identifier) object[@"id"] = identifier;
 
-    NSNumber *duration = valueForKeys(info, @[@"kMRMediaRemoteNowPlayingInfoDuration"], [NSNumber class]);
-    NSNumber *elapsed = valueForKeys(info, @[@"kMRMediaRemoteNowPlayingInfoElapsedTime"], [NSNumber class]);
-    NSNumber *rate = valueForKeys(info, @[@"kMRMediaRemoteNowPlayingInfoPlaybackRate"], [NSNumber class]);
+    NSNumber *duration = finiteNumberForKeys(info, @[@"kMRMediaRemoteNowPlayingInfoDuration"]);
+    NSNumber *elapsed = finiteNumberForKeys(info, @[@"kMRMediaRemoteNowPlayingInfoElapsedTime"]);
+    NSNumber *rate = finiteNumberForKeys(info, @[@"kMRMediaRemoteNowPlayingInfoPlaybackRate"]);
     NSDate *timestamp = valueForKeys(info, @[@"kMRMediaRemoteNowPlayingInfoTimestamp"], [NSDate class]);
     if (duration) object[@"duration"] = duration;
     if (elapsed) object[@"elapsed"] = elapsed;
     if (rate) object[@"rate"] = rate;
-    if (timestamp) object[@"timestamp"] = @(timestamp.timeIntervalSince1970);
+    if (timestamp && isfinite(timestamp.timeIntervalSince1970)) {
+        object[@"timestamp"] = @(timestamp.timeIntervalSince1970);
+    }
 
     NSString *bundleIdentifier = clientString(clientParentBundleIdentifier, client)
         ?: clientString(clientBundleIdentifier, client);
@@ -184,9 +205,12 @@ static void emitSnapshot(NSDictionary *info, BOOL isPlaying, int pid, id client)
         if (mimeType) object[@"artworkMimeType"] = mimeType;
 
         // Compare without the artwork bytes so an unchanged frame is skipped.
-        NSData *json = [NSJSONSerialization dataWithJSONObject:object options:NSJSONWritingSortedKeys error:NULL];
+        NSData *json = serializeObject(object, NSJSONWritingSortedKeys);
         NSString *line = json ? [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] : nil;
         if (line != nil && [line isEqualToString:lastEmittedLine]) {
+            return;
+        }
+        if (line == nil) {
             return;
         }
         lastEmittedLine = line;
@@ -199,7 +223,7 @@ static void emitSnapshot(NSDictionary *info, BOOL isPlaying, int pid, id client)
     }
 
     lastArtworkIdentifier = nil;
-    NSData *json = [NSJSONSerialization dataWithJSONObject:object options:NSJSONWritingSortedKeys error:NULL];
+    NSData *json = serializeObject(object, NSJSONWritingSortedKeys);
     NSString *line = json ? [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] : nil;
     if (line == nil || [line isEqualToString:lastEmittedLine]) {
         return;

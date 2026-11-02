@@ -326,6 +326,28 @@ final class DockVisibilityTests: XCTestCase {
     }
 
     @MainActor
+    func testSwitchingFullscreenApplicationsDoesNotRevealDockDuringMissingWindowSnapshot() async throws {
+        let fixture = try makeFixture(mode: .always)
+        defer { fixture.stop() }
+        fixture.inputs.fullscreen = true
+        fixture.coordinator.start()
+        XCTAssertFalse(fixture.coordinator.ownedPanel.isVisible)
+
+        // WindowServer can temporarily report no full-screen owner during a Space slide.
+        fixture.inputs.fullscreen = false
+        fixture.workspace.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+        XCTAssertFalse(fixture.coordinator.ownedPanel.isVisible)
+        fixture.coordinator.reposition()
+        XCTAssertFalse(fixture.coordinator.ownedPanel.isVisible)
+        fixture.workspace.post(name: NSWorkspace.didActivateApplicationNotification, object: nil)
+        XCTAssertFalse(fixture.coordinator.ownedPanel.isVisible)
+
+        fixture.inputs.fullscreen = true
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertFalse(fixture.coordinator.ownedPanel.isVisible)
+    }
+
+    @MainActor
     func testApplicationActivationResamplesFullscreenAfterTransitionSettles() async throws {
         let fixture = try makeFixture(mode: .always)
         defer { fixture.stop() }
@@ -448,6 +470,26 @@ final class DockVisibilityTests: XCTestCase {
         XCTAssertFalse(DockFullscreenDetection.isFullscreen(windows: [short], display: display, topInset: 39))
         XCTAssertFalse(DockFullscreenDetection.isFullscreen(windows: [lowered], display: display, topInset: 39))
         XCTAssertFalse(DockFullscreenDetection.isFullscreen(windows: [], display: display, topInset: 39))
+    }
+
+    func testFullscreenIgnoresNeighbouringDisplayRoundingSliver() {
+        let display = CGRect(x: 0, y: 0, width: 1800, height: 1169)
+        let codex = DockFullscreenDetection.Window(pid: 2020,
+            frame: CGRect(x: 0, y: 39, width: 1800, height: 1130))
+        // Captured on the vertically adjacent Odyssey: Safari's bottom is y=1.
+        let safari = DockFullscreenDetection.Window(pid: 992,
+            frame: CGRect(x: 946, y: -1409, width: 2560, height: 1410))
+        let warp = DockFullscreenDetection.Window(pid: 13281,
+            frame: CGRect(x: -1614, y: -1410, width: 2560, height: 1410))
+        for windows in [[safari, codex, warp], [codex, warp, safari]] {
+            XCTAssertEqual(DockFullscreenDetection.owner(windows: windows, display: display, topInset: 39), 2020)
+        }
+        let sideSliver = DockFullscreenDetection.Window(pid: 9,
+            frame: CGRect(x: 1799, y: 100, width: 800, height: 600))
+        XCTAssertEqual(DockFullscreenDetection.owner(windows: [sideSliver, codex], display: display, topInset: 39), 2020)
+        let actualOverlap = DockFullscreenDetection.Window(pid: 9,
+            frame: CGRect(x: 1798, y: 100, width: 800, height: 600))
+        XCTAssertNil(DockFullscreenDetection.owner(windows: [actualOverlap, codex], display: display, topInset: 39))
     }
 
     @MainActor

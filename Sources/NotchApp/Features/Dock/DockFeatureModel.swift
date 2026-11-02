@@ -27,6 +27,7 @@ final class DockFeatureModel: ObservableObject {
     var onOpenLauncher: () -> Void = {}
     var onOpenSettings: () -> Void = {}
     var onOpenDisplays: () -> Void = {}
+    var onOpenSpeedTest: () -> Void = {}
     /// The window coordinator replaces this so every restore goes through its serialized queue.
     var onRestoreSystemDock: () -> Void
 
@@ -57,6 +58,7 @@ final class DockFeatureModel: ObservableObject {
     func openLauncher() { closeSurfaces(); onOpenLauncher() }
     func openSettings() { closeSurfaces(); onOpenSettings() }
     func openDisplays() { closeSurfaces(); onOpenDisplays() }
+    func openSpeedTest() { closeSurfaces(); onOpenSpeedTest() }
 
     /// Turns replacement off and restores macOS Dock, including when the Dock module is off.
     func restoreSystemDock() {

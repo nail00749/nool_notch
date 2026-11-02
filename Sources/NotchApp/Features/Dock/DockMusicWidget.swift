@@ -60,7 +60,7 @@ struct DockMusicWidget: View {
             .onReceive(NotificationCenter.default.publisher(for: DockMusicWidget.showDetails)) { _ in
                 showsDetails = true
             }
-            .popover(isPresented: $showsDetails, arrowEdge: .top) {
+            .dockPopover(isPresented: $showsDetails, arrowEdge: .top) {
                 DockMusicDetails(model: model, artwork: artworkImage)
                     .onAppear { interactionChanged(true) }.onDisappear { interactionChanged(false) }
             }
@@ -146,10 +146,6 @@ struct DockMarqueeText: View {
     let text: String
     let font: Font
     let isActive: Bool
-    @State private var textWidth: CGFloat = 0
-    @State private var containerWidth: CGFloat = 0
-    @State private var offset: CGFloat = 0
-
     static let gap: CGFloat = 28
     static let pointsPerSecond: CGFloat = 26
     static let pauseBetweenPasses: TimeInterval = 1.6
@@ -162,90 +158,261 @@ struct DockMarqueeText: View {
         TimeInterval((textWidth + gap) / pointsPerSecond)
     }
 
-    private var scrolls: Bool {
-        isActive && Self.overflows(textWidth: textWidth, containerWidth: containerWidth)
-    }
-
     var body: some View {
-        label.hidden()
+        // Keep SwiftUI's original font metrics and accessibility. Only the static labels
+        // are hosted below; their translation and fade run on the render server.
+        Text(text).font(font).lineLimit(1).hidden()
             .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(alignment: .leading) {
-                if scrolls {
-                    HStack(spacing: Self.gap) { label; label }
-                        .fixedSize()
-                        .offset(x: offset)
-                        .accessibilityHidden(true)
-                } else {
-                    label.truncationMode(.tail)
-                }
-            }
-            .clipped()
-            .mask {
-                if scrolls {
-                    HStack(spacing: 0) {
-                        // The leading fade appears only once the text starts moving.
-                        LinearGradient(colors: [offset < 0 ? .clear : .black, .black],
-                                       startPoint: .leading, endPoint: .trailing).frame(width: 6)
-                        Color.black
-                        LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 10)
-                    }
-                } else {
-                    Color.black
-                }
-            }
-            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { containerWidth = $0 }
-            .background(alignment: .leading) {
-                label.fixedSize().hidden()
-                    .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { textWidth = $0 }
+            .overlay {
+                DockMarqueeNativeText(text: text, font: font, isActive: isActive)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(text)
-            .task(id: MarqueeRun(text: text, textWidth: textWidth, scrolls: scrolls)) {
-                offset = 0
-                guard scrolls else { return }
-                let distance = textWidth + Self.gap
-                let duration = Self.passDuration(textWidth: textWidth)
-                while Task.isCancelled == false {
-                    try? await Task.sleep(nanoseconds: UInt64(Self.pauseBetweenPasses * 1_000_000_000))
-                    guard Task.isCancelled == false else { return }
-                    withAnimation(.linear(duration: duration)) { offset = -distance }
-                    try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
-                    guard Task.isCancelled == false else { return }
-                    // The second copy now sits where the first began: reset without a visible jump.
-                    var reset = Transaction()
-                    reset.disablesAnimations = true
-                    withTransaction(reset) { offset = 0 }
-                }
-            }
-    }
-
-    private var label: some View {
-        Text(text).font(font).lineLimit(1)
-    }
-
-    private struct MarqueeRun: Equatable {
-        let text: String
-        let textWidth: CGFloat
-        let scrolls: Bool
     }
 }
 
-/// Thin elapsed-time line; ticks once a second and only while playing.
-private struct DockMusicProgressLine: View {
+private struct DockMarqueeNativeText: NSViewRepresentable {
+    let text: String
+    let font: Font
+    let isActive: Bool
+
+    func makeNSView(context: Context) -> DockMarqueeNSView { DockMarqueeNSView() }
+    func updateNSView(_ view: DockMarqueeNSView, context: Context) {
+        view.configure(text: text, font: font, isActive: isActive)
+    }
+    static func dismantleNSView(_ view: DockMarqueeNSView, coordinator: ()) { view.stopAnimations() }
+}
+
+/// A shared event-driven visibility boundary. Ordering out the Dock does not remove
+/// its hosting view, so `window != nil` alone leaves native animations running.
+class DockMusicAnimationNSView: NSView {
+    private var windowVisibility: NSKeyValueObservation?
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    var animationIsVisible: Bool {
+        guard let window else { return false }
+        return window.isVisible && window.occlusionState.contains(.visible) && !isHiddenOrHasHiddenAncestor
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        windowVisibility = nil
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeOcclusionStateNotification, object: window)
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let window {
+            windowVisibility = window.observe(\.isVisible) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.visibilityChanged() }
+            }
+            NotificationCenter.default.addObserver(self, selector: #selector(windowVisibilityChanged),
+                                                  name: NSWindow.didChangeOcclusionStateNotification, object: window)
+        }
+        visibilityChanged()
+    }
+
+    override func viewDidHide() { super.viewDidHide(); visibilityChanged() }
+    override func viewDidUnhide() { super.viewDidUnhide(); visibilityChanged() }
+    @objc private func windowVisibilityChanged(_ notification: Notification) { visibilityChanged() }
+    func visibilityChanged() {}
+    func stopAnimations() {}
+}
+
+/// Retains static SwiftUI Text rendering while Core Animation moves its layers.
+/// No SwiftUI state, display-link, Task loop, or per-frame layout is involved.
+final class DockMarqueeNSView: DockMusicAnimationNSView {
+    private let resting = NSHostingView(rootView: AnyView(EmptyView()))
+    private let first = NSHostingView(rootView: AnyView(EmptyView()))
+    private let second = NSHostingView(rootView: AnyView(EmptyView()))
+    private let strip = NSView()
+    private let fade = CAGradientLayer()
+    private var text = ""
+    private var font: Font = .body
+    private var isActive = false
+    private var titleWidth: CGFloat = 0
+    private var animationSize: CGSize?
+    static let translationKey = "marquee.translation"
+    static let fadeKey = "marquee.fade"
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        strip.wantsLayer = true
+        resting.sizingOptions = []
+        // Full titles supply their intrinsic width once; the viewport itself never
+        // participates in hosting-window sizing.
+        first.sizingOptions = [.intrinsicContentSize]
+        second.sizingOptions = [.intrinsicContentSize]
+        addSubview(resting)
+        addSubview(strip)
+        strip.addSubview(first)
+        strip.addSubview(second)
+        fade.startPoint = CGPoint(x: 0, y: 0.5)
+        fade.endPoint = CGPoint(x: 1, y: 0.5)
+        fade.colors = [NSColor.black.cgColor, NSColor.black.cgColor, NSColor.black.cgColor, NSColor.clear.cgColor]
+    }
+
+    convenience init() { self.init(frame: .zero) }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func configure(text: String, font: Font, isActive: Bool) {
+        let labelsChanged = self.text != text || self.font != font
+        let activityChanged = self.isActive != isActive
+        guard labelsChanged || activityChanged else { return }
+        self.text = text
+        self.font = font
+        self.isActive = isActive
+        if labelsChanged {
+            let label = Text(text).font(font).foregroundStyle(.white).lineLimit(1)
+            resting.rootView = AnyView(label.truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading))
+            first.rootView = AnyView(label.fixedSize())
+            second.rootView = AnyView(label.fixedSize())
+            first.layoutSubtreeIfNeeded()
+            titleWidth = first.fittingSize.width
+        }
+        stopAnimations()
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        resting.frame = bounds
+        strip.frame = CGRect(x: 0, y: 0, width: 2 * titleWidth + DockMarqueeText.gap, height: bounds.height)
+        first.frame = CGRect(x: 0, y: 0, width: titleWidth, height: bounds.height)
+        second.frame = CGRect(x: titleWidth + DockMarqueeText.gap, y: 0, width: titleWidth, height: bounds.height)
+        fade.frame = bounds
+        let width = max(bounds.width, 1)
+        fade.locations = [0, NSNumber(value: Double(min(6 / width, 0.5))),
+                          NSNumber(value: Double(max(1 - 10 / width, 0.5))), 1]
+        CATransaction.commit()
+        updateAnimation()
+    }
+
+    override func visibilityChanged() { updateAnimation() }
+
+    override func stopAnimations() {
+        strip.layer?.removeAnimation(forKey: Self.translationKey)
+        fade.removeAnimation(forKey: Self.fadeKey)
+        animationSize = nil
+    }
+
+    private func updateAnimation() {
+        let scrolls = isActive && DockMarqueeText.overflows(textWidth: titleWidth, containerWidth: bounds.width)
+        resting.isHidden = scrolls
+        strip.isHidden = !scrolls
+        layer?.mask = scrolls ? fade : nil
+        guard scrolls && animationIsVisible else { stopAnimations(); return }
+        guard animationSize != bounds.size else { return }
+        stopAnimations()
+        animationSize = bounds.size
+        let duration = DockMarqueeText.passDuration(textWidth: titleWidth)
+        let cycle = duration + DockMarqueeText.pauseBetweenPasses
+        let pause = DockMarqueeText.pauseBetweenPasses / cycle
+        let translation = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        translation.values = [0, 0, -(titleWidth + DockMarqueeText.gap)]
+        translation.keyTimes = [0, NSNumber(value: pause), 1]
+        translation.duration = cycle
+        translation.repeatCount = .infinity
+        translation.calculationMode = .linear
+        let solid = NSColor.black.cgColor
+        let clear = NSColor.clear.cgColor
+        let restingColors = [solid, solid, solid, clear]
+        let movingColors = [clear, solid, solid, clear]
+        fade.colors = restingColors
+        let edge = CAKeyframeAnimation(keyPath: "colors")
+        edge.values = [restingColors, restingColors, movingColors, movingColors]
+        edge.keyTimes = [0, NSNumber(value: pause), NSNumber(value: min(1, pause + 0.001)), 1]
+        edge.duration = cycle
+        edge.repeatCount = .infinity
+        // One clock for text and mask keeps the leading fade solid during every pause.
+        let begin = CACurrentMediaTime()
+        translation.beginTime = strip.layer?.convertTime(begin, from: nil) ?? begin
+        edge.beginTime = fade.convertTime(begin, from: nil)
+        strip.layer?.add(translation, forKey: Self.translationKey)
+        fade.add(edge, forKey: Self.fadeKey)
+    }
+
+    var marqueeAnimation: CAKeyframeAnimation? { strip.layer?.animation(forKey: Self.translationKey) as? CAKeyframeAnimation }
+}
+
+/// Smooth playback progress interpolated on the render server, without a TimelineView.
+struct DockMusicProgressLine: NSViewRepresentable {
     let snapshot: NowPlayingSnapshot
 
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let progress = snapshot.progress(at: snapshot.playbackState.isPlaying ? context.date : snapshot.updatedAt)
-            GeometryReader { proxy in
-                Capsule().fill(.white.opacity(0.15))
-                    .overlay(alignment: .leading) {
-                        Capsule().fill(.white.opacity(0.75)).frame(width: proxy.size.width * progress)
-                    }
-            }.frame(height: 2.5)
-                .animation(.linear(duration: 1), value: progress)
-        }.accessibilityHidden(true)
+    func makeNSView(context: Context) -> DockMusicProgressNSView { DockMusicProgressNSView() }
+    func updateNSView(_ view: DockMusicProgressNSView, context: Context) {
+        view.configure(snapshot: snapshot)
     }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: DockMusicProgressNSView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 0, height: 2.5)
+    }
+    static func dismantleNSView(_ view: DockMusicProgressNSView, coordinator: ()) { view.stopAnimations() }
+}
+
+final class DockMusicProgressNSView: DockMusicAnimationNSView {
+    private let fill = CALayer()
+    private var snapshot: NowPlayingSnapshot?
+    static let progressKey = "playback.progress"
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.15).cgColor
+        layer?.masksToBounds = true
+        fill.backgroundColor = NSColor.white.withAlphaComponent(0.75).cgColor
+        fill.anchorPoint = CGPoint(x: 0, y: 0.5)
+        layer?.addSublayer(fill)
+        setAccessibilityElement(false)
+    }
+
+    convenience init() { self.init(frame: .zero) }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func configure(snapshot: NowPlayingSnapshot) {
+        guard self.snapshot != snapshot else { return }
+        self.snapshot = snapshot
+        updateAnimation()
+    }
+
+    override func layout() { super.layout(); updateAnimation() }
+    override func visibilityChanged() { updateAnimation() }
+    override func stopAnimations() { fill.removeAnimation(forKey: Self.progressKey) }
+
+    private func updateAnimation() {
+        guard let snapshot else { return }
+        stopAnimations()
+        let now = Date()
+        let progress = snapshot.progress(at: now)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer?.cornerRadius = bounds.height / 2
+        fill.cornerRadius = bounds.height / 2
+        fill.position = CGPoint(x: 0, y: bounds.midY)
+        fill.bounds = CGRect(x: 0, y: 0, width: bounds.width * progress, height: bounds.height)
+        CATransaction.commit()
+        // This functional time indicator remains accurate with Reduce Motion, as
+        // before; only the decorative title/equalizer motion is disabled there.
+        guard animationIsVisible, snapshot.playbackState.isPlaying,
+              snapshot.playbackRate > 0, progress < 1, snapshot.duration > 0, bounds.width > 0 else { return }
+        let remaining = (snapshot.duration - snapshot.elapsedTime(at: now)) / snapshot.playbackRate
+        let animation = CABasicAnimation(keyPath: "bounds.size.width")
+        animation.fromValue = bounds.width * progress
+        animation.toValue = bounds.width
+        animation.duration = remaining
+        animation.timingFunction = CAMediaTimingFunction(name: .linear)
+        animation.isRemovedOnCompletion = false
+        animation.fillMode = .forwards
+        fill.add(animation, forKey: Self.progressKey)
+    }
+
+    var progressAnimation: CABasicAnimation? { fill.animation(forKey: Self.progressKey) as? CABasicAnimation }
+    var progressWidth: CGFloat { fill.bounds.width }
 }
 
 private struct DockMusicDetails: View {

@@ -20,10 +20,20 @@ fail() {
 
 [[ -x "$SIGN_SCRIPT" ]] || fail "stable app signer is missing"
 
-mkdir -p "$APP_PATH/Contents/MacOS"
+mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources" \
+  "$APP_PATH/Contents/Library/LaunchDaemons"
 cp "$PROJECT_ROOT/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
+cp "$PROJECT_ROOT/Resources/com.nool.cooling-helper.plist" \
+  "$APP_PATH/Contents/Library/LaunchDaemons/com.nool.cooling-helper.plist"
 
 cp /usr/bin/true "$APP_PATH/Contents/MacOS/NotchApp"
+if NOTCHAPP_SIGNING_IDENTITY="$SIGNING_IDENTITY" "$SIGN_SCRIPT" "$APP_PATH" 2>/dev/null; then
+  fail 'cooling helper must not be omitted while its LaunchDaemon is embedded'
+fi
+cp /usr/bin/true "$APP_PATH/Contents/MacOS/NoolCoolingHelper"
+chmod 755 "$APP_PATH/Contents/MacOS/NoolCoolingHelper"
+cp /usr/bin/true "$APP_PATH/Contents/Resources/nool-agent-bridge"
+cp /usr/bin/true "$APP_PATH/Contents/Resources/nool-dock-recovery"
 NOTCHAPP_SIGNING_IDENTITY="$SIGNING_IDENTITY" "$SIGN_SCRIPT" "$APP_PATH"
 first_requirement="$(/usr/bin/codesign -d -r- "$APP_PATH" 2>&1)"
 first_authority="$(/usr/bin/codesign -dvv "$APP_PATH" 2>&1)"
@@ -38,6 +48,16 @@ first_mode="$(/usr/libexec/PlistBuddy -c 'Print :NotchAppSigningMode' "$APP_PATH
   || fail "designated requirement is not based on the bundle identifier: $first_requirement"
 [[ "$first_requirement" != *"cdhash"* ]] \
   || fail "designated requirement still depends on cdhash: $first_requirement"
+helper_authority="$(/usr/bin/codesign -dvv "$APP_PATH/Contents/MacOS/NoolCoolingHelper" 2>&1)"
+[[ "$helper_authority" == *"Authority=$SIGNING_IDENTITY"* \
+    && "$helper_authority" == *"Identifier=com.nool.cooling-helper"* ]] \
+  || fail "cooling helper must be identity-signed with its stable service identifier: $helper_authority"
+for helper in nool-agent-bridge nool-dock-recovery; do
+  helper_signature="$(/usr/bin/codesign -dvv "$APP_PATH/Contents/Resources/$helper" 2>&1)"
+  [[ "$helper_signature" == *"Authority=$SIGNING_IDENTITY"* \
+      && "$helper_signature" == *"Identifier=$helper"* ]] \
+    || fail "$helper must retain its stable identity signature: $helper_signature"
+done
 
 cp /usr/bin/false "$APP_PATH/Contents/MacOS/NotchApp"
 NOTCHAPP_SIGNING_IDENTITY="$SIGNING_IDENTITY" "$SIGN_SCRIPT" "$APP_PATH"
@@ -63,6 +83,16 @@ adhoc_mode="$(/usr/libexec/PlistBuddy -c 'Print :NotchAppSigningMode' "$APP_PATH
 [[ "$adhoc_mode" == "ad-hoc" ]] \
   || fail "ad-hoc bundle did not record its unstable signing mode"
 /usr/bin/codesign --verify --deep --strict "$APP_PATH"
+adhoc_helper_signature="$(/usr/bin/codesign -dvv "$APP_PATH/Contents/MacOS/NoolCoolingHelper" 2>&1)"
+[[ "$adhoc_helper_signature" == *"Signature=adhoc"* \
+    && "$adhoc_helper_signature" == *"Identifier=com.nool.cooling-helper"* ]] \
+  || fail "explicit ad-hoc signing must preserve the cooling helper identifier: $adhoc_helper_signature"
+for helper in nool-agent-bridge nool-dock-recovery; do
+  helper_signature="$(/usr/bin/codesign -dvv "$APP_PATH/Contents/Resources/$helper" 2>&1)"
+  [[ "$helper_signature" == *"Signature=adhoc"* \
+      && "$helper_signature" == *"Identifier=$helper"* ]] \
+    || fail "$helper must have a valid explicit ad-hoc signature: $helper_signature"
+done
 
 print -- "PASS: local identity keeps a stable designated requirement"
 
