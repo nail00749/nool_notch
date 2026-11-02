@@ -49,6 +49,22 @@ internal static class ClipboardBridge
         return null;
     }
 
+    /// Content identity across Macs: the same copy can arrive from two Macs
+    /// (Universal Clipboard between them) with different envelope IDs.
+    public static string Fingerprint(ClipboardEnvelope value)
+    {
+        using var hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+        hash.AppendData(Encoding.UTF8.GetBytes(value.Kind + "\n"));
+        if (value.Text is not null) hash.AppendData(Encoding.UTF8.GetBytes(value.Text));
+        if (value.ImageBase64 is not null) hash.AppendData(value.ImageBase64);
+        foreach (var file in value.Files ?? [])
+        {
+            hash.AppendData(Encoding.UTF8.GetBytes("\n" + file.Name + "\n"));
+            hash.AppendData(file.DataBase64);
+        }
+        return Convert.ToHexString(hash.GetHashAndReset());
+    }
+
     public static void Validate(ClipboardEnvelope value)
     {
         if (!Guid.TryParse(value.Id, out _) || !Guid.TryParse(value.OriginDeviceID, out _) ||

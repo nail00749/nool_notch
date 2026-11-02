@@ -4,9 +4,48 @@ using System.Runtime.InteropServices;
 
 namespace NooLLink;
 
+/// The connection to one paired Mac. Each Mac has its own polling cycle, so a
+/// slow transfer from one Mac never stalls clipboard or AirDrop on another.
+internal sealed class MacLink : IDisposable
+{
+    public MacLink(LinkCredentials credentials)
+    {
+        Credentials = credentials;
+        Client = new(credentials);
+    }
+
+    public LinkCredentials Credentials { get; }
+    public LinkClient Client { get; }
+    public CancellationTokenSource Lifetime { get; } = new();
+    public Queue<string[]> PendingSends { get; } = new();
+    public Dictionary<string, TransferAcknowledgement> TransferResults { get; } = new();
+    public ClipboardEnvelope? PendingPublish { get; set; }
+    public string? RemoteID { get; set; }
+    public bool Baseline { get; set; } = true;
+    public bool Running { get; set; }
+    public bool Connected { get; set; }
+    public string Status { get; set; } = "подключение…";
+    public string Name => Credentials.DeviceName;
+
+    public void ResetBaseline()
+    {
+        Baseline = true;
+        RemoteID = null;
+        PendingPublish = null;
+    }
+
+    public void Dispose()
+    {
+        Lifetime.Cancel();
+        Client.Dispose();
+        Lifetime.Dispose();
+    }
+}
+
 internal sealed class TrayContext : ApplicationContext
 {
     private readonly NotifyIcon tray;
+    private readonly ContextMenuStrip menu = new();
     private readonly ToolStripMenuItem statusItem = new("Не подключено") { Enabled = false };
     private readonly ToolStripMenuItem pauseItem = new("Приостановить") { CheckOnClick = true };
     private readonly ToolStripMenuItem startupItem = new("Запускать при входе в Windows") { CheckOnClick = true };
@@ -15,32 +54,19 @@ internal sealed class TrayContext : ApplicationContext
     private readonly ClipboardListener clipboardListener = new();
     private readonly Control dispatcher = new();
     private readonly InstanceBroker broker;
-    private readonly Queue<string[]> pendingSends = new();
-    private readonly Dictionary<string, TransferAcknowledgement> transferResults = new();
-    private LinkCredentials? credentials;
-    private LinkClient? client;
+    private readonly List<MacLink> links = [];
     private CancellationTokenSource session = new();
     private uint localSequence;
-    private string? remoteID;
-    private bool baseline = true;
-    private bool ticking;
+    private string? lastContentHash;
+    private bool capturing;
     private bool disposed;
     private PairingForm? pairingForm;
     private string[] lastReceived = [];
 
-    public TrayContext(string[] initialFiles)
+    public TrayContext(SendRequest? initialSend)
     {
         dispatcher.CreateControl();
-        var menu = new ContextMenuStrip();
-        menu.Items.Add(statusItem);
-        menu.Items.Add("Подключить Mac…", null, (_, _) => ShowPairing());
-        menu.Items.Add(pauseItem);
-        menu.Items.Add("Открыть полученные файлы", null, (_, _) => OpenReceivedFiles());
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(startupItem);
-        menu.Items.Add(explorerItem);
-        menu.Items.Add("Забыть подключение", null, (_, _) => Forget());
-        menu.Items.Add("Выход", null, (_, _) => ExitThread());
+        menu.Opening += (_, _) => RebuildMenu();
         tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "NooL Link", ContextMenuStrip = menu, Visible = true };
         tray.DoubleClick += (_, _) => ShowPairing();
         tray.BalloonTipClicked += (_, _) => RevealReceived();
@@ -58,7 +84,7 @@ internal sealed class TrayContext : ApplicationContext
                 session = new CancellationTokenSource();
             }
             ResetBaseline();
-            SetStatus(pauseItem.Checked ? "Синхронизация приостановлена" : credentials is null ? "Не подключено" : "Подключение…");
+            UpdateStatus();
         };
         startupItem.Checked = StartupEnabled();
         startupItem.Click += (_, _) => SetStartup(startupItem.Checked);
@@ -67,120 +93,186 @@ internal sealed class TrayContext : ApplicationContext
         timer.Tick += async (_, _) => await TickAsync();
         try
         {
-            var stored = CredentialStore.Load();
-            if (stored is not null) SetCredentials(stored);
+            foreach (var stored in CredentialStore.LoadAll()) links.Add(new MacLink(stored));
+            SyncExplorer();
         }
-        catch (Exception error) when (error is IOException or System.Security.Cryptography.CryptographicException or
+        catch (Exception error) when (error is IOException or InvalidDataException or System.Security.Cryptography.CryptographicException or
             System.ComponentModel.Win32Exception or System.Text.Json.JsonException or ArgumentException or UnauthorizedAccessException)
         {
-            SetStatus("Не удалось прочитать подключение");
+            SetStatus("Не удалось прочитать подключения");
         }
+        ResetBaseline();
+        UpdateStatus();
         timer.Start();
         broker = new InstanceBroker(QueueFilesFromBrokerAsync);
-        if (initialFiles.Length > 0) QueueFiles(initialFiles);
-        if (credentials is null) dispatcher.BeginInvoke((Action)ShowPairing);
+        if (initialSend is not null) dispatcher.BeginInvoke((Action)(() => QueueFiles(initialSend)));
+        if (links.Count == 0) dispatcher.BeginInvoke((Action)ShowPairing);
     }
 
     private async Task TickAsync()
     {
-        if (ticking || disposed || client is null || credentials is null || pauseItem.Checked) return;
-        ticking = true;
-        var active = session;
-        var activeClient = client;
-        var activeCredentials = credentials;
+        if (disposed || pauseItem.Checked || links.Count == 0) return;
+        var token = session.Token;
+        await CaptureLocalClipboardAsync(token);
+        foreach (var link in links.ToArray())
+            if (!link.Running) _ = RunCycleAsync(link, token);
+    }
+
+    /// Reads the Windows clipboard once and offers it to every connected Mac.
+    private async Task CaptureLocalClipboardAsync(CancellationToken token)
+    {
+        var sequence = ClipboardBridge.GetClipboardSequenceNumber();
+        if (capturing || sequence == localSequence) return;
+        localSequence = sequence;
+        capturing = true;
         try
         {
-            if (pendingSends.TryDequeue(out var selectedPaths))
+            var envelope = await ClipboardBridge.CaptureAsync(Guid.Empty.ToString(), token);
+            // A copy that occurred during file loading belongs to the next tick.
+            if (envelope is null || token.IsCancellationRequested ||
+                ClipboardBridge.GetClipboardSequenceNumber() != sequence) return;
+            ClipboardBridge.Validate(envelope);
+            var hash = ClipboardBridge.Fingerprint(envelope);
+            if (hash == lastContentHash) return;
+            lastContentHash = hash;
+            foreach (var link in links)
+                if (!link.Baseline) link.PendingPublish = envelope with { OriginDeviceID = link.Credentials.LocalDeviceID };
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception error) when (error is IOException or InvalidDataException or ExternalException or
+            ArgumentException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            SetStatus(error is InvalidDataException ? error.Message : "Не удалось прочитать буфер обмена");
+        }
+        finally { capturing = false; }
+    }
+
+    private async Task RunCycleAsync(MacLink link, CancellationToken sessionToken)
+    {
+        link.Running = true;
+        using var cycle = CancellationTokenSource.CreateLinkedTokenSource(sessionToken, link.Lifetime.Token);
+        var token = cycle.Token;
+        try
+        {
+            if (link.PendingSends.TryDequeue(out var selectedPaths))
             {
-                await SendSelectedFilesAsync(selectedPaths, activeClient, activeCredentials, active.Token);
+                await SendSelectedFilesAsync(link, selectedPaths, token);
                 return;
             }
-            await ReceiveTransferAsync(activeClient, activeCredentials, active.Token);
-            if (active.IsCancellationRequested) return;
-            var sequence = ClipboardBridge.GetClipboardSequenceNumber();
-            if (!baseline && sequence != localSequence)
+            await ReceiveTransferAsync(link, token);
+            if (link.PendingPublish is { } publish)
             {
-                localSequence = sequence;
-                SetStatus("Передача буфера…");
-                var envelope = await ClipboardBridge.CaptureAsync(activeCredentials.LocalDeviceID, active.Token);
-                // A copy that occurred during file loading belongs to the next tick.
-                if (envelope is not null && !active.IsCancellationRequested &&
-                    ClipboardBridge.GetClipboardSequenceNumber() == sequence)
-                {
-                    ClipboardBridge.Validate(envelope);
-                    await activeClient.PublishAsync(envelope, active.Token);
-                }
+                link.PendingPublish = null;
+                await link.Client.PublishAsync(publish, token);
             }
             var beforePoll = ClipboardBridge.GetClipboardSequenceNumber();
-            var incoming = await activeClient.PollAsync(remoteID, active.Token);
-            if (active.IsCancellationRequested) return;
-            if (baseline)
+            var incoming = await link.Client.PollAsync(link.RemoteID, token);
+            token.ThrowIfCancellationRequested();
+            if (link.Baseline)
             {
-                remoteID = incoming?.Id;
-                localSequence = ClipboardBridge.GetClipboardSequenceNumber();
-                baseline = false;
+                // The Mac's current item predates this connection; don't paste it.
+                link.RemoteID = incoming?.Id;
+                link.Baseline = false;
             }
-            else if (incoming is not null && incoming.Id != remoteID)
+            else if (incoming is not null && incoming.Id != link.RemoteID)
             {
                 ClipboardBridge.Validate(incoming);
-                remoteID = incoming.Id;
-                if (incoming.OriginDeviceID != activeCredentials.LocalDeviceID &&
+                link.RemoteID = incoming.Id;
+                var hash = ClipboardBridge.Fingerprint(incoming);
+                if (incoming.OriginDeviceID != link.Credentials.LocalDeviceID && hash != lastContentHash &&
                     ClipboardBridge.GetClipboardSequenceNumber() == beforePoll)
                 {
-                    SetStatus(incoming.Kind == "files" ? "Получение файлов…" : "Получение буфера…");
-                    var paths = await ClipboardBridge.PrepareFilesAsync(incoming, active.Token);
-                    if (!active.IsCancellationRequested && ClipboardBridge.GetClipboardSequenceNumber() == beforePoll)
+                    var paths = await ClipboardBridge.PrepareFilesAsync(incoming, token);
+                    if (!token.IsCancellationRequested && ClipboardBridge.GetClipboardSequenceNumber() == beforePoll)
                     {
                         ClipboardBridge.Apply(incoming, paths);
                         localSequence = ClipboardBridge.GetClipboardSequenceNumber();
+                        lastContentHash = hash;
                     }
                 }
             }
-            SetStatus($"Подключено: {activeCredentials.DeviceName}");
+            link.Connected = true;
+            link.Status = "подключён";
         }
-        catch (OperationCanceledException) when (active.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException or
             InvalidDataException or ExternalException or ArgumentException or System.Text.Json.JsonException or
-            InvalidOperationException or UnauthorizedAccessException)
+            InvalidOperationException or UnauthorizedAccessException or ObjectDisposedException)
         {
-            if (!active.IsCancellationRequested)
+            if (!token.IsCancellationRequested)
             {
-                ResetBaseline();
-                SetStatus(error is InvalidDataException ? error.Message : "Нет связи с Mac. Проверьте сеть и NooL.");
+                link.ResetBaseline();
+                link.Connected = false;
+                link.Status = error is InvalidDataException or HttpRequestException { StatusCode: System.Net.HttpStatusCode.Unauthorized }
+                    ? error.Message : "нет связи";
             }
         }
-        finally { ticking = false; }
+        finally
+        {
+            link.Running = false;
+            if (!disposed) UpdateStatus();
+        }
     }
 
-    private Task<bool> QueueFilesFromBrokerAsync(string[] paths)
+    private Task<bool> QueueFilesFromBrokerAsync(SendRequest request)
     {
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (disposed) return Task.FromResult(false);
-        try { dispatcher.BeginInvoke((Action)(() => completion.TrySetResult(QueueFiles(paths)))); }
+        try { dispatcher.BeginInvoke((Action)(() => completion.TrySetResult(QueueFiles(request)))); }
         catch (InvalidOperationException) { completion.TrySetResult(false); }
         return completion.Task;
     }
 
-    private bool QueueFiles(string[] paths)
+    private bool QueueFiles(SendRequest request)
     {
-        if (disposed || pauseItem.Checked || pendingSends.Count >= 64) return false;
-        pendingSends.Enqueue(paths);
-        SetStatus(credentials is null ? "Подключите Mac для отправки файлов" : "Файлы добавлены в отправку");
-        if (credentials is null) ShowPairing();
+        if (disposed || pauseItem.Checked) return false;
+        if (links.Count == 0)
+        {
+            Notify("Нет подключённых Mac", "Подключите Mac и повторите отправку.");
+            ShowPairing();
+            return false;
+        }
+        var link = request.To is null
+            ? links.Count == 1 ? links[0] : ChooseMac()
+            : links.FirstOrDefault(item => item.Credentials.DeviceID == request.To);
+        if (link is null || link.PendingSends.Count >= 64) return false;
+        link.PendingSends.Enqueue(request.Paths);
+        SetStatus($"Файлы добавлены в отправку на {link.Name}");
         return true;
     }
 
-    private async Task SendSelectedFilesAsync(string[] paths, LinkClient activeClient, LinkCredentials activeCredentials,
-        CancellationToken cancellation)
+    /// Fallback for a plain `--send` with several Macs paired.
+    private MacLink? ChooseMac()
+    {
+        using var form = new Form
+        {
+            Text = "NooL Link", StartPosition = FormStartPosition.CenterScreen, AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink, FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false, MinimizeBox = false, TopMost = true
+        };
+        var layout = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, Padding = new Padding(16) };
+        layout.Controls.Add(new Label { Text = "На какой Mac отправить файлы?", AutoSize = true, Margin = new(0, 0, 0, 8) });
+        MacLink? chosen = null;
+        foreach (var link in links)
+        {
+            var button = new Button { Text = link.Name, AutoSize = true, MinimumSize = new Size(260, 0) };
+            button.Click += (_, _) => { chosen = link; form.DialogResult = DialogResult.OK; };
+            layout.Controls.Add(button);
+        }
+        form.Controls.Add(layout);
+        return form.ShowDialog() == DialogResult.OK ? chosen : null;
+    }
+
+    private async Task SendSelectedFilesAsync(MacLink link, string[] paths, CancellationToken cancellation)
     {
         try
         {
-            SetStatus("Отправка файлов на Mac…");
-            var envelope = await ClipboardBridge.CaptureFilesAsync(paths, activeCredentials.LocalDeviceID, cancellation);
+            SetStatus($"Отправка файлов на {link.Name}…");
+            var envelope = await ClipboardBridge.CaptureFilesAsync(paths, link.Credentials.LocalDeviceID, cancellation);
             ClipboardBridge.Validate(envelope);
-            await activeClient.SendFilesAsync(envelope, cancellation);
+            await link.Client.SendFilesAsync(envelope, cancellation);
             if (!cancellation.IsCancellationRequested)
-                Notify("Файлы отправлены", $"Сохранено на {activeCredentials.DeviceName}: {paths.Length} файл(ов).");
+                Notify("Файлы отправлены", $"Сохранено на {link.Name}: {paths.Length} файл(ов).");
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -190,26 +282,25 @@ internal sealed class TrayContext : ApplicationContext
             UnauthorizedAccessException or OperationCanceledException or ArgumentException or System.Security.SecurityException)
         {
             Notify("Не удалось отправить файлы", error is InvalidDataException ? error.Message :
-                "Проверьте связь с Mac и включите передачу файлов в настройках NooL Link. Затем повторите отправку.");
+                $"Проверьте связь с {link.Name} и включите передачу файлов в настройках NooL Link. Затем повторите отправку.");
         }
     }
 
-    private async Task ReceiveTransferAsync(LinkClient activeClient, LinkCredentials activeCredentials,
-        CancellationToken cancellation)
+    private async Task ReceiveTransferAsync(MacLink link, CancellationToken cancellation)
     {
-        var envelope = await activeClient.PollTransfersAsync(cancellation);
+        var envelope = await link.Client.PollTransfersAsync(cancellation);
         if (envelope is null) return;
         cancellation.ThrowIfCancellationRequested();
-        if (envelope.OriginDeviceID != activeCredentials.DeviceID || envelope.Kind != "files")
+        if (envelope.OriginDeviceID != link.Credentials.DeviceID || envelope.Kind != "files")
             throw new InvalidDataException("Mac вернул некорректную передачу файлов.");
-        if (!transferResults.TryGetValue(envelope.Id, out var result))
+        if (!link.TransferResults.TryGetValue(envelope.Id, out var result))
         {
             try
             {
-                SetStatus("Получение файлов с Mac…");
+                SetStatus($"Получение файлов с {link.Name}…");
                 var saved = await FileTransferReceiver.ReceiveAsync(envelope, cancellation);
                 result = new(envelope.Id, true);
-                Notify(saved.Length == 1 ? "Получен файл" : $"Получено файлов: {saved.Length}",
+                Notify(saved.Length == 1 ? $"Файл с {link.Name}" : $"Файлов с {link.Name}: {saved.Length}",
                     (saved.Length == 1 ? Path.GetFileName(saved[0]) : "Сохранено в папку «Загрузки».") +
                     " Нажмите, чтобы показать в Проводнике.", saved);
             }
@@ -217,13 +308,13 @@ internal sealed class TrayContext : ApplicationContext
             catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
             {
                 result = new(envelope.Id, false, "Не удалось сохранить файлы на Windows.");
-                Notify("Не удалось получить файлы", "Проверьте место на диске и повторите отправку с Mac.");
+                Notify("Не удалось получить файлы", $"Проверьте место на диске и повторите отправку с {link.Name}.");
             }
-            if (transferResults.Count >= 128) transferResults.Remove(transferResults.Keys.First());
-            transferResults[envelope.Id] = result;
+            if (link.TransferResults.Count >= 128) link.TransferResults.Remove(link.TransferResults.Keys.First());
+            link.TransferResults[envelope.Id] = result;
         }
         cancellation.ThrowIfCancellationRequested();
-        await activeClient.AcknowledgeTransferAsync(result, cancellation);
+        await link.Client.AcknowledgeTransferAsync(result, cancellation);
     }
 
     private void Notify(string title, string message, string[]? reveal = null)
@@ -235,24 +326,31 @@ internal sealed class TrayContext : ApplicationContext
         tray.ShowBalloonTip(5000, title, message, ToolTipIcon.Info);
     }
 
-    private void SetCredentials(LinkCredentials value)
+    private void AddOrReplace(LinkCredentials value)
     {
-        session.Cancel();
-        client?.Dispose();
-        session.Dispose();
-        session = new();
-        credentials = value;
-        transferResults.Clear();
-        client = new(value);
-        ResetBaseline();
-        SetStatus($"Подключение: {value.DeviceName}");
+        var existing = links.FindIndex(item => item.Credentials.DeviceID == value.DeviceID);
+        var link = new MacLink(value);
+        localSequence = ClipboardBridge.GetClipboardSequenceNumber();
+        if (existing >= 0) { links[existing].Dispose(); links[existing] = link; }
+        else links.Add(link);
+        SyncExplorer();
+        UpdateStatus();
     }
 
     private void ResetBaseline()
     {
-        baseline = true;
-        remoteID = null;
+        foreach (var link in links) link.ResetBaseline();
         localSequence = ClipboardBridge.GetClipboardSequenceNumber();
+    }
+
+    private void UpdateStatus()
+    {
+        if (pauseItem.Checked) { SetStatus("Синхронизация приостановлена"); return; }
+        if (links.Count == 0) { SetStatus("Не подключено"); return; }
+        var connected = links.Where(link => link.Connected).Select(link => link.Name).ToArray();
+        SetStatus(connected.Length == links.Count ? "Подключено: " + string.Join(", ", connected)
+            : connected.Length == 0 ? "Нет связи с Mac. Проверьте сеть и NooL."
+            : $"Подключено {connected.Length} из {links.Count}: " + string.Join(", ", connected));
     }
 
     private void SetStatus(string value)
@@ -264,37 +362,64 @@ internal sealed class TrayContext : ApplicationContext
         pairingForm?.SetStatus(value);
     }
 
+    private void RebuildMenu()
+    {
+        menu.Items.Clear();
+        menu.Items.Add(statusItem);
+        foreach (var link in links)
+        {
+            var item = new ToolStripMenuItem($"{link.Name} — {link.Status}");
+            var target = link;
+            item.DropDownItems.Add("Отвязать этот Mac…", null, (_, _) => Forget(target));
+            menu.Items.Add(item);
+        }
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(links.Count == 0 ? "Подключить Mac…" : "Подключить ещё один Mac…", null, (_, _) => ShowPairing());
+        menu.Items.Add(pauseItem);
+        menu.Items.Add("Открыть полученные файлы", null, (_, _) => OpenReceivedFiles());
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(startupItem);
+        menu.Items.Add(explorerItem);
+        menu.Items.Add("Выход", null, (_, _) => ExitThread());
+    }
+
     private void ShowPairing()
     {
         if (pairingForm is { IsDisposed: false }) { pairingForm.Activate(); return; }
         pairingForm = new PairingForm(async (invitation, cancellation) =>
         {
-            var localID = credentials?.LocalDeviceID ?? Guid.NewGuid().ToString();
+            // One stable identity for this PC across every paired Mac.
+            var localID = links.FirstOrDefault()?.Credentials.LocalDeviceID ?? Guid.NewGuid().ToString();
             using var connecting = new LinkClient(invitation);
             var response = await connecting.PairAsync(new(invitation.Token, Environment.MachineName, localID), cancellation);
             var value = new LinkCredentials(invitation.Host, invitation.Port, invitation.Fingerprint,
                 response.Token, response.DeviceName, response.DeviceID, localID, invitation.Hostname);
-            CredentialStore.Save(value);
-            SetCredentials(value);
+            CredentialStore.Upsert(value);
+            AddOrReplace(value);
         });
         pairingForm.SetStatus(statusItem.Text ?? "Не подключено");
         pairingForm.Show();
     }
 
-    private void Forget()
+    private void Forget(MacLink link)
     {
-        if (MessageBox.Show("Удалить подключение с этого компьютера? Для отзыва доступа удалите Windows также в настройках NooL на Mac.",
+        if (MessageBox.Show($"Отвязать {link.Name} от этого компьютера? Для отзыва доступа удалите Windows также в настройках NooL на этом Mac.",
             "NooL Link", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-        try { CredentialStore.Delete(); }
-        catch (IOException) { MessageBox.Show("Не удалось удалить сохранённое подключение.", "NooL Link"); return; }
-        session.Cancel();
-        client?.Dispose();
-        client = null;
-        credentials = null;
-        pendingSends.Clear();
-        transferResults.Clear();
-        ResetBaseline();
-        SetStatus("Не подключено");
+        try { CredentialStore.Remove(link.Credentials.DeviceID); }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or
+            System.Security.Cryptography.CryptographicException or System.ComponentModel.Win32Exception or System.Text.Json.JsonException)
+        { MessageBox.Show("Не удалось удалить сохранённое подключение.", "NooL Link"); return; }
+        links.Remove(link);
+        link.Dispose();
+        SyncExplorer();
+        UpdateStatus();
+    }
+
+    private void SyncExplorer()
+    {
+        try { ExplorerIntegration.Sync(links.Select(link => link.Credentials).ToList()); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or COMException or
+            Microsoft.CSharp.RuntimeBinder.RuntimeBinderException or System.Security.SecurityException) { }
     }
 
     private static bool StartupEnabled()
@@ -320,7 +445,7 @@ internal sealed class TrayContext : ApplicationContext
 
     private void SetExplorerIntegration(bool enabled)
     {
-        try { ExplorerIntegration.SetEnabled(enabled); }
+        try { ExplorerIntegration.SetEnabled(enabled, links.Select(link => link.Credentials).ToList()); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or COMException or
             Microsoft.CSharp.RuntimeBinder.RuntimeBinderException or System.Security.SecurityException)
         {
@@ -355,13 +480,14 @@ internal sealed class TrayContext : ApplicationContext
         broker.Dispose();
         timer.Stop();
         session.Cancel();
-        client?.Dispose();
+        foreach (var link in links) link.Dispose();
         pairingForm?.Close();
         tray.Visible = false;
         tray.Dispose();
         timer.Dispose();
         clipboardListener.Dispose();
         dispatcher.Dispose();
+        menu.Dispose();
         base.ExitThreadCore();
     }
 }

@@ -8,42 +8,80 @@ internal static class CredentialStore
 {
     internal static readonly string Root = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NooL Link");
-    private static string CredentialPath => Path.Combine(Root, "connection.dat");
+    private static string LegacyPath => Path.Combine(Root, "connection.dat");
+    private static string ConnectionsPath => Path.Combine(Root, "connections.dat");
+    private const int MaximumConnections = 8;
 
-    public static LinkCredentials? Load()
+    /// Every paired Mac. A pre-multi-Mac connection.dat is migrated on first load.
+    public static List<LinkCredentials> LoadAll()
     {
-        if (!File.Exists(CredentialPath)) return null;
-        var protectedBytes = File.ReadAllBytes(CredentialPath);
-        if (protectedBytes.Length > 16 * 1024) throw new InvalidDataException("Повреждены настройки подключения.");
+        if (File.Exists(ConnectionsPath))
+        {
+            var stored = Read<List<LinkCredentials>>(ConnectionsPath);
+            if (stored.Count > MaximumConnections) throw new InvalidDataException("Повреждены настройки подключения.");
+            stored.ForEach(Validate);
+            return stored.DistinctBy(item => item.DeviceID).ToList();
+        }
+        if (!File.Exists(LegacyPath)) return [];
+        var legacy = Read<LinkCredentials>(LegacyPath);
+        Validate(legacy);
+        SaveAll([legacy]);
+        File.Delete(LegacyPath);
+        return [legacy];
+    }
+
+    /// Adds a Mac or replaces the earlier pairing of the same Mac.
+    public static List<LinkCredentials> Upsert(LinkCredentials credentials)
+    {
+        var all = LoadAll().Where(item => item.DeviceID != credentials.DeviceID).ToList();
+        if (all.Count >= MaximumConnections) throw new InvalidDataException($"Можно подключить не больше {MaximumConnections} Mac.");
+        all.Add(credentials);
+        SaveAll(all);
+        return all;
+    }
+
+    public static List<LinkCredentials> Remove(string deviceID)
+    {
+        var all = LoadAll().Where(item => item.DeviceID != deviceID).ToList();
+        SaveAll(all);
+        return all;
+    }
+
+    private static void Validate(LinkCredentials result)
+    {
+        if (!PairInvitation.IsPrivateIPv4(result.Host) || result.Port is < 1 or > 65535 ||
+            string.IsNullOrEmpty(result.Fingerprint) || result.Fingerprint.Length != 64 || !result.Fingerprint.All(Uri.IsHexDigit) ||
+            !PairInvitation.IsToken(result.Token) || !Guid.TryParse(result.LocalDeviceID, out _) ||
+            !Guid.TryParse(result.DeviceID, out _) || (result.Hostname is not null && !PairInvitation.IsLocalHostname(result.Hostname)))
+            throw new InvalidDataException("Повреждены настройки подключения.");
+    }
+
+    private static T Read<T>(string path)
+    {
+        var protectedBytes = File.ReadAllBytes(path);
+        if (protectedBytes.Length > 64 * 1024) throw new InvalidDataException("Повреждены настройки подключения.");
         var plain = Transform(protectedBytes, protect: false);
         try
         {
-            var result = JsonSerializer.Deserialize<LinkCredentials>(plain, LinkClient.Json)
+            return JsonSerializer.Deserialize<T>(plain, LinkClient.Json)
                 ?? throw new InvalidDataException("Повреждены настройки подключения.");
-            if (!PairInvitation.IsPrivateIPv4(result.Host) || result.Port is < 1 or > 65535 ||
-                string.IsNullOrEmpty(result.Fingerprint) || result.Fingerprint.Length != 64 || !result.Fingerprint.All(Uri.IsHexDigit) ||
-                !PairInvitation.IsToken(result.Token) || !Guid.TryParse(result.LocalDeviceID, out _) ||
-                !Guid.TryParse(result.DeviceID, out _) || (result.Hostname is not null && !PairInvitation.IsLocalHostname(result.Hostname)))
-                throw new InvalidDataException("Повреждены настройки подключения.");
-            return result;
         }
         finally { CryptographicOperations.ZeroMemory(plain); }
     }
 
-    public static void Save(LinkCredentials credentials)
+    private static void SaveAll(List<LinkCredentials> credentials)
     {
         Directory.CreateDirectory(Root);
+        if (credentials.Count == 0) { File.Delete(ConnectionsPath); return; }
         var plain = JsonSerializer.SerializeToUtf8Bytes(credentials, LinkClient.Json);
         try
         {
-            var target = CredentialPath + ".new";
+            var target = ConnectionsPath + ".new";
             File.WriteAllBytes(target, Transform(plain, protect: true));
-            File.Move(target, CredentialPath, overwrite: true);
+            File.Move(target, ConnectionsPath, overwrite: true);
         }
         finally { CryptographicOperations.ZeroMemory(plain); }
     }
-
-    public static void Delete() => File.Delete(CredentialPath);
 
     private static byte[] Transform(byte[] input, bool protect)
     {

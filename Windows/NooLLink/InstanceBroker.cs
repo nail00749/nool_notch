@@ -5,6 +5,9 @@ using System.Text.Json;
 
 namespace NooLLink;
 
+/// Files chosen in Explorer; To names the destination Mac, or null for the only one.
+internal sealed record SendRequest(string? To, string[] Paths);
+
 /// Delivers explicit Explorer requests to the existing user's tray process.
 internal sealed class InstanceBroker : IDisposable
 {
@@ -13,18 +16,25 @@ internal sealed class InstanceBroker : IDisposable
         System.Diagnostics.Process.GetCurrentProcess().SessionId;
     private readonly CancellationTokenSource lifetime = new();
 
-    public InstanceBroker(Func<string[], Task<bool>> receive)
+    public InstanceBroker(Func<SendRequest, Task<bool>> receive)
     {
         _ = ListenAsync(receive);
     }
 
-    public static string[] ParseSendArguments(string[] arguments)
+    public static SendRequest? ParseSendArguments(string[] arguments)
     {
-        if (arguments.Length == 0) return [];
+        if (arguments.Length == 0) return null;
         if (arguments[0] != "--send") throw new InvalidDataException("Неизвестная команда NooL Link.");
+        string? to = null;
         var paths = arguments[1..];
+        if (paths.Length >= 2 && paths[0] == "--to")
+        {
+            if (!Guid.TryParse(paths[1], out _)) throw new InvalidDataException("Неизвестный Mac для отправки.");
+            to = paths[1];
+            paths = paths[2..];
+        }
         ValidatePaths(paths);
-        return paths;
+        return new(to, paths);
     }
 
     private static void ValidatePaths(string[] paths)
@@ -34,10 +44,10 @@ internal sealed class InstanceBroker : IDisposable
             throw new InvalidDataException("Выберите от 1 до 64 файлов для отправки.");
     }
 
-    public static async Task<bool> DeliverAsync(string[] paths)
+    public static async Task<bool> DeliverAsync(SendRequest request)
     {
-        ValidatePaths(paths);
-        var payload = JsonSerializer.SerializeToUtf8Bytes(paths);
+        ValidatePaths(request.Paths);
+        var payload = JsonSerializer.SerializeToUtf8Bytes(request);
         if (payload.Length > MaximumRequestBytes) throw new InvalidDataException("Слишком длинный список путей файлов.");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
         await using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut,
@@ -53,7 +63,7 @@ internal sealed class InstanceBroker : IDisposable
         return reply[0] == 1;
     }
 
-    private async Task ListenAsync(Func<string[], Task<bool>> receive)
+    private async Task ListenAsync(Func<SendRequest, Task<bool>> receive)
     {
         while (!lifetime.IsCancellationRequested)
         {
@@ -70,9 +80,11 @@ internal sealed class InstanceBroker : IDisposable
                 if (count is < 1 or > MaximumRequestBytes) continue;
                 var payload = new byte[count];
                 await pipe.ReadExactlyAsync(payload, timeout.Token);
-                var paths = JsonSerializer.Deserialize<string[]>(payload) ?? [];
-                ValidatePaths(paths);
-                var accepted = await receive(paths).WaitAsync(timeout.Token);
+                var request = JsonSerializer.Deserialize<SendRequest>(payload)
+                    ?? throw new JsonException("Пустой запрос отправки.");
+                ValidatePaths(request.Paths ?? []);
+                if (request.To is not null && !Guid.TryParse(request.To, out _)) continue;
+                var accepted = await receive(request).WaitAsync(timeout.Token);
                 await pipe.WriteAsync(new byte[] { accepted ? (byte)1 : (byte)0 }, timeout.Token);
                 await pipe.FlushAsync(timeout.Token);
             }

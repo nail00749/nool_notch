@@ -16,8 +16,8 @@ internal sealed class PairingForm : Form
         MaximizeBox = false;
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, RowCount = 6 };
         layout.ColumnStyles.Add(new(SizeType.Percent, 100));
-        layout.Controls.Add(new Label { Text = "Общий буфер с Mac", Font = new Font("Segoe UI", 17, FontStyle.Bold), AutoSize = true, Margin = new(0, 0, 0, 16) });
-        layout.Controls.Add(new Label { Text = "На Mac откройте NooL → Настройки → NooL Link и создайте приглашение. Перенесите его сюда. Оба компьютера должны быть в одной локальной сети.", AutoSize = true, MaximumSize = new Size(500, 0), Margin = new(0, 0, 0, 14) });
+        layout.Controls.Add(new Label { Text = "Подключение Mac", Font = new Font("Segoe UI", 17, FontStyle.Bold), AutoSize = true, Margin = new(0, 0, 0, 16) });
+        layout.Controls.Add(new Label { Text = "На Mac откройте NooL → Настройки → NooL Link и создайте приглашение. Перенесите его сюда. Можно подключить несколько Mac: повторите это для каждого. Компьютеры должны быть в одной локальной сети.", AutoSize = true, MaximumSize = new Size(500, 0), Margin = new(0, 0, 0, 14) });
         layout.Controls.Add(invitation);
         layout.Controls.Add(connect);
         layout.Controls.Add(status);
@@ -40,7 +40,8 @@ internal sealed class PairingForm : Form
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
             catch (Exception error) when (error is IOException or InvalidDataException or HttpRequestException or TaskCanceledException or
-                ArgumentException or System.Text.Json.JsonException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
+                ArgumentException or System.Text.Json.JsonException or System.ComponentModel.Win32Exception or UnauthorizedAccessException or
+                System.Security.Cryptography.CryptographicException)
             {
                 if (!IsDisposed) SetStatus(error is InvalidDataException ? error.Message : "Не удалось подключиться. Создайте новое приглашение и проверьте локальную сеть.");
             }
