@@ -27,7 +27,7 @@ struct DockSettingsView: View {
                          ? "Dock скрывается, когда окно перекрывает его область."
                          : settings.visibility == .autoHide
                             ? "Подведите курсор к \(settings.position.edgeDescription) краю экрана, чтобы показать Dock."
-                         : "Dock остаётся у \(settings.position.edgeDescription) края экрана.")
+                         : "Dock остаётся у \(settings.position.edgeDescription) края экрана и может перекрывать окна.")
                         .font(.system(size: 11)).foregroundStyle(NotchPalette.secondary)
                     Toggle("⌥⌘D включает и выключает автоскрытие", isOn: $settings.hideHotKeyEnabled)
                         .toggleStyle(.switch)

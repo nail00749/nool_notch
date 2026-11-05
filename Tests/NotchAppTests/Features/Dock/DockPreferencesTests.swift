@@ -51,6 +51,23 @@ final class DockPreferencesTests: XCTestCase {
         XCTAssertEqual(reloaded.items.first(where: { $0.integrationID == "timer" })?.span, 1)
     }
 
+    func testAlwaysVisibleMovesToIntelligentOnceAndExplicitChoiceSticks() throws {
+        let (defaults, suite) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(DockPreferences(defaults: defaults).visibility, .intelligent)
+        let prefs = DockPreferences(defaults: defaults)
+        prefs.visibility = .always
+        let data = try XCTUnwrap(defaults.data(forKey: DockPreferences.storageKey))
+        var payload = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        // An explicit choice saved after the change survives a reload.
+        XCTAssertEqual(DockPreferences(defaults: defaults).visibility, .always)
+        // Preferences saved before the change had no revision and the old default.
+        payload.removeValue(forKey: "visibilityRevision")
+        defaults.set(try JSONSerialization.data(withJSONObject: payload), forKey: DockPreferences.storageKey)
+        XCTAssertEqual(DockPreferences(defaults: defaults).visibility, .intelligent)
+        XCTAssertEqual(DockPreferences(defaults: defaults).visibility, .intelligent)
+    }
+
     func testLegacyMigrationKeepsOfflineAppsNotesAndSourceKeys() throws {
         let (defaults, suite) = try makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }

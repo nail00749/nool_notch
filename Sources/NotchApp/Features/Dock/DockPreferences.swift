@@ -83,7 +83,12 @@ final class DockPreferences: ObservableObject {
         var downloadsStyle: DockStackStyle? = nil
         var showBadges: Bool? = nil
         var showMinimizedWindows: Bool? = nil
+        /// 1: «Всегда виден» was replaced by «Умное скрытие» as the default, because
+        /// NooL Dock cannot reserve screen space and covered windows near the edge.
+        var visibilityRevision: Int? = nil
     }
+
+    private static let visibilityRevision = 1
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -95,7 +100,10 @@ final class DockPreferences: ObservableObject {
         }
         let payload = saved.flatMap { $0.version == 2 ? $0 : nil } ?? Self.migrate(defaults)
         isEnabled = payload.isEnabled
-        visibility = payload.visibility
+        // One-time move off the old default: an always-visible NooL Dock covers windows,
+        // while the native Dock reserves space for them. Hiding on overlap keeps them usable.
+        visibility = (payload.visibilityRevision ?? 0) < Self.visibilityRevision && payload.visibility == .always
+            ? .intelligent : payload.visibility
         scale = Self.clamp(payload.scale, to: 0.7...1.4, fallback: 1)
         opacity = Self.clamp(payload.opacity, to: 0.45...1, fallback: 0.88)
         magnification = Self.clamp(payload.magnification, to: 0...1, fallback: 0.3)
@@ -226,7 +234,8 @@ final class DockPreferences: ObservableObject {
     }
 
     func toggleAutoHide() {
-        visibility = visibility == .always ? .autoHide : .always
+        // Leaving auto-hide returns to hide-on-overlap: an always-visible Dock covers windows.
+        visibility = visibility == .autoHide ? .intelligent : .autoHide
     }
 
     @discardableResult
@@ -462,7 +471,8 @@ final class DockPreferences: ObservableObject {
                               showRecentApplications: showRecentApplications, recentApplications: recentApplications,
                               animateLaunch: animateLaunch, dimHiddenApplications: dimHiddenApplications,
                               hideHotKeyEnabled: hideHotKeyEnabled, downloadsStyle: downloadsStyle,
-                              showBadges: showBadges, showMinimizedWindows: showMinimizedWindows)
+                              showBadges: showBadges, showMinimizedWindows: showMinimizedWindows,
+                              visibilityRevision: Self.visibilityRevision)
         if let data = try? JSONEncoder().encode(payload) { defaults.set(data, forKey: Self.storageKey) }
     }
 
@@ -528,7 +538,7 @@ final class DockPreferences: ObservableObject {
             uuid = CFUUIDCreateString(nil, cfUUID) as String
         } else if UUID(uuidString: legacyDisplay) != nil { uuid = legacyDisplay }
         return Payload(isEnabled: defaults.object(forKey: "nool.dock.enabled") as? Bool ?? false,
-                       visibility: defaults.bool(forKey: "nool.dock.autoHide") ? .autoHide : .always,
+                       visibility: defaults.bool(forKey: "nool.dock.autoHide") ? .autoHide : .intelligent,
                        scale: (defaults.object(forKey: "nool.dock.scale") as? NSNumber)?.doubleValue ?? 1,
                        opacity: (defaults.object(forKey: "nool.dock.opacity") as? NSNumber)?.doubleValue ?? 0.88,
                        magnification: 0.3, displayUUID: uuid, replaceSystemDock: false, previewEnabled: true,

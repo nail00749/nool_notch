@@ -99,10 +99,9 @@ final class DockSystemFeaturesTests: XCTestCase {
         prefs.toggleAutoHide()
         XCTAssertEqual(prefs.visibility, .autoHide)
         prefs.toggleAutoHide()
-        XCTAssertEqual(prefs.visibility, .always)
-        prefs.visibility = .intelligent
+        XCTAssertEqual(prefs.visibility, .intelligent)
         prefs.toggleAutoHide()
-        XCTAssertEqual(prefs.visibility, .always)
+        XCTAssertEqual(prefs.visibility, .autoHide)
     }
 
     func testVerticalDockForcesCompactWidgetsAndUsesSideGeometry() throws {
