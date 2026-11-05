@@ -6,7 +6,6 @@ DerivedData/
 xcuserdata/
 *.xcuserstate
 .DS_Store
-.gitnexus/
 artifacts/
 Windows/NooLLink/bin/
 Windows/NooLLink/obj/
