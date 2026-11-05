@@ -66,6 +66,7 @@ internal sealed class TrayContext : ApplicationContext
     public TrayContext(SendRequest? initialSend)
     {
         dispatcher.CreateControl();
+        Toasts.Initialize(dispatcher);
         menu.Opening += (_, _) => RebuildMenu();
         tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "NooL Link", ContextMenuStrip = menu, Visible = true };
         tray.DoubleClick += (_, _) => ShowPairing();
@@ -301,8 +302,7 @@ internal sealed class TrayContext : ApplicationContext
                 var saved = await FileTransferReceiver.ReceiveAsync(envelope, cancellation);
                 result = new(envelope.Id, true);
                 Notify(saved.Length == 1 ? $"Файл с {link.Name}" : $"Файлов с {link.Name}: {saved.Length}",
-                    (saved.Length == 1 ? Path.GetFileName(saved[0]) : "Сохранено в папку «Загрузки».") +
-                    " Нажмите, чтобы показать в Проводнике.", saved);
+                    saved.Length == 1 ? Path.GetFileName(saved[0]) : "Сохранено в папку «Загрузки».", saved);
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { throw; }
             catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
@@ -320,9 +320,11 @@ internal sealed class TrayContext : ApplicationContext
     private void Notify(string title, string message, string[]? reveal = null)
     {
         if (disposed) return;
-        // Only a "received" balloon opens Explorer; error balloons do nothing on click.
-        lastReceived = reveal ?? [];
         SetStatus(title);
+        if (Toasts.Show(title, message, reveal)) return;
+        // Fallback when notifications are disabled for the app or unavailable:
+        // only a "received" balloon opens Explorer; error balloons do nothing on click.
+        lastReceived = reveal ?? [];
         tray.ShowBalloonTip(5000, title, message, ToolTipIcon.Info);
     }
 

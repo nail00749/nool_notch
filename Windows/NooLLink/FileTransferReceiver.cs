@@ -37,6 +37,7 @@ internal static class FileTransferReceiver
             // pauses now, so a later poll acknowledges without a second copy.
             foreach (var file in envelope.Files!)
                 saved.Add(MoveUnique(Path.Combine(staging, file.Name), downloads, file.Name));
+            foreach (var path in saved) MarkAsDownloaded(path);
             await File.WriteAllLinesAsync(receipt, saved, CancellationToken.None);
             return saved.ToArray();
         }
@@ -48,6 +49,17 @@ internal static class FileTransferReceiver
         finally
         {
             if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
+        }
+    }
+
+    /// Mark of the Web, as browsers set it: SmartScreen and Office Protected View
+    /// treat files from another computer like any other download.
+    private static void MarkAsDownloaded(string path)
+    {
+        try { File.WriteAllText(path + ":Zone.Identifier", "[ZoneTransfer]\r\nZoneId=3\r\n"); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        {
+            // FAT32/exFAT volumes have no alternate data streams.
         }
     }
 

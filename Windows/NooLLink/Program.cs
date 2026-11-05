@@ -6,8 +6,10 @@ internal static class Program
     private static void Main(string[] arguments)
     {
         ApplicationConfiguration.Initialize();
+        // A click on a notification may start the app with toolkit arguments.
+        var toastLaunch = Toasts.WasLaunchedByToast();
         SendRequest? send;
-        try { send = InstanceBroker.ParseSendArguments(arguments); }
+        try { send = toastLaunch ? null : InstanceBroker.ParseSendArguments(arguments); }
         catch (InvalidDataException error) { MessageBox.Show(error.Message, "NooL Link"); return; }
         using var instance = new Mutex(true, "Local\\NooLLink", out var firstInstance);
         if (!firstInstance)
