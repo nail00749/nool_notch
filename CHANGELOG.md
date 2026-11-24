@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-24
+
 ### Added
 
 - В панель «Лимиты» добавлен источник Google Antigravity / Gemini: показывает остаток квот (5h / 7d) через Antigravity CLI (`agy` `/usage`) с встроенным окном входа и локальный Antigravity language server.
@@ -601,7 +603,8 @@
 - Добавлены панели лимитов, календаря, Now Playing и Jira.
 - Добавлены arm64 release packaging, checksum и ad-hoc подпись.
 
-[Unreleased]: https://github.com/nail00749/nool_notch/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/nail00749/nool_notch/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/nail00749/nool_notch/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/nail00749/nool_notch/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/nail00749/nool_notch/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/nail00749/nool_notch/compare/v0.8.1...v0.9.0
