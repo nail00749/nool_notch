@@ -237,6 +237,9 @@ private struct DockAccessibilitySettings: View {
                 Toggle("Свёрнутые окна в Dock", isOn: $settings.showMinimizedWindows).toggleStyle(.switch)
                 Text("Свёрнутые окна появляются перед Загрузками; клик разворачивает окно. Подпрыгивание приложений, требующих внимания, macOS сторонним Dock не передаёт.")
                     .font(.system(size: 10)).foregroundStyle(NotchPalette.secondary)
+                Toggle("Handoff с iPhone и других Mac", isOn: $settings.showHandoff).toggleStyle(.switch)
+                Text("Если на iPhone, iPad или другом Mac открыта страница или документ, в Dock появляется значок; клик продолжает работу здесь.")
+                    .font(.system(size: 10)).foregroundStyle(NotchPalette.secondary)
             }.font(.system(size: 12)).onAppear { monitor.refreshTrust() }
         }
     }

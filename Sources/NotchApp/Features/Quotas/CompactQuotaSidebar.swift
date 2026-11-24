@@ -496,6 +496,11 @@ struct QuotaProviderAccent: Equatable {
         green: 211.0 / 255.0,
         blue: 252.0 / 255.0
     )
+    static let google = QuotaProviderAccent(
+        red: 66.0 / 255.0,
+        green: 133.0 / 255.0,
+        blue: 244.0 / 255.0
+    )
     static let fallback = QuotaProviderAccent(red: 0.37, green: 0.96, blue: 0.72)
 }
 
@@ -527,6 +532,10 @@ struct QuotaProviderVisuals {
             icon = .asset("QuotaOllama")
             accent = .ollama
             opticalScale = 0.86
+        case "google-antigravity":
+            icon = .system("sparkle")
+            accent = .google
+            opticalScale = 0.9
         default:
             icon = .system("gauge.with.dots.needle.67percent")
             accent = .fallback

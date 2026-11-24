@@ -65,6 +65,7 @@ final class DockWindowCoordinator {
     private var overlapTimer: Timer?
     private var started = false
     private var sleeping = false
+    private var spaceRepairs: [ObjectIdentifier: Date] = [:]
     private var hovered = false
     private var interacting = false
     private var revealed = false
@@ -129,6 +130,9 @@ final class DockWindowCoordinator {
             self.feature.prefs.toggleAutoHide()
         }
         feature.accessibility.$minimizedWindows.removeDuplicates { $0.map(\.id) == $1.map(\.id) }.sink { [weak self] _ in
+            Task { @MainActor [weak self] in self?.synchronize() }
+        }.store(in: &subscriptions)
+        feature.accessibility.$handoff.removeDuplicates { ($0 == nil) == ($1 == nil) }.sink { [weak self] _ in
             Task { @MainActor [weak self] in self?.synchronize() }
         }.store(in: &subscriptions)
         feature.applications.$running.sink { [weak self] _ in
@@ -269,6 +273,23 @@ final class DockWindowCoordinator {
         window.appearance = NSAppearance(named: .darkAqua)
     }
 
+    /// A window that joined all Spaces can stay pinned to a full-screen Space that has since
+    /// closed, and re-ordering alone does not release it. Pin it to the active Space first,
+    /// then order it in again with its original behaviour so it rejoins every Space.
+    /// `isOnActiveSpace` can read false right after ordering in, so repairs are rate-limited.
+    private func moveToActiveSpace(_ window: NSPanel) {
+        let id = ObjectIdentifier(window)
+        if window.isVisible, let last = spaceRepairs[id], Date().timeIntervalSince(last) < 1.5 { return }
+        spaceRepairs[id] = Date()
+        let original = window.collectionBehavior
+        window.orderOut(nil)
+        window.collectionBehavior = original.subtracting(.canJoinAllSpaces).union(.moveToActiveSpace)
+        window.orderFrontRegardless()
+        window.orderOut(nil)
+        window.collectionBehavior = original
+        window.orderFrontRegardless()
+    }
+
     private func synchronize() {
         guard !synchronizing else { return }
         synchronizing = true
@@ -384,6 +405,11 @@ final class DockWindowCoordinator {
                 genie.show(panel.contentView, position: position, animated: animatesVisibility)
                 panel.orderFrontRegardless()
                 feature.accessibility.refreshNow()
+            } else if !panel.isOnActiveSpace {
+                // Ordered front inside a full-screen Space, the panel can stay behind when the
+                // Space changes: visible to AppKit, absent on screen, and with no edge strip
+                // to bring it back. Order it in again on the Space that is active now.
+                moveToActiveSpace(panel)
             } else if genie.isHiding {
                 genie.show(panel.contentView, position: position, animated: animatesVisibility)
             }
@@ -396,8 +422,11 @@ final class DockWindowCoordinator {
             }
             feature.fan.dismiss()
             if immersive { trigger.orderOut(nil) }
-            else if !trigger.isVisible { trigger.orderFrontRegardless() }
+            else if !trigger.isVisible || !trigger.isOnActiveSpace {
+                moveToActiveSpace(trigger)
+            }
         }
+        feature.accessibility.isSuspended = !shouldShow
         let integrationIDs = Set(prefs.items.compactMap(\.integrationID))
         model.setDockWidgets(musicVisible: shouldShow && integrationIDs.contains("music"),
                              calendarEnabled: integrationIDs.contains("calendar"))
@@ -656,7 +685,7 @@ final class DockWindowCoordinator {
         }
         guard overlapTimer == nil else { return }
         // Cheap geometry-only reconciliation, never screenshots or app discovery.
-        let timer = Timer(timeInterval: 0.6, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, let frame = self.targetFrame, self.started, !self.sleeping else { return }
                 let overlap = self.environment.overlap(frame)

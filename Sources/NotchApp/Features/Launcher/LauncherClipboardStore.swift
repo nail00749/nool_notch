@@ -53,6 +53,7 @@ final class LauncherClipboardStore: ObservableObject {
     private var retentionDays = defaultRetentionDays
     private var lastChangeCount: Int?
     private var pollTimer: Timer?
+    private var lastTrim: Date?
     private var isMonitoring = false
     private var lifecycleGeneration = 0
     private var persistenceGeneration = 0
@@ -136,8 +137,11 @@ final class LauncherClipboardStore: ObservableObject {
         guard isEnabled, isMonitoring, isLoadingHistory == false else { return }
 
         let now = Date()
-        let hadExpiredItems = trimItems(now: now)
-        if hadExpiredItems { enqueuePersistence() }
+        // Trimming decodes every stored image header; a timer tick does not need it each time.
+        if lastTrim.map({ now.timeIntervalSince($0) >= 30 }) ?? true {
+            lastTrim = now
+            if trimItems(now: now) { enqueuePersistence() }
+        }
 
         let changeCount = pasteboard.changeCount
         guard lastChangeCount != changeCount else { return }

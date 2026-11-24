@@ -89,7 +89,8 @@ final class UserDefaultsAppPreferences: AppPreferencesStoring {
     static let defaultQuotaProviderOrder = [
         "chatgpt-subscription",
         "claude-code-subscription",
-        "ollama-cloud"
+        "ollama-cloud",
+        "google-antigravity"
     ]
     static let defaultHoverExpansionDelay: TimeInterval = 0.5
     static let hoverExpansionDelayKey = "interaction.hoverExpansionDelay.v2"

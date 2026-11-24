@@ -112,6 +112,7 @@ private struct DockStrip: View {
             // Adding items, profiles and system Dock recovery live in NooL settings, not on the strip.
             if feature.trailingCellCount > 0 {
                 separator
+                if let handoff = feature.handoff { trailingCell { handoffCell(handoff) } }
                 ForEach(feature.minimizedWindows) { window in trailingCell { minimizedCell(window) } }
                 if preferences.showDownloads { trailingCell { downloadsCell } }
                 if preferences.showTrash { trailingCell { trashCell } }
@@ -276,6 +277,37 @@ private struct DockStrip: View {
             .frame(width: DockLayout.baseCellWidth, height: logicalHeight)
             .scaleEffect(preferences.scale)
             .frame(width: cell, height: height)
+    }
+
+    private func handoffCell(_ item: DockHandoffItem) -> some View {
+        let device = item.deviceName
+        let title = device.map { "\(item.title) — \($0)" } ?? item.title
+        let icon = item.applicationPath.map { applications.icon(for: $0) } ?? NSWorkspace.shared.icon(for: .application)
+        return VStack(spacing: 4) {
+            ZStack(alignment: .bottomTrailing) {
+                Image(nsImage: icon).resizable().frame(width: DockLayout.iconSize, height: DockLayout.iconSize)
+                Image(systemName: Self.handoffSymbol(for: item.deviceIdentifier))
+                    .font(.system(size: 9, weight: .semibold)).foregroundStyle(.white)
+                    .padding(3).background(Circle().fill(.black.opacity(0.65)))
+                    .overlay { Circle().strokeBorder(.white.opacity(0.35), lineWidth: 0.6) }
+                    .offset(x: 3, y: 3)
+            }.frame(width: DockLayout.iconSize, height: DockLayout.iconSize)
+            Capsule().fill(.clear).frame(width: 4, height: 3)
+            if preferences.showAppLabels {
+                Text(item.title).font(.system(size: 10, weight: .medium)).lineLimit(1)
+                    .foregroundStyle(.white.opacity(0.8)).accessibilityHidden(true)
+            }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            .dockTapTarget("Продолжить \(title)") { accessibility.openHandoff(item) }.help(title)
+    }
+
+    private static func handoffSymbol(for identifier: String) -> String {
+        let id = identifier.lowercased()
+        if id.contains("ipad") { return "ipad" }
+        if id.contains("iphone") { return "iphone" }
+        if id.contains("macbook") { return "laptopcomputer" }
+        if id.contains("watch") { return "applewatch" }
+        return "desktopcomputer"
     }
 
     private func minimizedCell(_ window: DockMinimizedWindow) -> some View {

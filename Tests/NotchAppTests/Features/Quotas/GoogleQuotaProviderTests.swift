@@ -1,0 +1,139 @@
+import Foundation
+import NotchCore
+import XCTest
+@testable import NotchApp
+
+final class GoogleQuotaProviderTests: XCTestCase {
+    func testParsesAntigravityLanguageServerProcessAndPorts() {
+        let psOutput = """
+          101 /usr/sbin/syslogd
+          4251 /Applications/Antigravity.app/Contents/Resources/app/extensions/antigravity/bin/language_server_macos_arm --enable_lsp --csrf_token=tok_abc123 --extension_server_port=54321
+        """
+        let parsed = AntigravityLocalQuotaClient.parseServerProcess(from: psOutput)
+        XCTAssertEqual(parsed?.pid, 4251)
+        XCTAssertEqual(parsed?.csrfToken, "tok_abc123")
+        XCTAssertEqual(parsed?.ports, [54321])
+
+        let lsofOutput = """
+        COMMAND    PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME
+        language_ 4251 user   12u  IPv4  0x123      0t0  TCP 127.0.0.1:54321 (LISTEN)
+        language_ 4251 user   15u  IPv4  0x124      0t0  TCP 127.0.0.1:54322 (LISTEN)
+        """
+        let ports = AntigravityLocalQuotaClient.parseListeningPorts(from: lsofOutput)
+        XCTAssertEqual(ports, [54321, 54322])
+    }
+
+    func testMapsLocalGetUserStatusIntoGroupedWindows() throws {
+        let json = """
+        {
+          "userStatus": {
+            "cascadeModelConfigData": {
+              "clientModelConfigs": [
+                {
+                  "label": "Gemini 3 Pro (High)",
+                  "modelOrAlias": { "model": "MODEL_GEMINI_3_PRO_HIGH" },
+                  "quotaInfo": { "remainingFraction": 0.80, "resetTime": "2026-11-24T15:00:00Z" }
+                },
+                {
+                  "label": "Gemini 3 Pro (Low)",
+                  "modelOrAlias": { "model": "MODEL_GEMINI_3_PRO_LOW" },
+                  "quotaInfo": { "remainingFraction": 0.65, "resetTime": "2026-11-24T14:30:00Z" }
+                },
+                {
+                  "label": "Gemini 3 Flash",
+                  "modelOrAlias": { "model": "MODEL_GEMINI_3_FLASH" },
+                  "quotaInfo": { "remainingFraction": 0.92, "resetTime": "2026-11-24T16:00:00Z" }
+                },
+                {
+                  "label": "Claude Sonnet 4.5",
+                  "modelOrAlias": { "model": "MODEL_CLAUDE_4_5_SONNET" },
+                  "quotaInfo": { "remainingFraction": 0.40, "resetTime": "2026-11-24T17:00:00Z" }
+                }
+              ]
+            }
+          }
+        }
+        """
+        let windows = try GoogleQuotaMapper.windows(fromLocalUserStatusData: Data(json.utf8))
+        XCTAssertEqual(windows.count, 3)
+
+        XCTAssertEqual(windows[0].id, "google-gemini-pro")
+        XCTAssertEqual(windows[0].label, "Pro")
+        XCTAssertEqual(windows[0].remaining, 65)
+        XCTAssertEqual(windows[0].resetAt, GoogleQuotaMapper.parseISO8601("2026-11-24T14:30:00Z"))
+
+        XCTAssertEqual(windows[1].id, "google-gemini-flash")
+        XCTAssertEqual(windows[1].label, "Flash")
+        XCTAssertEqual(windows[1].remaining, 92)
+
+        XCTAssertEqual(windows[2].id, "google-antigravity-partner")
+        XCTAssertEqual(windows[2].label, "Partner")
+        XCTAssertEqual(windows[2].remaining, 40)
+    }
+
+    func testParsesAgyUsageTUIScreenWithANSISequencesAndResetTimers() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let ansiOutput = """
+        \u{1B}[2J\u{1B}[1;1HL \u{1B}[1mModels & Quota\u{1B}[0m\r
+        \r
+          Account: user@example.com\r
+        \r
+        \u{1B}[1mGEMINI MODELS\u{1B}[0m\r
+          Models within this group: Gemini 4 Neon, Gemini 4 Carbon\r
+        \r
+          Weekly Limit Remaining\u{1B}[K\n\u{1B}[20D[████████████████████████████] 94.40%\n\u{1B}[59DRefreshes in 166h 17m\r
+        \r
+          Five Hour Limit Remaining\n\u{1B}[23D[██████████████████████] 86.47%\n\u{1B}[59DRefreshes in 3h 17m\r
+        \r
+        \u{1B}[1mCLAUDE AND GPT MODELS\u{1B}[0m\r
+          Models within this group: Claude Opus, Claude Sonnet, GPT-OSS\r
+        \r
+          Weekly Limit Remaining\r
+            [\u{1B}[32m████████████████████████████████\u{1B}[0m] 100.00%\r
+            Quota available\r
+        """
+
+        let terminal = AgyVirtualTerminal(rows: 40, cols: 100)
+        terminal.feed(Array(ansiOutput.utf8))
+        let rendered = terminal.renderedText()
+
+        let windows = try AgyUsageParser.parseWindows(from: rendered, now: now)
+        XCTAssertEqual(windows.map(\.id), ["google-5h", "google-7d"])
+        XCTAssertEqual(windows.map(\.label), ["5h", "7d"])
+        XCTAssertEqual(windows[0].remaining, 86.5)
+        XCTAssertEqual(windows[0].resetAt, now.addingTimeInterval(3 * 3600 + 17 * 60))
+        XCTAssertEqual(windows[1].remaining, 94.4)
+        XCTAssertEqual(windows[1].resetAt, now.addingTimeInterval(166 * 3600 + 17 * 60))
+    }
+
+    func testGoogleQuotaGateThrottlesAndRetainsStaleSnapshot() async {
+        let gate = GoogleQuotaGate()
+        let start = Date(timeIntervalSince1970: 1_000_000)
+
+        let firstNil = await gate.cachedSnapshot(at: start)
+        XCTAssertNil(firstNil)
+
+        let live = QuotaSnapshot(
+            providerID: "google-antigravity",
+            providerName: "Google Antigravity",
+            windows: [
+                QuotaWindow(id: "google-5h", label: "5h", limit: 100, remaining: 80, resetAt: nil, unit: .percentage)
+            ],
+            connection: .live,
+            updatedAt: start,
+            sourceURL: nil,
+            message: nil
+        )
+        await gate.recordSuccess(live, at: start)
+
+        let cached = await gate.cachedSnapshot(at: start.addingTimeInterval(60))
+        XCTAssertEqual(cached, live)
+
+        let expiredCache = await gate.cachedSnapshot(at: start.addingTimeInterval(181))
+        XCTAssertNil(expiredCache)
+
+        let stale = await gate.staleSnapshot(for: .serviceUnavailable)
+        XCTAssertEqual(stale?.connection, .stale)
+        XCTAssertEqual(stale?.windows, live.windows)
+    }
+}

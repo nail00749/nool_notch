@@ -457,19 +457,22 @@ final class DockVisibilityTests: XCTestCase {
         let display = CGRect(x: 0, y: 0, width: 1800, height: 1169)
         let fullscreen = DockFullscreenDetection.Window(pid: 7, frame: CGRect(x: 0, y: 39, width: 1800, height: 1130))
         let titlebar = DockFullscreenDetection.Window(pid: 7, frame: CGRect(x: 0, y: 39, width: 1800, height: 32))
-        XCTAssertTrue(DockFullscreenDetection.isFullscreen(windows: [fullscreen, titlebar], display: display, topInset: 39))
+        XCTAssertTrue(DockFullscreenDetection.isFullscreen(windows: [fullscreen, titlebar], display: display, topInset: 39, nativeBackdrop: true))
+        // Same geometry without a full-screen Space: a window maximized below the visible menu bar.
+        XCTAssertFalse(DockFullscreenDetection.isFullscreen(windows: [fullscreen, titlebar], display: display,
+                                                            topInset: 39, nativeBackdrop: false))
         // Same geometry, but another application's window is on this Space: an ordinary maximized window.
         let other = DockFullscreenDetection.Window(pid: 9, frame: CGRect(x: 100, y: 100, width: 600, height: 400))
-        XCTAssertFalse(DockFullscreenDetection.isFullscreen(windows: [fullscreen, other], display: display, topInset: 39))
+        XCTAssertFalse(DockFullscreenDetection.isFullscreen(windows: [fullscreen, other], display: display, topInset: 39, nativeBackdrop: true))
         // Non-notched display: content covers the entire frame.
         let edgeToEdge = DockFullscreenDetection.Window(pid: 7, frame: display)
-        XCTAssertTrue(DockFullscreenDetection.isFullscreen(windows: [edgeToEdge], display: display, topInset: 0))
+        XCTAssertTrue(DockFullscreenDetection.isFullscreen(windows: [edgeToEdge], display: display, topInset: 0, nativeBackdrop: false))
         // A window that does not reach the bottom edge, or starts lower than the strip, is not full screen.
         let short = DockFullscreenDetection.Window(pid: 7, frame: CGRect(x: 0, y: 39, width: 1800, height: 1000))
         let lowered = DockFullscreenDetection.Window(pid: 7, frame: CGRect(x: 0, y: 80, width: 1800, height: 1089))
-        XCTAssertFalse(DockFullscreenDetection.isFullscreen(windows: [short], display: display, topInset: 39))
-        XCTAssertFalse(DockFullscreenDetection.isFullscreen(windows: [lowered], display: display, topInset: 39))
-        XCTAssertFalse(DockFullscreenDetection.isFullscreen(windows: [], display: display, topInset: 39))
+        XCTAssertFalse(DockFullscreenDetection.isFullscreen(windows: [short], display: display, topInset: 39, nativeBackdrop: true))
+        XCTAssertFalse(DockFullscreenDetection.isFullscreen(windows: [lowered], display: display, topInset: 39, nativeBackdrop: true))
+        XCTAssertFalse(DockFullscreenDetection.isFullscreen(windows: [], display: display, topInset: 39, nativeBackdrop: true))
     }
 
     func testFullscreenIgnoresNeighbouringDisplayRoundingSliver() {
@@ -482,14 +485,14 @@ final class DockVisibilityTests: XCTestCase {
         let warp = DockFullscreenDetection.Window(pid: 13281,
             frame: CGRect(x: -1614, y: -1410, width: 2560, height: 1410))
         for windows in [[safari, codex, warp], [codex, warp, safari]] {
-            XCTAssertEqual(DockFullscreenDetection.owner(windows: windows, display: display, topInset: 39), 2020)
+            XCTAssertEqual(DockFullscreenDetection.owner(windows: windows, display: display, topInset: 39, nativeBackdrop: true), 2020)
         }
         let sideSliver = DockFullscreenDetection.Window(pid: 9,
             frame: CGRect(x: 1799, y: 100, width: 800, height: 600))
-        XCTAssertEqual(DockFullscreenDetection.owner(windows: [sideSliver, codex], display: display, topInset: 39), 2020)
+        XCTAssertEqual(DockFullscreenDetection.owner(windows: [sideSliver, codex], display: display, topInset: 39, nativeBackdrop: true), 2020)
         let actualOverlap = DockFullscreenDetection.Window(pid: 9,
             frame: CGRect(x: 1798, y: 100, width: 800, height: 600))
-        XCTAssertNil(DockFullscreenDetection.owner(windows: [actualOverlap, codex], display: display, topInset: 39))
+        XCTAssertNil(DockFullscreenDetection.owner(windows: [actualOverlap, codex], display: display, topInset: 39, nativeBackdrop: true))
     }
 
     @MainActor

@@ -5,7 +5,7 @@ struct QuotaWidgetSettingsCard: View {
         SettingsCard(title: "Виджет macOS", icon: "square.grid.2x2") {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 16) {
-                    ForEach(["chatgpt-subscription", "claude-code-subscription", "ollama-cloud"], id: \.self) { id in
+                    ForEach(["chatgpt-subscription", "claude-code-subscription", "ollama-cloud", "google-antigravity"], id: \.self) { id in
                         ZStack {
                             Circle().stroke(.white.opacity(0.12), lineWidth: 4)
                             Circle().trim(from: 0, to: 0.75)

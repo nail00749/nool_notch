@@ -15,6 +15,48 @@ struct DockMinimizedWindow: Identifiable, Sendable {
     let window: DockAXElement
 }
 
+/// The system Dock's Handoff tile: an activity advertised by a nearby iPhone, iPad or Mac.
+struct DockHandoffItem: Equatable, Sendable {
+    let title: String
+    /// Model identifier from AXStatusLabel, e.g. "com.apple.iphone-15-pro-max-1".
+    let deviceIdentifier: String
+    /// Installed application matching `title`, when one is found, for the icon.
+    let applicationPath: String?
+    let element: DockAXElement
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.title == rhs.title && lhs.deviceIdentifier == rhs.deviceIdentifier
+            && lhs.applicationPath == rhs.applicationPath
+    }
+
+    /// "com.apple.iphone-15-pro-max-1" → "iPhone 15 Pro Max"; nil when nothing readable remains.
+    var deviceName: String? { Self.deviceName(from: deviceIdentifier) }
+
+    static func deviceName(from identifier: String) -> String? {
+        var raw = identifier
+        if raw.hasPrefix("com.apple.") { raw.removeFirst("com.apple.".count) }
+        var tokens = raw.split(separator: "-").map(String.init).filter { !$0.isEmpty }
+        // A trailing number after another one is a colour/variant index, not part of the model.
+        if tokens.count > 1, tokens.last?.allSatisfy(\.isNumber) == true,
+           tokens.dropLast().contains(where: { $0.allSatisfy(\.isNumber) }) {
+            tokens.removeLast()
+        }
+        let brands = ["iphone": "iPhone", "ipad": "iPad", "ipod": "iPod", "macbook": "MacBook",
+                      "imac": "iMac", "mac": "Mac", "watch": "Watch", "vision": "Vision"]
+        let words = tokens.map { brands[$0.lowercased()] ?? ($0.allSatisfy(\.isNumber) ? $0 : $0.capitalized) }
+        let name = words.joined(separator: " ")
+        return name.isEmpty ? nil : name
+    }
+
+    /// First installed application whose name equals the Handoff title.
+    nonisolated static func applicationPath(named title: String) -> String? {
+        guard !title.isEmpty, !title.contains("/") else { return nil }
+        let roots = ["/Applications", "/System/Applications", "/System/Applications/Utilities",
+                     "/Applications/Utilities", NSHomeDirectory() + "/Applications"]
+        return roots.lazy.map { "\($0)/\(title).app" }.first { FileManager.default.fileExists(atPath: $0) }
+    }
+}
+
 /// Features that exist only through Accessibility: notification badges read from the
 /// system Dock's own AX tree, and the minimized-windows section. Nothing runs, and no
 /// permission prompt appears, until the user grants Accessibility in Dock settings.
@@ -23,27 +65,35 @@ final class DockAccessibilityMonitor: ObservableObject {
     struct Options: Equatable {
         var badges = true
         var minimizedWindows = true
+        var handoff = true
     }
 
     /// Application bundle path → badge text ("3", "•").
     @Published private(set) var badges: [String: String] = [:]
     @Published private(set) var minimizedWindows: [DockMinimizedWindow] = []
+    @Published private(set) var handoff: DockHandoffItem?
     @Published private(set) var isTrusted = AXIsProcessTrusted()
-    var interval: Duration = .seconds(2)
+    var interval: Duration = .seconds(4)
+    /// A hidden Dock shows neither badges nor minimized windows; skip querying other applications.
+    var isSuspended = false {
+        didSet { if oldValue, !isSuspended { refreshNow() } }
+    }
     var isTrustedCheck: () -> Bool = { AXIsProcessTrusted() }
     private var options = Options()
     private var loop: Task<Void, Never>?
 
     func update(active: Bool, options: Options) {
         self.options = options
-        let wanted = active && (options.badges || options.minimizedWindows)
+        let wanted = active && (options.badges || options.minimizedWindows || options.handoff)
         if !wanted {
             loop?.cancel()
             loop = nil
             if !badges.isEmpty { badges = [:] }
             if !minimizedWindows.isEmpty { minimizedWindows = [] }
+            if handoff != nil { handoff = nil }
             return
         }
+        if !options.handoff, handoff != nil { handoff = nil }
         if !options.badges, !badges.isEmpty { badges = [:] }
         if !options.minimizedWindows, !minimizedWindows.isEmpty { minimizedWindows = [] }
         guard loop == nil else { return }
@@ -85,10 +135,12 @@ final class DockAccessibilityMonitor: ObservableObject {
     }
 
     private func poll() async {
+        guard !isSuspended else { return }
         refreshTrust()
         guard isTrusted else {
             if !badges.isEmpty { badges = [:] }
             if !minimizedWindows.isEmpty { minimizedWindows = [] }
+            if handoff != nil { handoff = nil }
             return
         }
         let options = options
@@ -99,15 +151,17 @@ final class DockAccessibilityMonitor: ObservableObject {
                       let url = app.bundleURL else { return nil }
                 return (app.processIdentifier, url)
             } : []
-        let dockPID = options.badges
+        let dockPID = options.badges || options.handoff
             ? NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first?.processIdentifier : nil
         let result = await Task.detached(priority: .utility) {
             // Symlink resolution touches the file system; keep it off the main actor.
             let applications = candidates.map { ($0.pid, $0.url.standardizedFileURL.resolvingSymlinksInPath().path) }
-            return (dockPID.map(Self.readBadges) ?? [:], Self.readMinimizedWindows(applications))
+            let dock = dockPID.map(Self.readDock) ?? ([:], nil)
+            return (dock.0, Self.readMinimizedWindows(applications), dock.1)
         }.value
         guard !Task.isCancelled, loop != nil else { return }
         if options.badges, result.0 != badges { badges = result.0 }
+        if options.handoff, result.2 != handoff { handoff = result.2 }
         let windows = result.1
         if options.minimizedWindows, windows.map(\.id) != minimizedWindows.map(\.id)
             || zip(windows, minimizedWindows).contains(where: { $0.title != $1.title }) {
@@ -115,15 +169,38 @@ final class DockAccessibilityMonitor: ObservableObject {
         }
     }
 
+    /// Continues the advertised activity: the system Dock itself performs the Handoff.
+    func openHandoff(_ item: DockHandoffItem) {
+        let element = item.element
+        Task.detached(priority: .userInitiated) {
+            AXUIElementPerformAction(element.element, kAXPressAction as CFString)
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            self?.refreshNow()
+        }
+    }
+
     /// The system Dock keeps running (hidden) while NooL replaces it, and exposes each
-    /// application tile as AXDockItem with AXURL and AXStatusLabel.
-    nonisolated static func readBadges(dockPID: Int32) -> [String: String] {
+    /// application tile as AXDockItem with AXURL and AXStatusLabel, and the Handoff tile
+    /// as AXHandoffDockItem with the application name and the source device model.
+    nonisolated static func readDock(dockPID: Int32) -> (badges: [String: String], handoff: DockHandoffItem?) {
         let dock = AXUIElementCreateApplication(dockPID)
         AXUIElementSetMessagingTimeout(dock, 0.5)
         var badges: [String: String] = [:]
+        var handoff: DockHandoffItem?
         for list in children(dock) where string(list, kAXRoleAttribute) == kAXListRole as String {
             for item in children(list).prefix(256) {
-                guard string(item, kAXSubroleAttribute) == "AXApplicationDockItem",
+                let subrole = string(item, kAXSubroleAttribute)
+                if subrole == "AXHandoffDockItem" {
+                    if handoff == nil, let title = string(item, kAXTitleAttribute), !title.isEmpty {
+                        handoff = DockHandoffItem(title: title, deviceIdentifier: string(item, "AXStatusLabel") ?? "",
+                                                  applicationPath: DockHandoffItem.applicationPath(named: title),
+                                                  element: DockAXElement(element: item))
+                    }
+                    continue
+                }
+                guard subrole == "AXApplicationDockItem",
                       let label = string(item, "AXStatusLabel"), !label.isEmpty,
                       let raw = attribute(item, kAXURLAttribute), CFGetTypeID(raw) == CFURLGetTypeID() else { continue }
                 let url = (raw as! CFURL) as URL
@@ -131,7 +208,7 @@ final class DockAccessibilityMonitor: ObservableObject {
                 badges[url.standardizedFileURL.resolvingSymlinksInPath().path] = String(label.prefix(8))
             }
         }
-        return badges
+        return (badges, handoff)
     }
 
     nonisolated static func readMinimizedWindows(_ applications: [(pid: Int32, path: String)]) -> [DockMinimizedWindow] {

@@ -48,6 +48,8 @@ final class DockPreferences: ObservableObject {
     /// Accessibility-backed: badges from the system Dock and minimized windows of running apps.
     @Published var showBadges: Bool { didSet { changed() } }
     @Published var showMinimizedWindows: Bool { didSet { changed() } }
+    /// The Handoff tile from a nearby iPhone, iPad or Mac, read from the system Dock.
+    @Published var showHandoff: Bool { didSet { changed() } }
     @Published private(set) var profiles: [DockProfile]
     @Published private(set) var activeProfileID: String
 
@@ -83,6 +85,7 @@ final class DockPreferences: ObservableObject {
         var downloadsStyle: DockStackStyle? = nil
         var showBadges: Bool? = nil
         var showMinimizedWindows: Bool? = nil
+        var showHandoff: Bool? = nil
         /// 1: «Всегда виден» was replaced by «Умное скрытие» as the default, because
         /// NooL Dock cannot reserve screen space and covered windows near the edge.
         var visibilityRevision: Int? = nil
@@ -126,6 +129,7 @@ final class DockPreferences: ObservableObject {
         downloadsStyle = payload.downloadsStyle ?? .automatic
         showBadges = payload.showBadges ?? true
         showMinimizedWindows = payload.showMinimizedWindows ?? true
+        showHandoff = payload.showHandoff ?? true
         noteText = String(payload.noteText.prefix(2_000))
         var ids = Set<String>()
         var restoredProfiles = payload.profiles.prefix(16).compactMap { profile -> DockProfile? in
@@ -472,6 +476,7 @@ final class DockPreferences: ObservableObject {
                               animateLaunch: animateLaunch, dimHiddenApplications: dimHiddenApplications,
                               hideHotKeyEnabled: hideHotKeyEnabled, downloadsStyle: downloadsStyle,
                               showBadges: showBadges, showMinimizedWindows: showMinimizedWindows,
+                              showHandoff: showHandoff,
                               visibilityRevision: Self.visibilityRevision)
         if let data = try? JSONEncoder().encode(payload) { defaults.set(data, forKey: Self.storageKey) }
     }

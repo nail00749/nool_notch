@@ -254,8 +254,25 @@ final class DockWindowPreviewService: ObservableObject {
         let screen = NSScreen.screens.first { $0.frame == screenFrame }
         // On a display with a camera housing, full-screen content starts below the notch strip.
         let topInset = max(screen?.safeAreaInsets.top ?? 0, screen.map { $0.frame.maxY - $0.visibleFrame.maxY } ?? 0)
-        let windows = otherApplicationWindows().filter { $0.frame.intersects(display) }
-        return DockFullscreenDetection.owner(windows: windows, display: display, topInset: topInset)
+        // One WindowServer snapshot serves both the window list and the backdrop check.
+        let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+        let windows = otherApplicationWindows(rows).filter { $0.frame.intersects(display) }
+        return DockFullscreenDetection.owner(windows: windows, display: display, topInset: topInset,
+                                             nativeBackdrop: hasFullscreenBackdrop(rows, on: display))
+    }
+
+    /// A native full-screen Space puts WindowManager's backdrop one level above the desktop.
+    /// Owner name and level are readable without Screen Recording access, unlike window titles.
+    private static func hasFullscreenBackdrop(_ rows: [[String: Any]], on display: CGRect) -> Bool {
+        let level = Int(CGWindowLevelForKey(.desktopWindow)) + 1
+        return rows.contains { row in
+            guard (row[kCGWindowOwnerName as String] as? String) == "WindowManager",
+                  (row[kCGWindowLayer as String] as? NSNumber)?.intValue == level,
+                  let bounds = row[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return false }
+            return rect.intersection(display).width >= display.width - 1
+                && rect.intersection(display).height >= display.height - 1
+        }
     }
 
     private static func windowServerRect(fromAppKit frame: CGRect) -> CGRect? {
@@ -269,8 +286,11 @@ final class DockWindowPreviewService: ObservableObject {
 
     /// On-screen, normal-level, visible windows of other processes in WindowServer coordinates.
     private static func otherApplicationWindows() -> [DockFullscreenDetection.Window] {
-        let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-            as? [[String: Any]] ?? []
+        otherApplicationWindows(CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]] ?? [])
+    }
+
+    private static func otherApplicationWindows(_ rows: [[String: Any]]) -> [DockFullscreenDetection.Window] {
         let ownPID = ProcessInfo.processInfo.processIdentifier
         return rows.compactMap { row in
             guard let pid = (row[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value, pid != ownPID,
@@ -295,11 +315,15 @@ enum DockFullscreenDetection {
     }
 
     /// `display` and window frames use WindowServer coordinates (origin top left, y down).
-    static func isFullscreen(windows: [Window], display: CGRect, topInset: CGFloat) -> Bool {
-        owner(windows: windows, display: display, topInset: topInset) != nil
+    static func isFullscreen(windows: [Window], display: CGRect, topInset: CGFloat, nativeBackdrop: Bool) -> Bool {
+        owner(windows: windows, display: display, topInset: topInset, nativeBackdrop: nativeBackdrop) != nil
     }
 
-    static func owner(windows: [Window], display: CGRect, topInset: CGFloat) -> Int32? {
+    /// `nativeBackdrop`: the display shows a native full-screen Space. Below a visible menu bar
+    /// a maximized window has exactly the geometry of notched full-screen content; only the
+    /// backdrop tells them apart. A window covering the display from its top edge (a borderless
+    /// game) needs no backdrop.
+    static func owner(windows: [Window], display: CGRect, topInset: CGFloat, nativeBackdrop: Bool) -> Int32? {
         let tolerance: CGFloat = 1
         // WindowServer can round a neighbouring display's window one point across
         // the shared edge. That sliver is not another application's occupancy of
@@ -314,7 +338,7 @@ enum DockFullscreenDetection {
                 && abs(window.frame.maxX - display.maxX) <= tolerance
                 && abs(window.frame.maxY - display.maxY) <= tolerance
                 && window.frame.minY >= display.minY - tolerance
-                && window.frame.minY <= display.minY + max(0, topInset) + tolerance
+                && window.frame.minY <= display.minY + (nativeBackdrop ? max(0, topInset) : 0) + tolerance
         }
         return fills ? owner : nil
     }

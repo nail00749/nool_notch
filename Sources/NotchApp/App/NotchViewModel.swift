@@ -153,7 +153,8 @@ final class NotchViewModel: ObservableObject {
         providers: [any QuotaProvider] = [
             CodexQuotaProvider(),
             ClaudeQuotaProvider(),
-            OllamaQuotaProvider()
+            OllamaQuotaProvider(),
+            GoogleQuotaProvider()
         ],
         calendarProvider: any CalendarProviding = CalendarEventProvider(),
         nowPlayingProvider: any NowPlayingProviding = NowPlayingProvider(),

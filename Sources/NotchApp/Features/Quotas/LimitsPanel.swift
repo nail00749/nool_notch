@@ -8,6 +8,7 @@ struct LimitsPanel: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let chatGPTProviderID = "chatgpt-subscription"
+    private let googleProviderID = "google-antigravity"
 
     private var shouldLoadCodexResetForecast: Bool {
         CodexResetForecastVisibility.shouldLoad(
@@ -38,8 +39,13 @@ struct LimitsPanel: View {
                                 expandedProviderID = expandedProviderID == provider.id ? nil : provider.id
                             }
                         } label: {
+                            let compactName: String = switch provider.id {
+                            case chatGPTProviderID: "Codex"
+                            case googleProviderID: "Gemini"
+                            default: provider.displayName
+                            }
                             CompactProviderQuota(
-                                name: provider.id == chatGPTProviderID ? "Codex" : provider.displayName,
+                                name: compactName,
                                 snapshot: model.snapshot(for: provider.id),
                                 resetForecast: provider.id == chatGPTProviderID ? codexResetForecast : nil,
                                 isExpanded: expandedProviderID == provider.id

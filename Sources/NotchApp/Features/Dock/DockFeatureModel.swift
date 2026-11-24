@@ -73,7 +73,8 @@ final class DockFeatureModel: ObservableObject {
             if active { loginItems.refreshIfUsed() }
         }
         accessibility.update(active: active, options: .init(badges: prefs.showBadges,
-                                                            minimizedWindows: prefs.showMinimizedWindows))
+                                                            minimizedWindows: prefs.showMinimizedWindows,
+                                                            handoff: prefs.showHandoff))
         if active, prefs.showDownloads, let path = downloadsElement.directoryPath {
             downloads.start(directory: URL(fileURLWithPath: path, isDirectory: true))
         } else {
@@ -102,7 +103,11 @@ final class DockFeatureModel: ObservableObject {
 
     /// Downloads and Trash: fixed cells after the applications, like the system Dock.
     var trailingCellCount: Int {
-        minimizedWindows.count + (prefs.showDownloads ? 1 : 0) + (prefs.showTrash ? 1 : 0)
+        (handoff == nil ? 0 : 1) + minimizedWindows.count + (prefs.showDownloads ? 1 : 0) + (prefs.showTrash ? 1 : 0)
+    }
+
+    var handoff: DockHandoffItem? {
+        prefs.showHandoff ? accessibility.handoff : nil
     }
 
     var minimizedWindows: [DockMinimizedWindow] {
