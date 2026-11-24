@@ -202,6 +202,19 @@ enum GoogleQuotaError: Error, Equatable {
 // MARK: - Executable Discovery
 
 enum AgyPaths {
+    static func cleanEnvironment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        for key in Array(env.keys) {
+            if key.hasPrefix("ANTIGRAVITY_") || key.hasPrefix("AGY_") || key == "GEMINI_HOME" {
+                env.removeValue(forKey: key)
+            }
+        }
+        if env["LANG"] == nil {
+            env["LANG"] = "en_US.UTF-8"
+        }
+        return env
+    }
+
     static func executable() -> URL? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         var candidates = [
@@ -261,6 +274,7 @@ private final class AgyAuthenticationSession: NSObject, NSWindowDelegate {
         let stdout = Pipe()
         process.executableURL = executableURL
         process.arguments = ["acp", "--login"]
+        process.environment = AgyPaths.cleanEnvironment()
         process.standardInput = stdin
         process.standardOutput = stdout
         process.standardError = stdout
@@ -607,7 +621,7 @@ enum AgyQuotaClient {
             #"{"altScreenMode":"never","showTips":false,"notifications":false}"#
         ]
         process.currentDirectoryURL = FileManager.default.temporaryDirectory
-        var env = ProcessInfo.processInfo.environment
+        var env = AgyPaths.cleanEnvironment()
         env["TERM"] = "xterm-256color"
         env["NO_COLOR"] = "1"
         process.environment = env
@@ -693,12 +707,12 @@ enum AgyQuotaClient {
             let snapshotText = terminal.renderedText()
             let lower = snapshotText.lowercased()
 
-            if lower.contains("not signed in")
-                || lower.contains("select login method")
-                || lower.contains("authentication required")
+            // Note: agy 1.5.16+ briefly prints "You are currently not signed in. / Signing in..."
+            // while loading credentials from keyring before rendering "? for shortcuts".
+            let hasInteractiveLoginPrompt = lower.contains("select login method")
                 || lower.contains("please visit the url to log in")
                 || lower.contains("open this link in a browser to log in")
-                || lower.contains("please sign in") {
+            if hasInteractiveLoginPrompt {
                 throw GoogleQuotaError.authenticationRequired
             }
 
@@ -744,11 +758,13 @@ enum AgyQuotaClient {
             return finalText
         }
         let lower = finalText.lowercased()
-        if lower.contains("not signed in")
-            || lower.contains("select login method")
+        if !finalText.contains("? for shortcuts") && (
+            lower.contains("select login method")
             || lower.contains("authentication required")
-            || lower.contains("log in")
-            || lower.contains("sign in") {
+            || lower.contains("please visit the url to log in")
+            || lower.contains("open this link in a browser to log in")
+            || (lower.contains("not signed in") && !lower.contains("signing in"))
+        ) {
             throw GoogleQuotaError.authenticationRequired
         }
         throw GoogleQuotaError.serviceUnavailable
@@ -759,6 +775,7 @@ enum AgyQuotaClient {
         let out = Pipe()
         process.executableURL = executableURL
         process.arguments = ["models"]
+        process.environment = AgyPaths.cleanEnvironment()
         process.standardOutput = out
         process.standardError = out
         do {
@@ -855,6 +872,9 @@ final class AgyVirtualTerminal {
                 csiParams = ""
             } else if ch == "]" {
                 state = .osc
+            } else if ch == "M" {
+                row = max(0, row - 1)
+                state = .ground
             } else {
                 state = .ground
             }
@@ -945,6 +965,11 @@ final class AgyVirtualTerminal {
                 for c in 0...min(col, cols - 1) { grid[row][c] = " " }
             } else if mode == 2 {
                 grid[row] = Array(repeating: " ", count: cols)
+            }
+        case "X":
+            let end = min(col + n1, cols)
+            if col < end {
+                for c in col..<end { grid[row][c] = " " }
             }
         default:
             break

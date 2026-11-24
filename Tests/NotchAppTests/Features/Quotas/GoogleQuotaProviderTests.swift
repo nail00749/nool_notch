@@ -74,10 +74,9 @@ final class GoogleQuotaProviderTests: XCTestCase {
     func testParsesAgyUsageTUIScreenWithANSISequencesAndResetTimers() throws {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let ansiOutput = """
-        \u{1B}[2J\u{1B}[1;1HL \u{1B}[1mModels & Quota\u{1B}[0m\r
-        \r
-          Account: user@example.com\r
-        \r
+        \u{1B}[2J\u{1B}[1;1HWelcome to the Antigravity CLI. You are currently not signed in.\r
+        ⣷  Signing in...\u{1B}[1A\r\u{1B}[KAntigravity CLI 1.5.16\r
+        ? for shortcuts\u{1B}[10X\u{1B}[10CGemini 4 Neon · high\r\u{1B}M
         \u{1B}[1mGEMINI MODELS\u{1B}[0m\r
           Models within this group: Gemini 4 Neon, Gemini 4 Carbon\r
         \r
