@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-11-24
+
 ### Fixed
 
 - Лимиты Google Antigravity больше не переходят ложно в статус «Нужен вход» при запуске `agy 1.5.16+` во время промежуточного экрана `Signing in...`, а также игнорируют переменные окружения внешних агентских оболочек.
@@ -607,7 +609,8 @@
 - Добавлены панели лимитов, календаря, Now Playing и Jira.
 - Добавлены arm64 release packaging, checksum и ad-hoc подпись.
 
-[Unreleased]: https://github.com/nail00749/nool_notch/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/nail00749/nool_notch/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/nail00749/nool_notch/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/nail00749/nool_notch/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/nail00749/nool_notch/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/nail00749/nool_notch/compare/v0.9.0...v0.10.0
