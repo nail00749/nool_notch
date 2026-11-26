@@ -75,34 +75,40 @@ final class GoogleQuotaProviderTests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let ansiOutput = """
         \u{1B}[2J\u{1B}[1;1HWelcome to the Antigravity CLI. You are currently not signed in.\r
-        ⣷  Signing in...\u{1B}[1A\r\u{1B}[KAntigravity CLI 1.5.16\r
+        ⣷  Signing in...\u{1B}[1A\r\u{1B}[KAntigravity CLI 1.5.17\r
         ? for shortcuts\u{1B}[10X\u{1B}[10CGemini 4 Neon · high\r\u{1B}M
-        \u{1B}[1mGEMINI MODELS\u{1B}[0m\r
-          Models within this group: Gemini 4 Neon, Gemini 4 Carbon\r
-        \r
-          Weekly Limit Remaining\u{1B}[K\n\u{1B}[20D[████████████████████████████] 94.40%\n\u{1B}[59DRefreshes in 166h 17m\r
-        \r
-          Five Hour Limit Remaining\n\u{1B}[23D[██████████████████████] 86.47%\n\u{1B}[59DRefreshes in 3h 17m\r
-        \r
-        \u{1B}[1mCLAUDE AND GPT MODELS\u{1B}[0m\r
+        \u{1B}[1mGEMINI MODELS\u{1B}[m\u{1B}[K\r
+          \u{1B}[2mModels within this group: Gemini 4 Neon, Gemini 4 Carbon, Gemini 4 Argon, Gemini 4 Hydrogen, Orchestrator (Neon), Orchestrator (Carbon), O\u{1B}[m\r
+        \u{1B}[K
+          \u{1B}[1mWeekly Limit Remaining\u{1B}[m\u{1B}[K
+        \u{1B}[20D[█████████████████████████████████████████\u{1B}[2m░░░░░░░░░\u{1B}[m]\u{1B}[2m 82.31%\u{1B}[m
+        \u{1B}[59DRefreshes in 6d 0h 52m\r
+
+          \u{1B}[1mFive Hour Limit Remaining\u{1B}[m
+        \u{1B}[23D[█████████████████████████████████████████████████\u{1B}[2m░\u{1B}[m]\u{1B}[2m 98.04%\u{1B}[m
+        \u{1B}[59DRefreshes in 4h 59m\r
+
+        \u{1B}[1mCLAUDE AND GPT MODELS\u{1B}[m\r
           Models within this group: Claude Opus, Claude Sonnet, GPT-OSS\r
         \r
           Weekly Limit Remaining\r
             [\u{1B}[32m████████████████████████████████\u{1B}[0m] 100.00%\r
             Quota available\r
+        GEMINI MODELS\r
+          Weekly \r
+         ░░░░░░░░░] 82.31\r
+          Five Hour Limit Remaining\r
+            [████████████████████████████████████████████████░░] 96.40%\r
+            Refreshes in 4h 48m\r
         """
 
-        let terminal = AgyVirtualTerminal(rows: 40, cols: 100)
-        terminal.feed(Array(ansiOutput.utf8))
-        let rendered = terminal.renderedText()
-
-        let windows = try AgyUsageParser.parseWindows(from: rendered, now: now)
+        let windows = try AgyUsageParser.parseWindows(from: ansiOutput, now: now)
         XCTAssertEqual(windows.map(\.id), ["google-5h", "google-7d"])
         XCTAssertEqual(windows.map(\.label), ["5h", "7d"])
-        XCTAssertEqual(windows[0].remaining, 86.5)
-        XCTAssertEqual(windows[0].resetAt, now.addingTimeInterval(3 * 3600 + 17 * 60))
-        XCTAssertEqual(windows[1].remaining, 94.4)
-        XCTAssertEqual(windows[1].resetAt, now.addingTimeInterval(166 * 3600 + 17 * 60))
+        XCTAssertEqual(windows[0].remaining, 96.4)
+        XCTAssertEqual(windows[0].resetAt, now.addingTimeInterval(4 * 3600 + 48 * 60))
+        XCTAssertEqual(windows[1].remaining, 82.3)
+        XCTAssertEqual(windows[1].resetAt, now.addingTimeInterval(6 * 86_400 + 52 * 60))
     }
 
     func testGoogleQuotaGateThrottlesAndRetainsStaleSnapshot() async {

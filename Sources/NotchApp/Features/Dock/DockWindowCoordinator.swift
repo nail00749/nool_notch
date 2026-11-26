@@ -11,6 +11,7 @@ struct DockCoordinatorEnvironment {
     /// Games, playing video and excluded applications keep the edge inert.
     var immersive: (Int32, DockImmersiveContent.Options) -> Bool = { DockImmersiveContent.isImmersive(pid: $0, options: $1) }
     var pointerLocation: () -> CGPoint = { NSEvent.mouseLocation }
+    var isOnActiveSpace: (NSPanel) -> Bool = { $0.isOnActiveSpace }
     /// Fallback for Spaces where WindowServer delivers no mouse-moved events to monitors.
     var edgePollInterval: Duration = .milliseconds(120)
     /// Video starts and pauses without any Space or activation notification.
@@ -66,6 +67,9 @@ final class DockWindowCoordinator {
     private var started = false
     private var sleeping = false
     private var spaceRepairs: [ObjectIdentifier: Date] = [:]
+    private var spaceRestoreTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+    private var windowsNeedingSpaceRebind: Set<ObjectIdentifier> = []
+    private var pendingSpaceRebindOnSettle = false
     private var hovered = false
     private var interacting = false
     private var revealed = false
@@ -171,6 +175,10 @@ final class DockWindowCoordinator {
         immersiveMonitor = nil
         edgePoll?.cancel()
         edgePoll = nil
+        cancelAllSpaceRestores()
+        windowsNeedingSpaceRebind.removeAll()
+        spaceRepairs.removeAll()
+        pendingSpaceRebindOnSettle = false
         feature.closeSurfaces()
         feature.stacks.stop()
         feature.applications.stop()
@@ -231,7 +239,17 @@ final class DockWindowCoordinator {
     /// Pointer position in AppKit screen coordinates. Reveals a hidden Dock when the
     /// pointer reaches its edge strip; the strip itself is click-through.
     func pointerMoved(to location: CGPoint) {
-        guard started, trigger.isVisible, !panelShown else { cancelPendingReveal(); return }
+        guard started else { cancelPendingReveal(); return }
+        if panelShown {
+            // If AppKit considers the panel visible while WindowServer stranded it on another
+            // Space, reaching the edge strip rescues it onto the active Space immediately.
+            if !immersive, !environment.isOnActiveSpace(panel), isOnTrigger(location) {
+                moveToActiveSpace(panel, force: true)
+            }
+            cancelPendingReveal()
+            return
+        }
+        guard trigger.isVisible else { cancelPendingReveal(); return }
         guard isOnTrigger(location) else { cancelPendingReveal(); return }
         let delay = environment.revealDelay
         guard delay > .zero else { reveal(); return }
@@ -259,9 +277,13 @@ final class DockWindowCoordinator {
         revealTask = nil
     }
 
+    private static let dockCollectionBehavior: NSWindow.CollectionBehavior = [
+        .canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .stationary, .ignoresCycle
+    ]
+
     private func configure(_ window: NSPanel, title: String) {
         window.title = title
-        window.level = .floating
+        window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)))
         window.isFloatingPanel = true
         window.hidesOnDeactivate = false
         window.isOpaque = false
@@ -269,25 +291,59 @@ final class DockWindowCoordinator {
         window.hasShadow = false
         window.isMovable = false
         window.isReleasedWhenClosed = false
-        window.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        window.collectionBehavior = Self.dockCollectionBehavior
         window.appearance = NSAppearance(named: .darkAqua)
     }
 
-    /// A window that joined all Spaces can stay pinned to a full-screen Space that has since
-    /// closed, and re-ordering alone does not release it. Pin it to the active Space first,
-    /// then order it in again with its original behaviour so it rejoins every Space.
-    /// `isOnActiveSpace` can read false right after ordering in, so repairs are rate-limited.
-    private func moveToActiveSpace(_ window: NSPanel) {
+    /// A window that joined all Spaces can stay pinned to a full-screen or other Space in
+    /// WindowServer, and plain `orderFrontRegardless()` does not release it. Detach any
+    /// child windows, order it onto the active Space with `.moveToActiveSpace`, and restore
+    /// `.canJoinAllSpaces` on the next run-loop turn so WindowServer commits the Space change
+    /// instead of coalescing two synchronous flips into a no-op.
+    private func moveToActiveSpace(_ window: NSPanel, force: Bool = false) {
         let id = ObjectIdentifier(window)
-        if window.isVisible, let last = spaceRepairs[id], Date().timeIntervalSince(last) < 1.5 { return }
+        if !force, window.isVisible, let last = spaceRepairs[id], Date().timeIntervalSince(last) < 1.5 { return }
         spaceRepairs[id] = Date()
-        let original = window.collectionBehavior
+        spaceRestoreTasks[id]?.cancel()
+        spaceRestoreTasks[id] = nil
+        for child in window.childWindows ?? [] {
+            window.removeChildWindow(child)
+        }
         window.orderOut(nil)
-        window.collectionBehavior = original.subtracting(.canJoinAllSpaces).union(.moveToActiveSpace)
+        window.collectionBehavior = Self.dockCollectionBehavior.subtracting(.canJoinAllSpaces).union(.moveToActiveSpace)
         window.orderFrontRegardless()
-        window.orderOut(nil)
-        window.collectionBehavior = original
-        window.orderFrontRegardless()
+        spaceRestoreTasks[id] = Task { @MainActor [weak self, weak window] in
+            await Task.yield()
+            guard !Task.isCancelled, let self, let window else { return }
+            self.spaceRestoreTasks[id] = nil
+            window.collectionBehavior = Self.dockCollectionBehavior
+        }
+    }
+
+    private func cancelSpaceRestore(for window: NSPanel) {
+        let id = ObjectIdentifier(window)
+        spaceRestoreTasks[id]?.cancel()
+        spaceRestoreTasks[id] = nil
+        if window.collectionBehavior != Self.dockCollectionBehavior {
+            window.collectionBehavior = Self.dockCollectionBehavior
+        }
+    }
+
+    private func cancelAllSpaceRestores() {
+        for task in spaceRestoreTasks.values { task.cancel() }
+        spaceRestoreTasks.removeAll()
+        if panel.collectionBehavior != Self.dockCollectionBehavior {
+            panel.collectionBehavior = Self.dockCollectionBehavior
+        }
+        if trigger.collectionBehavior != Self.dockCollectionBehavior {
+            trigger.collectionBehavior = Self.dockCollectionBehavior
+        }
+    }
+
+    private func markSpaceRebindNeeded() {
+        spaceRepairs.removeAll()
+        windowsNeedingSpaceRebind.insert(ObjectIdentifier(panel))
+        windowsNeedingSpaceRebind.insert(ObjectIdentifier(trigger))
     }
 
     private func synchronize() {
@@ -305,6 +361,7 @@ final class DockWindowCoordinator {
             immersiveMonitor = nil
             edgePoll?.cancel()
             edgePoll = nil
+            cancelAllSpaceRestores()
             genie.cancel(panel.contentView)
             panel.orderOut(nil)
             trigger.orderOut(nil)
@@ -400,30 +457,60 @@ final class DockWindowCoordinator {
             : mode == .always || revealed || held || (mode == .intelligent && !overlapped)
         if immersive { revealed = held }
         if shouldShow {
+            cancelSpaceRestore(for: trigger)
             trigger.orderOut(nil)
+            let panelID = ObjectIdentifier(panel)
+            let needsRebind = windowsNeedingSpaceRebind.remove(panelID) != nil
             if !panel.isVisible {
                 genie.show(panel.contentView, position: position, animated: animatesVisibility)
-                panel.orderFrontRegardless()
+                if needsRebind {
+                    moveToActiveSpace(panel)
+                } else {
+                    panel.orderFrontRegardless()
+                    if !environment.isOnActiveSpace(panel) {
+                        moveToActiveSpace(panel)
+                    }
+                }
                 feature.accessibility.refreshNow()
-            } else if !panel.isOnActiveSpace {
-                // Ordered front inside a full-screen Space, the panel can stay behind when the
-                // Space changes: visible to AppKit, absent on screen, and with no edge strip
-                // to bring it back. Order it in again on the Space that is active now.
+            } else if needsRebind || !environment.isOnActiveSpace(panel) {
+                // Ordered front inside a full-screen or other Space, the panel can stay behind
+                // when the Space changes: visible to AppKit, absent on screen, and with no edge
+                // strip to bring it back. Rebind it to the Space that is active now.
                 moveToActiveSpace(panel)
+                if genie.isHiding {
+                    genie.show(panel.contentView, position: position, animated: animatesVisibility)
+                }
             } else if genie.isHiding {
                 genie.show(panel.contentView, position: position, animated: animatesVisibility)
             }
         } else {
             if panel.isVisible {
                 genie.hide(panel.contentView, position: position, animated: animatesVisibility) { [weak self] in
-                    self?.panel.orderOut(nil)
-                    self?.updateEdgePolling()
+                    guard let self else { return }
+                    self.cancelSpaceRestore(for: self.panel)
+                    self.panel.orderOut(nil)
+                    self.updateEdgePolling()
                 }
             }
             feature.fan.dismiss()
-            if immersive { trigger.orderOut(nil) }
-            else if !trigger.isVisible || !trigger.isOnActiveSpace {
-                moveToActiveSpace(trigger)
+            if immersive {
+                cancelSpaceRestore(for: trigger)
+                trigger.orderOut(nil)
+            } else {
+                let triggerID = ObjectIdentifier(trigger)
+                let needsRebind = windowsNeedingSpaceRebind.remove(triggerID) != nil
+                if !trigger.isVisible {
+                    if needsRebind {
+                        moveToActiveSpace(trigger)
+                    } else {
+                        trigger.orderFrontRegardless()
+                        if !environment.isOnActiveSpace(trigger) {
+                            moveToActiveSpace(trigger)
+                        }
+                    }
+                } else if needsRebind || !environment.isOnActiveSpace(trigger) {
+                    moveToActiveSpace(trigger)
+                }
             }
         }
         feature.accessibility.isSuspended = !shouldShow
@@ -604,6 +691,7 @@ final class DockWindowCoordinator {
 
     /// Samples immediately, then once more after the full-screen animation settles.
     private func scheduleFullscreenRecheck(resetDesktop: Bool = false) {
+        if resetDesktop { pendingSpaceRebindOnSettle = true }
         fullscreenRecheck?.cancel()
         let delay = environment.fullscreenSettleDelay
         fullscreenRecheck = Task { @MainActor [weak self] in
@@ -611,6 +699,10 @@ final class DockWindowCoordinator {
             guard !Task.isCancelled, let self, self.started else { return }
             self.fullscreenRecheck = nil
             self.fullscreenNeedsRefresh = true
+            if self.pendingSpaceRebindOnSettle {
+                self.pendingSpaceRebindOnSettle = false
+                self.markSpaceRebindNeeded()
+            }
             self.synchronize()
         }
         // Arm the transition guard before either path samples window geometry.
@@ -650,9 +742,11 @@ final class DockWindowCoordinator {
         }
     }
 
-    /// While the Dock is hidden behind its edge strip, sample the pointer a few times per second.
+    /// While the Dock is hidden behind its edge strip — or stranded on another Space — sample
+    /// the pointer a few times per second so reaching the edge always recovers it.
     private func updateEdgePolling() {
-        guard trigger.isVisible, !panelShown else {
+        let strandedPanel = panelShown && !immersive && !environment.isOnActiveSpace(panel)
+        guard (trigger.isVisible && !panelShown) || strandedPanel else {
             edgePoll?.cancel()
             edgePoll = nil
             return
@@ -761,6 +855,7 @@ final class DockWindowCoordinator {
     private func desktopDidChange() {
         screenSignature = environment.screenSignature()
         resetInteractionState()
+        markSpaceRebindNeeded()
         targetFrame = nil
         overlapNeedsRefresh = true
         fullscreenNeedsRefresh = true

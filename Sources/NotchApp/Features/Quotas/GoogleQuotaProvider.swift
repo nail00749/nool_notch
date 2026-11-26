@@ -658,10 +658,9 @@ enum AgyQuotaClient {
         try? outHandle.close()
         try? errHandle.close()
 
-        let terminal = AgyVirtualTerminal(rows: 120, cols: 140)
         let start = Date()
         let overallDeadline = start.addingTimeInterval(14)
-        var rawAccumulated = Data()
+        var rawOutput = Data()
         var repliedDA = false
         var repliedOSC = false
         var confirmedWorkspaceTrust = false
@@ -679,32 +678,30 @@ enum AgyQuotaClient {
                     let count = Darwin.read(masterFD, &readBuf, readBuf.count)
                     if count > 0 {
                         let slice = readBuf[0..<count]
-                        rawAccumulated.append(contentsOf: slice)
-                        if rawAccumulated.count > 16_384 {
-                            rawAccumulated.removeFirst(rawAccumulated.count - 8_192)
+                        if rawOutput.count + count <= 524_288 {
+                            rawOutput.append(contentsOf: slice)
                         }
                         if !repliedDA && (
-                            rawAccumulated.range(of: Data([0x1B, 0x5B, 0x3E, 0x63])) != nil
-                            || rawAccumulated.range(of: Data([0x1B, 0x5B, 0x63])) != nil
+                            rawOutput.range(of: Data([0x1B, 0x5B, 0x3E, 0x63])) != nil
+                            || rawOutput.range(of: Data([0x1B, 0x5B, 0x63])) != nil
                         ) {
                             writeBytes(Array("\u{1B}[?62;22c\u{1B}[>0;276;0c".utf8), to: masterFD)
                             repliedDA = true
                         }
-                        if !repliedOSC && rawAccumulated.range(of: Data("\u{1B}]11;?".utf8)) != nil {
+                        if !repliedOSC && rawOutput.range(of: Data("\u{1B}]11;?".utf8)) != nil {
                             writeBytes(Array("\u{1B}]11;rgb:0000/0000/0000\u{1B}\\".utf8), to: masterFD)
                             repliedOSC = true
                         }
                         if slice.count >= 4, Data(slice).range(of: Data("\u{1B}[6n".utf8)) != nil {
                             writeBytes(Array("\u{1B}[1;1R".utf8), to: masterFD)
                         }
-                        terminal.feed(slice)
                     } else {
                         break
                     }
                 }
             }
 
-            let snapshotText = terminal.renderedText()
+            let snapshotText = AgyUsageParser.stripANSI(String(decoding: rawOutput, as: UTF8.self))
             let lower = snapshotText.lowercased()
 
             // Note: agy 1.5.16+ briefly prints "You are currently not signed in. / Signing in..."
@@ -724,7 +721,7 @@ enum AgyQuotaClient {
             }
 
             if let loadedAt = quotaLoadedAt {
-                if Date().timeIntervalSince(loadedAt) >= 0.25 {
+                if Date().timeIntervalSince(loadedAt) >= 0.35 {
                     writeBytes(Array("\u{1B}".utf8), to: masterFD)
                     return snapshotText
                 }
@@ -753,7 +750,7 @@ enum AgyQuotaClient {
             }
         }
 
-        let finalText = terminal.renderedText()
+        let finalText = AgyUsageParser.stripANSI(String(decoding: rawOutput, as: UTF8.self))
         if finalText.contains("Limit Remaining") {
             return finalText
         }
@@ -991,19 +988,80 @@ enum AgyUsageParser {
         case partner
     }
 
+    static func stripANSI(_ raw: String) -> String {
+        var out = ""
+        out.reserveCapacity(raw.count)
+        var i = raw.startIndex
+        while i < raw.endIndex {
+            let ch = raw[i]
+            if ch == "\u{1B}" {
+                let next = raw.index(after: i)
+                guard next < raw.endIndex else { break }
+                let marker = raw[next]
+                if marker == "[" {
+                    var j = raw.index(after: next)
+                    while j < raw.endIndex {
+                        let c = raw[j]
+                        if c.isASCII, let scalar = c.unicodeScalars.first,
+                           (0x40...0x7E).contains(scalar.value) {
+                            if c == "C" { out.append(" ") }
+                            i = raw.index(after: j)
+                            break
+                        }
+                        j = raw.index(after: j)
+                    }
+                    if j >= raw.endIndex { break }
+                } else if marker == "]" {
+                    var j = raw.index(after: next)
+                    while j < raw.endIndex {
+                        if raw[j] == "\u{07}" {
+                            i = raw.index(after: j)
+                            break
+                        }
+                        if raw[j] == "\u{1B}" {
+                            let afterEsc = raw.index(after: j)
+                            i = afterEsc < raw.endIndex ? raw.index(after: afterEsc) : raw.endIndex
+                            break
+                        }
+                        j = raw.index(after: j)
+                    }
+                    if j >= raw.endIndex { break }
+                } else {
+                    i = raw.index(after: next)
+                }
+            } else if ch == "\r\n" {
+                out.append("\n")
+                i = raw.index(after: i)
+            } else if ch == "\r" {
+                i = raw.index(after: i)
+            } else {
+                out.append(ch)
+                i = raw.index(after: i)
+            }
+        }
+        return out
+    }
+
     static func parseWindows(from rawText: String, now: Date = Date()) throws -> [QuotaWindow] {
-        let lines = rawText
+        let stripped = stripANSI(rawText)
+        let relevantText: String
+        if let firstGeminiRange = stripped.range(of: "GEMINI MODELS", options: [.caseInsensitive]) {
+            relevantText = String(stripped[firstGeminiRange.lowerBound...])
+        } else {
+            relevantText = stripped
+        }
+
+        let lines = relevantText
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
 
         var currentGroup: ModelGroup = .gemini
         var pendingWindowKind: String?
-        var results: [QuotaWindow] = []
-        var seenIDs = Set<String>()
+        var resultsByID: [String: QuotaWindow] = [:]
 
         for index in lines.indices {
             let line = lines[index]
-            guard !line.isEmpty else { continue }
             let upper = line.uppercased()
 
             if upper.contains("GEMINI MODELS") {
@@ -1023,7 +1081,7 @@ enum AgyUsageParser {
                 pendingWindowKind = kind
                 if let percent = extractPercentage(from: line) {
                     let reset = (index + 1 < lines.count) ? parseRelativeReset(from: lines[index + 1], now: now) : nil
-                    appendWindow(group: currentGroup, kind: kind, percent: percent, resetAt: reset, into: &results, seen: &seenIDs)
+                    recordWindow(group: currentGroup, kind: kind, percent: percent, resetAt: reset, into: &resultsByID)
                     pendingWindowKind = nil
                 }
                 continue
@@ -1036,25 +1094,25 @@ enum AgyUsageParser {
                 } else if index + 1 < lines.count {
                     reset = parseRelativeReset(from: lines[index + 1], now: now)
                 }
-                appendWindow(group: currentGroup, kind: kind, percent: percent, resetAt: reset, into: &results, seen: &seenIDs)
+                recordWindow(group: currentGroup, kind: kind, percent: percent, resetAt: reset, into: &resultsByID)
                 pendingWindowKind = nil
             }
         }
 
         // Show Gemini's primary 5h and 7d windows cleanly (matching Codex/Claude mini-rings).
+        let results = Array(resultsByID.values)
         let geminiWindows = results.filter { $0.id == "google-5h" || $0.id == "google-7d" }
         let selected = geminiWindows.isEmpty ? results : geminiWindows
         let priority = ["google-5h": 0, "google-7d": 1, "google-partner-5h": 2, "google-partner-7d": 3]
         return selected.sorted { (priority[$0.id] ?? 99) < (priority[$1.id] ?? 99) }
     }
 
-    private static func appendWindow(
+    private static func recordWindow(
         group: ModelGroup,
         kind: String,
         percent: Double,
         resetAt: Date?,
-        into results: inout [QuotaWindow],
-        seen: inout Set<String>
+        into resultsByID: inout [String: QuotaWindow]
     ) {
         let id: String
         let label: String
@@ -1066,18 +1124,16 @@ enum AgyUsageParser {
             id = "google-partner-\(kind)"
             label = "Partner · \(kind)"
         }
-        guard seen.insert(id).inserted else { return }
         let clamped = min(max(percent, 0), 100)
         let rounded = (clamped * 10).rounded() / 10
-        results.append(
-            QuotaWindow(
-                id: id,
-                label: label,
-                limit: 100,
-                remaining: rounded,
-                resetAt: resetAt,
-                unit: .percentage
-            )
+        let effectiveResetAt = resetAt ?? resultsByID[id]?.resetAt
+        resultsByID[id] = QuotaWindow(
+            id: id,
+            label: label,
+            limit: 100,
+            remaining: rounded,
+            resetAt: effectiveResetAt,
+            unit: .percentage
         )
     }
 

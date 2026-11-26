@@ -496,6 +496,53 @@ final class DockVisibilityTests: XCTestCase {
     }
 
     @MainActor
+    func testHiddenPanelRebindsToActiveSpaceWhenRevealedAfterSpaceChange() async throws {
+        let fixture = try makeFixture(mode: .autoHide)
+        defer { fixture.stop() }
+        fixture.coordinator.start()
+        XCTAssertFalse(fixture.coordinator.ownedPanel.isVisible)
+        // Switching Spaces while hidden marks the panel for active-space rebinding on next reveal.
+        fixture.workspace.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+        try await Task.sleep(for: .milliseconds(40))
+        fixture.coordinator.reveal()
+        let panel = fixture.coordinator.ownedPanel
+        XCTAssertTrue(panel.isVisible)
+        XCTAssertTrue(panel.collectionBehavior.contains(.moveToActiveSpace),
+                      "Initial reveal after a Space change must commit .moveToActiveSpace before restoring .canJoinAllSpaces")
+        // Next run-loop turn restores .canJoinAllSpaces without losing visibility.
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(panel.isVisible)
+        XCTAssertTrue(panel.collectionBehavior.contains(.canJoinAllSpaces))
+    }
+
+    @MainActor
+    func testStrandedVisiblePanelIsRescuedByEdgeContactAndSettleRecheck() async throws {
+        let fixture = try makeFixture(mode: .always)
+        defer { fixture.stop() }
+        fixture.coordinator.start()
+        let panel = fixture.coordinator.ownedPanel
+        XCTAssertTrue(panel.isVisible)
+        // Simulate WindowServer stranding the visible panel on another Space.
+        fixture.inputs.panelOnActiveSpace = false
+        let strip = fixture.coordinator.ownedTrigger.frame
+        fixture.coordinator.pointerMoved(to: CGPoint(x: strip.midX, y: strip.minY))
+        XCTAssertTrue(panel.isVisible)
+        XCTAssertTrue(panel.collectionBehavior.contains(.moveToActiveSpace),
+                      "Edge contact must immediately rescue a visible panel stranded on another Space")
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(panel.collectionBehavior.contains(.canJoinAllSpaces))
+
+        // Active Space change + settle recheck (shorter than 1.5s) must not be blocked by rate limit.
+        fixture.workspace.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+        XCTAssertTrue(panel.collectionBehavior.contains(.moveToActiveSpace))
+        try await Task.sleep(for: .milliseconds(5))
+        // After settle delay (10ms in tests), settle rebind runs again despite < 1.5s elapsed.
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertTrue(panel.isVisible)
+        XCTAssertTrue(panel.collectionBehavior.contains(.canJoinAllSpaces))
+    }
+
+    @MainActor
     private func makeFixture(mode: DockVisibilityMode, overlapped: Bool = false,
                              revealDelay: Duration = .zero) throws -> VisibilityFixture {
         _ = NSApplication.shared
@@ -519,7 +566,12 @@ final class DockVisibilityTests: XCTestCase {
             overlap: { inputs.overlapSamples.append($0); return inputs.overlapped },
             fullscreenOwner: { _ in inputs.fullscreen ? 4_242 : nil },
             immersive: { pid, options in inputs.immersiveChecks.append(pid); inputs.immersiveOptions = options; return inputs.immersive },
-            pointerLocation: { inputs.pointer }, edgePollInterval: .milliseconds(10),
+            pointerLocation: { inputs.pointer },
+            isOnActiveSpace: { panel in
+                if panel.title == "NooL Dock", let override = inputs.panelOnActiveSpace { return override }
+                return panel.isOnActiveSpace
+            },
+            edgePollInterval: .milliseconds(10),
             immersivePollInterval: .milliseconds(10), fullscreenSettleDelay: .milliseconds(10),
             hideDelay: .milliseconds(25), revealDelay: revealDelay, notificationCenter: notifications,
             workspaceNotificationCenter: workspace, installEventMonitors: false,
@@ -540,6 +592,7 @@ private final class VisibilityInputs {
     var overlapped = false
     var fullscreen = false
     var immersive = false
+    var panelOnActiveSpace: Bool?
     var immersiveChecks: [Int32] = []
     var immersiveOptions: DockImmersiveContent.Options?
     /// Far outside every screen unless a test places the pointer.
