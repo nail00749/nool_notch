@@ -7,6 +7,13 @@
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-11-26
+
+### Fixed
+
+- Лимиты Google Antigravity теперь стабильно показывают и недельный (`7d`), и пятичасовой (`5h`) остаток вместе с таймерами сброса в `agy 1.5.17+`, не теряя недельное окно при инкрементальных перерисовках TUI.
+- NooL Dock больше не застревает на другом Space или окне после переключения рабочих столов и полноэкранных приложений: панель перепривязывается к активному Space при открытии и завершении перехода, а наведение на край экрана возвращает застрявший Dock обратно.
+
 ## [0.12.1] - 2026-11-24
 
 ### Fixed
@@ -609,7 +616,8 @@
 - Добавлены панели лимитов, календаря, Now Playing и Jira.
 - Добавлены arm64 release packaging, checksum и ad-hoc подпись.
 
-[Unreleased]: https://github.com/nail00749/nool_notch/compare/v0.12.1...HEAD
+[Unreleased]: https://github.com/nail00749/nool_notch/compare/v0.12.2...HEAD
+[0.12.2]: https://github.com/nail00749/nool_notch/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/nail00749/nool_notch/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/nail00749/nool_notch/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/nail00749/nool_notch/compare/v0.10.0...v0.11.0
